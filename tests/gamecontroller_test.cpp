@@ -1,0 +1,546 @@
+//
+// Unit tests for GameController.
+//
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QMetaType>
+#include <QSignalSpy>
+#include <QTest>
+#include <QTemporaryDir>
+
+#include "fakegateway.h"
+#include "gamecontroller.h"
+#include "gatewayclient.h"
+#include "uciengine.h"
+
+namespace {
+
+constexpr qint64 WaitTimeout = 5000;
+
+QString writeMockEngineScript(const QString &fileName) {
+    const QString scriptPath = QDir::current().filePath(fileName);
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return {};
+    }
+
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "preview_count=0\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then\n"
+        "    echo \"id name MockControllerEngine\"\n"
+        "    echo \"uciok\"\n"
+        "  elif [ \"$line\" = \"isready\" ]; then\n"
+        "    echo \"readyok\"\n"
+        "  elif [ \"$line\" = \"go infinite\" ]; then\n"
+        "    if [ \"$preview_count\" -eq 0 ]; then\n"
+        "      echo \"info depth 8 score cp 20 pv a2a3 e7e5\"\n"
+        "    else\n"
+        "      echo \"info depth 8 score cp 20 pv g1f3 b8c6\"\n"
+        "    fi\n"
+        "    preview_count=$((preview_count + 1))\n"
+        "  elif [[ \"$line\" =~ ^go.* ]]; then\n"
+        "    echo \"info depth 8 score cp -20 pv e7e5 g1f3\"\n"
+        "    echo \"bestmove e7e5\"\n"
+        "  elif [ \"$line\" = \"stop\" ]; then\n"
+        "    echo \"bestmove e7e5\"\n"
+        "  elif [ \"$line\" = \"quit\" ]; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "done\n";
+
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser |
+                                      QFile::ReadGroup | QFile::ExeGroup |
+                                      QFile::ReadOther | QFile::ExeOther);
+    return scriptPath;
+}
+
+} // namespace
+
+class GameControllerTest : public QObject {
+    Q_OBJECT
+
+private slots:
+    void initTestCase();
+    void testInitialState();
+    void testLoadFen();
+    void testNewGame();
+    void testLoadPgn();
+    void testRequestMove();
+    void testRequestMoveIllegal();
+    void testStepBackAndForward();
+    void testGoToMove();
+    void testStepBackTruncatesHistory();
+    void testSetSideToMove();
+    void testComputerGameBookMove();
+    void testComputerGameWithMockEngine();
+    void testEngineDisconnectFinishesGame();
+    void testRemoteEngineConfiguration();
+    void testEagerAnalysisWithRemoteEngine();
+    void testEagerComputerGameWithRemoteEngine();
+};
+
+void GameControllerTest::initTestCase() {
+    qRegisterMetaType<std::optional<Rules::Move>>("std::optional<Rules::Move>");
+}
+
+void GameControllerTest::testInitialState() {
+    GameController controller;
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QVERIFY(controller.initialFen().isEmpty());
+    QVERIFY(controller.uciMoves().isEmpty());
+    QVERIFY(controller.pgnText().isEmpty());
+    QVERIFY(!controller.isComputerGameActive());
+    QVERIFY(!controller.isComputerGamePending());
+    QVERIFY(controller.engine() != nullptr);
+    QVERIFY(!controller.engine()->isConnected());
+}
+
+void GameControllerTest::testLoadFen() {
+    GameController controller;
+    QSignalSpy positionSpy(&controller, &GameController::positionChanged);
+    QSignalSpy historySpy(&controller, &GameController::historyChanged);
+    QSignalSpy evaluationSpy(&controller, &GameController::evaluationChanged);
+
+    const QString fen = QStringLiteral(
+        "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5");
+    QVERIFY(controller.loadFen(fen));
+    QCOMPARE(controller.initialFen(), fen);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QVERIFY(controller.rules().pieceAt({4, 2}).has_value());
+    QCOMPARE(controller.rules().pieceAt({4, 2})->type, Rules::PieceType::Bishop);
+    QVERIFY(controller.pgnText().contains(fen));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("Position loaded from FEN.")));
+    QCOMPARE(positionSpy.count(), 1);
+    QCOMPARE(historySpy.count(), 1);
+    QCOMPARE(evaluationSpy.count(), 1);
+
+    QVERIFY(!controller.loadFen(QStringLiteral("not a fen")));
+    QCOMPARE(controller.initialFen(), fen);
+}
+
+void GameControllerTest::testNewGame() {
+    const QString scriptPath =
+        writeMockEngineScript(QStringLiteral("mock_newgame_engine.sh"));
+    GameController controller;
+    const QString fen = QStringLiteral(
+        "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5");
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+    QVERIFY(controller.loadFen(fen));
+    QVERIFY(controller.requestMove({6, 3}, {4, 3}));
+    QCOMPARE(controller.uciMoves().size(), 1);
+
+    QSignalSpy analysisProbe(&controller, &GameController::evaluationChanged);
+    controller.startAnalysis();
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Analyzing, 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(analysisProbe.count() >= 1, 2000);
+
+    QSignalSpy positionSpy(&controller, &GameController::positionChanged);
+    QSignalSpy historySpy(&controller, &GameController::historyChanged);
+    QSignalSpy evaluationSpy(&controller, &GameController::evaluationChanged);
+    QSignalSpy computerStateSpy(&controller, &GameController::computerGameStateChanged);
+
+    controller.newGame();
+
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QVERIFY(controller.initialFen().isEmpty());
+    QVERIFY(controller.uciMoves().isEmpty());
+    QVERIFY(controller.pgnText().isEmpty());
+    QVERIFY(!controller.isComputerGameActive());
+    const auto rook = controller.rules().pieceAt({7, 0});
+    QVERIFY(rook.has_value());
+    QCOMPARE(rook->type, Rules::PieceType::Rook);
+    // The running analysis is stopped and the engine is synced to the
+    // starting position without restarting it.
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+    QVERIFY(!controller.isEngineAnalyzing());
+    QCOMPARE(positionSpy.count(), 1);
+    QCOMPARE(historySpy.count(), 1);
+    QCOMPARE(evaluationSpy.count(), 1);
+    QCOMPARE(computerStateSpy.count(), 1);
+    QCOMPARE(computerStateSpy.at(0).at(0).toBool(), false);
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testLoadPgn() {
+    GameController controller;
+    const QString pgn = QStringLiteral(
+        "[Event \"Scholar's Mate\"]\n"
+        "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0"
+    );
+
+    QVERIFY(controller.loadPgn(pgn));
+    QCOMPARE(controller.uciMoves().size(), 7);
+    QVERIFY(controller.rules().isCheckmate(Rules::Color::Black));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("Qxf7#")));
+    // After White delivers mate, the mated side is to move.
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+}
+
+void GameControllerTest::testRequestMove() {
+    GameController controller;
+    QSignalSpy positionSpy(&controller, &GameController::positionChanged);
+    QSignalSpy historySpy(&controller, &GameController::historyChanged);
+    QSignalSpy evaluationSpy(&controller, &GameController::evaluationChanged);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4}));
+    QCOMPARE(controller.uciMoves(), QStringList({QStringLiteral("e2e4")}));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4")));
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+    QCOMPARE(positionSpy.count(), 1);
+    QCOMPARE(historySpy.count(), 1);
+    QCOMPARE(evaluationSpy.count(), 1);
+
+    QVERIFY(controller.requestMove({1, 0}, {3, 0}));
+    QCOMPARE(controller.uciMoves(),
+             QStringList({QStringLiteral("e2e4"), QStringLiteral("a7a5")}));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 a5")));
+}
+
+void GameControllerTest::testRequestMoveIllegal() {
+    GameController controller;
+    QSignalSpy positionSpy(&controller, &GameController::positionChanged);
+
+    // Knight jumping over the pawn wall is illegal from the start position.
+    QVERIFY(!controller.requestMove({7, 1}, {4, 2}));
+    QVERIFY(controller.uciMoves().isEmpty());
+    QCOMPARE(positionSpy.count(), 0);
+}
+
+void GameControllerTest::testStepBackAndForward() {
+    GameController controller;
+    QSignalSpy positionSpy(&controller, &GameController::positionChanged);
+
+    QCOMPARE(controller.moveCursor(), 0);
+    QVERIFY(!controller.canStepBack());
+    QVERIFY(!controller.canStepForward());
+    QVERIFY(!controller.stepBack());
+    QVERIFY(!controller.stepForward());
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    QCOMPARE(controller.uciMoves().size(), 2);
+    QCOMPARE(controller.moveCursor(), 2);
+    QVERIFY(controller.canStepBack());
+    QVERIFY(!controller.canStepForward());
+
+    const QString finalFen = controller.rules().toFen();
+
+    QVERIFY(controller.stepBack());
+    QCOMPARE(controller.moveCursor(), 1);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+    const QString afterE4 = controller.rules().toFen();
+
+    QVERIFY(controller.stepBack());
+    QCOMPARE(controller.moveCursor(), 0);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    const auto pawn = controller.rules().pieceAt({6, 4});
+    QVERIFY(pawn.has_value());
+    QCOMPARE(pawn->type, Rules::PieceType::Pawn);
+    QVERIFY(!controller.canStepBack());
+    QVERIFY(!controller.stepBack());
+
+    QVERIFY(controller.stepForward());
+    QCOMPARE(controller.moveCursor(), 1);
+    QCOMPARE(controller.rules().toFen(), afterE4);
+
+    QVERIFY(controller.stepForward());
+    QCOMPARE(controller.moveCursor(), 2);
+    QCOMPARE(controller.rules().toFen(), finalFen);
+    QVERIFY(!controller.canStepForward());
+    QVERIFY(!controller.stepForward());
+
+    // Navigation never alters the recorded history.
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 e5")));
+    QCOMPARE(positionSpy.count(), 6);
+}
+
+void GameControllerTest::testGoToMove() {
+    GameController controller;
+    QSignalSpy positionSpy(&controller, &GameController::positionChanged);
+
+    QVERIFY(!controller.goToMove(1));
+    QCOMPARE(controller.moveCursor(), 0);
+    QCOMPARE(positionSpy.count(), 0);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    QVERIFY(controller.requestMove({6, 2}, {4, 2})); // c2c4
+    QVERIFY(controller.requestMove({1, 6}, {3, 6})); // g7g5
+    QCOMPARE(controller.uciMoves().size(), 4);
+
+    const QString finalFen = controller.rules().toFen();
+
+    QVERIFY(controller.goToMove(2));
+    QCOMPARE(controller.moveCursor(), 2);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+
+    QVERIFY(controller.goToMove(0));
+    QCOMPARE(controller.moveCursor(), 0);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+
+    // Out-of-range indices are clamped.
+    QVERIFY(controller.goToMove(99));
+    QCOMPARE(controller.moveCursor(), 4);
+    QCOMPARE(controller.rules().toFen(), finalFen);
+    QVERIFY(controller.goToMove(-5));
+    QCOMPARE(controller.moveCursor(), 0);
+
+    // Navigating to the current position is a no-op.
+    QVERIFY(!controller.goToMove(0));
+    QVERIFY(!controller.goToMove(controller.moveCursor()));
+
+    // The recorded history is untouched.
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 e5")));
+    QCOMPARE(controller.pgnMoves(),
+             QStringList({QStringLiteral("1. e4 e5"), QStringLiteral("2. c4 g5")}));
+    QCOMPARE(positionSpy.count(), 8);
+}
+
+void GameControllerTest::testStepBackTruncatesHistory() {
+    GameController controller;
+    QSignalSpy historySpy(&controller, &GameController::historyChanged);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    QVERIFY(controller.requestMove({6, 2}, {4, 2})); // c2c3
+    QCOMPARE(controller.uciMoves().size(), 3);
+
+    QVERIFY(controller.stepBack());
+    QCOMPARE(controller.moveCursor(), 2);
+
+    // A move played from the middle discards the abandoned continuation.
+    QVERIFY(controller.requestMove({7, 6}, {5, 5})); // g1f3
+    QCOMPARE(controller.uciMoves(),
+             QStringList({QStringLiteral("e2e4"), QStringLiteral("e7e5"),
+                          QStringLiteral("g1f3")}));
+    QCOMPARE(controller.moveCursor(), 3);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+    QVERIFY(!controller.canStepForward());
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 e5")));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("2. Nf3")));
+    QVERIFY(!controller.pgnText().contains(QStringLiteral("c3")));
+    QCOMPARE(historySpy.count(), 4);
+}
+
+void GameControllerTest::testSetSideToMove() {
+    GameController controller;
+    controller.setSideToMove(false);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+    QVERIFY(controller.initialFen().contains(QStringLiteral(" b ")));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("Position loaded with Black to move.")));
+
+    controller.setSideToMove(true);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QVERIFY(controller.initialFen().contains(QStringLiteral(" w ")));
+}
+
+void GameControllerTest::testComputerGameBookMove() {
+    const QString scriptPath = writeMockEngineScript(QStringLiteral("mock_book_engine.sh"));
+    GameController controller;
+    QSignalSpy gameStateSpy(&controller, &GameController::computerGameStateChanged);
+    QSignalSpy humanTurnSpy(&controller, &GameController::humanTurnBegan);
+    QSignalSpy finishedSpy(&controller, &GameController::gameFinished);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = true;
+    settings.engineName = QStringLiteral("MockControllerEngine");
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+
+    // The engine plays from the opening book: a move is recorded without a
+    // timed search, and the human's turn begins.
+    QTRY_COMPARE_WITH_TIMEOUT(controller.uciMoves().size(), 1, WaitTimeout);
+    QCOMPARE(humanTurnSpy.count(), 1);
+    QCOMPARE(gameStateSpy.count(), 1);
+    QCOMPARE(gameStateSpy.first().at(0).toBool(), true);
+    QCOMPARE(finishedSpy.count(), 0);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+    QVERIFY(controller.pgnText().contains(QStringLiteral("[White \"MockControllerEngine\"]")));
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testComputerGameWithMockEngine() {
+    const QString scriptPath = writeMockEngineScript(QStringLiteral("mock_game_engine.sh"));
+    GameController controller;
+    QSignalSpy computerPreviewSpy(&controller, &GameController::computerMovePreviewChanged);
+    QSignalSpy recommendedPreviewSpy(&controller, &GameController::recommendedMovePreviewChanged);
+    QSignalSpy computerTurnSpy(&controller, &GameController::computerTurnBegan);
+    QSignalSpy humanTurnSpy(&controller, &GameController::humanTurnBegan);
+    QSignalSpy finishedSpy(&controller, &GameController::gameFinished);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    controller.setRecommendedMovePreviewEnabled(true);
+    controller.setComputerMovePreviewEnabled(true);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = false;
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+
+    // Human's turn first: preview analysis shows the recommended and the
+    // computer's planned moves.
+    QTRY_COMPARE_WITH_TIMEOUT(recommendedPreviewSpy.count(), 1, WaitTimeout);
+    const auto recommended = recommendedPreviewSpy.first().at(0).value<std::optional<Rules::Move>>();
+    QVERIFY(recommended.has_value());
+    QCOMPARE(recommended->from, (Rules::Position{6, 0}));
+    QCOMPARE(recommended->to, (Rules::Position{5, 0}));
+
+    QTRY_COMPARE_WITH_TIMEOUT(computerPreviewSpy.count(), 1, WaitTimeout);
+    const auto computerPreview = computerPreviewSpy.first().at(0).value<std::optional<Rules::Move>>();
+    QVERIFY(computerPreview.has_value());
+    QCOMPARE(computerPreview->from, (Rules::Position{1, 4}));
+    QCOMPARE(computerPreview->to, (Rules::Position{3, 4}));
+
+    // Human plays a2a3. The computer answers from the opening book (or the
+    // engine): wait until Black has moved.
+    QVERIFY(controller.requestMove({6, 0}, {5, 0}));
+    QTRY_VERIFY_WITH_TIMEOUT(controller.rules().currentPlayer() == Rules::Color::White &&
+                                 controller.uciMoves().size() == 2,
+                             WaitTimeout);
+    QCOMPARE(controller.uciMoves().first(), QStringLiteral("a2a3"));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. a3 ")));
+    QCOMPARE(humanTurnSpy.count(), 2);
+
+    // Leave the book with a second non-book move: the engine must answer a
+    // timed search with its best move.
+    QVERIFY(controller.requestMove({6, 7}, {5, 7}));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.uciMoves().size(), 4, WaitTimeout);
+    QCOMPARE(controller.uciMoves().at(2), QStringLiteral("h2h3"));
+    QCOMPARE(controller.uciMoves().at(3), QStringLiteral("e7e5"));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("2. h3 e5")));
+    QCOMPARE(computerTurnSpy.count(), 1);
+    QCOMPARE(humanTurnSpy.count(), 3);
+    QCOMPARE(finishedSpy.count(), 0);
+
+    // A new preview analysis runs after the engine's reply.
+    QTRY_VERIFY_WITH_TIMEOUT(computerPreviewSpy.count() >= 2, WaitTimeout);
+    const auto secondPreview = computerPreviewSpy.last().at(0).value<std::optional<Rules::Move>>();
+    QVERIFY(secondPreview.has_value());
+    QCOMPARE(secondPreview->from, (Rules::Position{0, 1}));
+
+    controller.stopEngine();
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, WaitTimeout);
+    QCOMPARE(finishedSpy.first().at(1).toString(), QStringLiteral("The engine disconnected."));
+    QVERIFY(!controller.isComputerGameActive());
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testEngineDisconnectFinishesGame() {
+    const QString scriptPath = writeMockEngineScript(QStringLiteral("mock_disconnect_engine.sh"));
+    GameController controller;
+    QSignalSpy finishedSpy(&controller, &GameController::gameFinished);
+    QSignalSpy stateSpy(&controller, &GameController::computerGameStateChanged);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = true;
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+    QTRY_COMPARE_WITH_TIMEOUT(controller.uciMoves().size(), 1, WaitTimeout);
+
+    controller.stopEngine();
+    QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, WaitTimeout);
+    QVERIFY(!controller.isComputerGameActive());
+    QCOMPARE(stateSpy.count(), 2);
+    QCOMPARE(stateSpy.last().at(0).toBool(), false);
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testRemoteEngineConfiguration() {
+    GameController controller;
+    QVERIFY(!controller.hasRemoteEngine());
+    QVERIFY(controller.gatewayClient() != nullptr);
+    QCOMPARE(controller.gatewayClient()->state(), ChessGatewayClient::State::Disconnected);
+
+    controller.setRemoteEngine(QStringLiteral("127.0.0.1"), 9000,
+                               QStringLiteral("stockfish-17"),
+                               QStringLiteral("Stockfish"));
+    QVERIFY(controller.hasRemoteEngine());
+    QCOMPARE(controller.gatewayClient()->state(), ChessGatewayClient::State::Connecting);
+
+    controller.clearRemoteEngine();
+    QVERIFY(!controller.hasRemoteEngine());
+    QCOMPARE(controller.gatewayClient()->state(), ChessGatewayClient::State::Disconnected);
+}
+
+void GameControllerTest::testEagerAnalysisWithRemoteEngine() {
+    FakeGateway gateway;
+    QVERIFY(gateway.isListening());
+
+    GameController controller;
+    controller.setRemoteEngine(QStringLiteral("127.0.0.1"), gateway.port(),
+                               QStringLiteral("stockfish-17"),
+                               QStringLiteral("Stockfish"));
+    QVERIFY(controller.hasRemoteEngine());
+
+    // The engine is loaded immediately, as soon as it is selected.
+    QTRY_VERIFY_WITH_TIMEOUT(controller.isEngineConnected(), 5000);
+    QCOMPARE(controller.gatewayClient()->engineName(),
+             QStringLiteral("RemoteMockEngine 1.0"));
+    QCOMPARE(controller.gatewayClient()->state(), ChessGatewayClient::State::Ready);
+
+    // Starting an analysis is immediate: the engine is already ready.
+    controller.toggleAnalysis();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        gateway.uciCommands().contains(QStringLiteral("go infinite")), 5000);
+
+    controller.stopEngine();
+    QCOMPARE(controller.gatewayClient()->state(), ChessGatewayClient::State::Disconnected);
+    QVERIFY(!controller.isEngineConnected());
+}
+
+void GameControllerTest::testEagerComputerGameWithRemoteEngine() {
+    FakeGateway gateway;
+    QVERIFY(gateway.isListening());
+
+    GameController controller;
+    QSignalSpy humanTurnSpy(&controller, &GameController::humanTurnBegan);
+    QSignalSpy stateSpy(&controller, &GameController::computerGameStateChanged);
+
+    controller.setRemoteEngine(QStringLiteral("127.0.0.1"), gateway.port(),
+                               QStringLiteral("stockfish-17"),
+                               QStringLiteral("Stockfish"));
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = false;
+    controller.startComputerGame(settings);
+    QVERIFY(!controller.isComputerGameActive());
+
+    // The game begins once the remote engine, loaded eagerly, is ready.
+    QTRY_VERIFY_WITH_TIMEOUT(controller.isComputerGameActive(), 5000);
+    QCOMPARE(humanTurnSpy.count(), 1);
+    QCOMPARE(stateSpy.first().at(0).toBool(), true);
+
+    // The computer answers a timed search through the gateway.
+    QVERIFY(controller.requestMove({6, 0}, {5, 0}));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.uciMoves().size(), 2, WaitTimeout);
+    QVERIFY(controller.requestMove({6, 7}, {5, 7}));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.uciMoves().size(), 4, WaitTimeout);
+    QCOMPARE(controller.uciMoves().at(3), QStringLiteral("e7e5"));
+
+    controller.stopEngine();
+    QVERIFY(!controller.isComputerGameActive());
+}
+
+QTEST_GUILESS_MAIN(GameControllerTest)
+#include "gamecontroller_test.moc"

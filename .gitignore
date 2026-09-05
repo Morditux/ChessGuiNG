@@ -1,0 +1,7 @@
+build/
+cmake-build-debug/
+.idea/
+.vscode/
+*.user
+_CPack_Packages/
+*.deb

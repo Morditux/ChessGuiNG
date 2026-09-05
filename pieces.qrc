@@ -1,0 +1,32 @@
+<RCC>
+    <qresource prefix="/pieces">
+        <file alias="wK.svg">assets/pieces/wK.svg</file>
+        <file alias="wQ.svg">assets/pieces/wQ.svg</file>
+        <file alias="wR.svg">assets/pieces/wR.svg</file>
+        <file alias="wB.svg">assets/pieces/wB.svg</file>
+        <file alias="wN.svg">assets/pieces/wN.svg</file>
+        <file alias="wP.svg">assets/pieces/wP.svg</file>
+        <file alias="bK.svg">assets/pieces/bK.svg</file>
+        <file alias="bQ.svg">assets/pieces/bQ.svg</file>
+        <file alias="bR.svg">assets/pieces/bR.svg</file>
+        <file alias="bB.svg">assets/pieces/bB.svg</file>
+        <file alias="bN.svg">assets/pieces/bN.svg</file>
+        <file alias="bP.svg">assets/pieces/bP.svg</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file alias="flip-board.svg">assets/icons/flip-board.svg</file>
+        <file alias="toolbar-analysis.svg">assets/icons/toolbar-analysis.svg</file>
+        <file alias="toolbar-configure.svg">assets/icons/toolbar-configure.svg</file>
+        <file alias="toolbar-disconnect-engine.svg">assets/icons/toolbar-disconnect-engine.svg</file>
+        <file alias="toolbar-load-engine.svg">assets/icons/toolbar-load-engine.svg</file>
+        <file alias="toolbar-load-pgn.svg">assets/icons/toolbar-load-pgn.svg</file>
+        <file alias="toolbar-save-pgn.svg">assets/icons/toolbar-save-pgn.svg</file>
+        <file alias="toolbar-load-screenshot.svg">assets/icons/toolbar-load-screenshot.svg</file>
+        <file alias="toolbar-new-game.svg">assets/icons/toolbar-new-game.svg</file>
+        <file alias="toolbar-paste.svg">assets/icons/toolbar-paste.svg</file>
+        <file alias="toolbar-play-computer.svg">assets/icons/toolbar-play-computer.svg</file>
+        <file alias="toolbar-quit.svg">assets/icons/toolbar-quit.svg</file>
+        <file alias="toolbar-step-back.svg">assets/icons/toolbar-step-back.svg</file>
+        <file alias="toolbar-step-forward.svg">assets/icons/toolbar-step-forward.svg</file>
+    </qresource>
+</RCC>

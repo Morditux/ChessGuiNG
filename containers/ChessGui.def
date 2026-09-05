@@ -1,0 +1,99 @@
+Bootstrap: docker
+From: ubuntu:26.04
+
+%post
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        build-essential \
+        cmake \
+        qt6-base-dev \
+        libqt6svg6-dev \
+        libonnxruntime-dev \
+        libxcb-cursor0 \
+        fonts-dejavu-core
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+    cmake -S /opt/chessgui -B /opt/chessgui/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local
+    cmake --build /opt/chessgui/build --parallel
+    cmake --install /opt/chessgui/build
+    rm -rf /opt/chessgui/build
+
+%files
+    CMakeLists.txt /opt/chessgui/CMakeLists.txt
+    LICENSE /opt/chessgui/LICENSE
+    main.cpp /opt/chessgui/main.cpp
+    appconfig.cpp /opt/chessgui/
+    appconfig.h /opt/chessgui/
+    book.cpp /opt/chessgui/
+    book.h /opt/chessgui/
+    boarddetector.cpp /opt/chessgui/
+    boarddetector.h /opt/chessgui/
+    chessboard.cpp /opt/chessgui/
+    chessboard.h /opt/chessgui/
+    chessboard.ui /opt/chessgui/
+    computergamedialog.cpp /opt/chessgui/
+    computergamedialog.h /opt/chessgui/
+    computergamesettings.cpp /opt/chessgui/
+    computergamesettings.h /opt/chessgui/
+    craftyhashkeys.h /opt/chessgui/
+    engineconfigurationdialog.cpp /opt/chessgui/
+    engineconfigurationdialog.h /opt/chessgui/
+    engineoutputwidget.cpp /opt/chessgui/
+    engineoutputwidget.h /opt/chessgui/
+    evaluationbar.cpp /opt/chessgui/
+    evaluationbar.h /opt/chessgui/
+    fenrecognizer.cpp /opt/chessgui/
+    fenrecognizer.h /opt/chessgui/
+    gamecontroller.cpp /opt/chessgui/
+    gamecontroller.h /opt/chessgui/
+    gatewayclient.cpp /opt/chessgui/
+    gatewayclient.h /opt/chessgui/
+    heuristiceval.cpp /opt/chessgui/
+    heuristiceval.h /opt/chessgui/
+    mainwindow.cpp /opt/chessgui/
+    mainwindow.h /opt/chessgui/
+    pendulumwidget.cpp /opt/chessgui/
+    pendulumwidget.h /opt/chessgui/
+    pieces.qrc /opt/chessgui/
+    remoteenginedialog.cpp /opt/chessgui/
+    remoteenginedialog.h /opt/chessgui/
+    rules.cpp /opt/chessgui/
+    rules.h /opt/chessgui/
+    uciengine.cpp /opt/chessgui/
+    uciengine.h /opt/chessgui/
+    ucioptionsdialog.cpp /opt/chessgui/
+    ucioptionsdialog.h /opt/chessgui/
+    uciparser.cpp /opt/chessgui/
+    uciparser.h /opt/chessgui/
+    visionworker.cpp /opt/chessgui/
+    visionworker.h /opt/chessgui/
+    assets /opt/chessgui/assets
+    packaging /opt/chessgui/packaging
+    README.md /opt/chessgui/
+    THIRD_PARTY_NOTICES.md /opt/chessgui/
+
+%labels
+    Name ChessGui
+    Description Modern chess GUI with engine analysis
+    Version 1.0.4
+
+%help
+    ChessGui in an Apptainer/Singularity container.
+
+    Build (from the repository root so that the files listed in %files are
+    found):
+        apptainer build containers/ChessGui.sif containers/ChessGui.def
+
+    Run with an X11 display:
+        apptainer run containers/ChessGui.sif
+
+    The environment binds $HOME and /tmp automatically, so the application
+    configuration (~/.config) is shared with the host. When running over SSH,
+    pull-forward the X11 socket instead of a direct DISPLAY export, or run the
+    container with `--bind /tmp/.X11-unix:/tmp/.X11-unix --env DISPLAY=$DISPLAY`.
+
+%runscript
+    exec /usr/local/bin/ChessGui "$@"

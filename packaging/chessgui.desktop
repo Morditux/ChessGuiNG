@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ChessGui
+Comment=Modern chess GUI with heuristic evaluation and UCI engine support
+Exec=ChessGui
+Icon=chessgui
+Terminal=false
+StartupNotify=true
+Categories=Game;BoardGame;
+Keywords=chess;board;engine;UCI;PGN;
