@@ -34,12 +34,13 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
   - MultiPV principal variations table, depth, selective depth, node counts, NPS, search time, and best move reporting (`EngineOutputWidget`).
   - Real-time UCI log console and engine start/pause/stop controls.
 
-- **Remote Engines via chessgateway**
+- **Remote Engines via <a href="https://github.com/Morditux/chessgateway">chessgateway</a>**
   - `Engine -> Remote Engine...` opens a dialog to enter the gateway server address and port and query its available engines (`List available engines`).
   - The dialog talks to the server with the `chessgateway/1` JSON Lines protocol over TCP (`ChessGatewayClient`); the engine executable path never leaves the server.
   - The dialog also offers an optional access key: when the server requires client authentication (hello feature `access_keys`), the client authenticates with this key before listing engines or selecting one. An empty key on an authentication-requiring server is reported as a clear error.
   - The selected engine (host, port, engine id, name, version, and optional access key) is saved in the configuration file, replacing any local engine selection (and vice versa).
   - The remote engine is loaded as soon as it is selected (the gateway session starts immediately, so its UCI options are active without starting an analysis), and the same `GameController` flows (analysis, timed search, game state machine) drive it as they do a local engine.
+  
 
 - **Opening Book**
   - Uses the bundled `assets/books/book.bin` Crafty opening book through the `Book` class.
