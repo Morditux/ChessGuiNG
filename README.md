@@ -1,8 +1,11 @@
+
 # ChessGui
 
 A modern, fast, and lightweight desktop Chess GUI built with **C++20** and **Qt 6**.
 
 ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN recognition, complete chess rule validation, real-time classical heuristic position evaluation, UCI chess engine integration (local processes or remote engines behind a chessgateway server), a dynamic evaluation bar, live PGN move history, and automatic OS-standard configuration management.
+
+<img width="1062" height="1039" alt="image" src="https://github.com/user-attachments/assets/3f6f24f6-ee97-471f-92de-f7e4688d5849" />
 
 ---
 
