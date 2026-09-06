@@ -69,6 +69,7 @@ public:
     [[nodiscard]] QCheckBox *highlightLastMoveCheckBox() const;
     [[nodiscard]] QToolButton *flipBoardButton() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
+    [[nodiscard]] QAction *clearAnnotationsAction() const;
 
     bool loadEngine(const QString &enginePath);
     void loadConfiguration(const QString &configFilePath = QString());
@@ -103,6 +104,7 @@ public slots:
     void setWhiteToMove(bool whiteToMove);
     void stepBack();
     void stepForward();
+    void clearBoardAnnotations();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -179,6 +181,7 @@ private:
     QAction *showRecommendedMoveAction_ = nullptr;
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;
+    QAction *clearAnnotationsAction_ = nullptr;
 
     VisionWorker *visionWorker_ = nullptr;
     QThread *visionThread_ = nullptr;

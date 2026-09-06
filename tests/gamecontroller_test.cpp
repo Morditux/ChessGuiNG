@@ -84,6 +84,10 @@ private slots:
     void testRemoteEngineConfiguration();
     void testEagerAnalysisWithRemoteEngine();
     void testEagerComputerGameWithRemoteEngine();
+    void testAnnotationsAtCursor();
+    void testAnnotationsPersistAcrossNavigation();
+    void testAnnotationsTruncatedOnBranching();
+    void testPgnTextWithAnnotationsRoundTrip();
 };
 
 void GameControllerTest::initTestCase() {
@@ -540,6 +544,146 @@ void GameControllerTest::testEagerComputerGameWithRemoteEngine() {
 
     controller.stopEngine();
     QVERIFY(!controller.isComputerGameActive());
+}
+
+void GameControllerTest::testAnnotationsAtCursor() {
+    GameController controller;
+    QCOMPARE(controller.moveCursor(), 0);
+    QVERIFY(!controller.hasAnnotationsAtCursor());
+    QVERIFY(controller.arrowsAtCursor().empty());
+    QVERIFY(controller.squaresAtCursor().empty());
+
+    QSignalSpy spy(&controller, &GameController::annotationsChanged);
+    QSignalSpy historySpy(&controller, &GameController::historyChanged);
+
+    const std::vector<UserArrow> arrows{{Rules::Position{6, 4}, Rules::Position{4, 4}, PgnAnnotations::greenColor()}};
+    const std::vector<SquareAnnotation> squares{{Rules::Position{4, 4}, PgnAnnotations::redColor()}};
+
+    controller.setAnnotationsAtCursor(arrows, squares, QStringLiteral("Opening note"));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(historySpy.count(), 1);
+    QVERIFY(controller.hasAnnotationsAtCursor());
+    QCOMPARE(controller.arrowsAtCursor(), arrows);
+    QCOMPARE(controller.squaresAtCursor(), squares);
+    QCOMPARE(controller.commentAtCursor(), QStringLiteral("Opening note"));
+
+    // Redundant set does not re-emit
+    controller.setAnnotationsAtCursor(arrows, squares, QStringLiteral("Opening note"));
+    QCOMPARE(spy.count(), 1);
+
+    // Clear
+    controller.clearAnnotationsAtCursor();
+    QCOMPARE(spy.count(), 2);
+    QVERIFY(!controller.hasAnnotationsAtCursor());
+    QVERIFY(controller.arrowsAtCursor().empty());
+    QVERIFY(controller.squaresAtCursor().empty());
+}
+
+void GameControllerTest::testAnnotationsPersistAcrossNavigation() {
+    GameController controller;
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // 1. e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // 1... e5
+    QVERIFY(controller.requestMove({7, 6}, {5, 5})); // 2. Nf3
+    QCOMPARE(controller.moveCursor(), 3);
+
+    const std::vector<UserArrow> e4e5Arrow{{Rules::Position{4, 4}, Rules::Position{3, 4}, PgnAnnotations::blueColor()}};
+    const std::vector<SquareAnnotation> e4Square{{Rules::Position{4, 4}, PgnAnnotations::greenColor()}};
+
+    // Annotate ply 1 (after 1. e4)
+    QVERIFY(controller.goToMove(1));
+    QCOMPARE(controller.moveCursor(), 1);
+    controller.setAnnotationsAtCursor(e4e5Arrow, {});
+
+    // Annotate ply 0 (initial position)
+    QVERIFY(controller.goToMove(0));
+    QCOMPARE(controller.moveCursor(), 0);
+    controller.setAnnotationsAtCursor({}, e4Square);
+
+    // Navigate to ply 1 and verify
+    QVERIFY(controller.stepForward());
+    QCOMPARE(controller.moveCursor(), 1);
+    QCOMPARE(controller.arrowsAtCursor(), e4e5Arrow);
+    QVERIFY(controller.squaresAtCursor().empty());
+
+    // Navigate to ply 2 and verify empty
+    QVERIFY(controller.stepForward());
+    QCOMPARE(controller.moveCursor(), 2);
+    QVERIFY(!controller.hasAnnotationsAtCursor());
+
+    // Navigate back to ply 0 and verify
+    QVERIFY(controller.goToMove(0));
+    QCOMPARE(controller.moveCursor(), 0);
+    QVERIFY(controller.arrowsAtCursor().empty());
+    QCOMPARE(controller.squaresAtCursor(), e4Square);
+}
+
+void GameControllerTest::testAnnotationsTruncatedOnBranching() {
+    GameController controller;
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // 1. e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // 1... e5
+    QVERIFY(controller.requestMove({7, 6}, {5, 5})); // 2. Nf3
+    QCOMPARE(controller.uciMoves().size(), 3);
+
+    // Annotate ply 3
+    const std::vector<SquareAnnotation> f3Square{{Rules::Position{5, 5}, PgnAnnotations::orangeColor()}};
+    controller.setAnnotationsAtCursor({}, f3Square);
+    QVERIFY(controller.hasAnnotationsAt(3));
+
+    // Step back to ply 2 (after 1... e5)
+    QVERIFY(controller.goToMove(2));
+    QCOMPARE(controller.moveCursor(), 2);
+
+    // Play alternative move 2. Bc4
+    QVERIFY(controller.requestMove({7, 5}, {4, 2})); // f1c4
+    QCOMPARE(controller.moveCursor(), 3);
+    QCOMPARE(controller.uciMoves().size(), 3);
+    QCOMPARE(controller.uciMoves().last(), QStringLiteral("f1c4"));
+
+    // The old annotation at ply 3 must have been replaced with a fresh empty entry
+    QVERIFY(!controller.hasAnnotationsAt(3));
+    QVERIFY(controller.squaresAtCursor().empty());
+}
+
+void GameControllerTest::testPgnTextWithAnnotationsRoundTrip() {
+    GameController controller;
+
+    // Ply 0 annotation
+    const std::vector<SquareAnnotation> e4Square{{Rules::Position{4, 4}, PgnAnnotations::greenColor()}};
+    controller.setAnnotationsAtCursor({}, e4Square);
+
+    // 1. e4 with arrow and comment
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    const std::vector<UserArrow> e2e4Arrow{{Rules::Position{6, 4}, Rules::Position{4, 4}, PgnAnnotations::greenColor()}};
+    controller.setAnnotationsAtCursor(e2e4Arrow, {}, QStringLiteral("Best by test"));
+
+    // 1... e5 with red square
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    const std::vector<SquareAnnotation> e5Square{{Rules::Position{3, 4}, PgnAnnotations::redColor()}};
+    controller.setAnnotationsAtCursor({}, e5Square);
+
+    const QString pgn = controller.pgnText();
+    QVERIFY(pgn.contains(QStringLiteral("{ [%csl Ge4] }")));
+    QVERIFY(pgn.contains(QStringLiteral("1. e4 { [%cal Ge2e4] Best by test }")));
+    QVERIFY(pgn.contains(QStringLiteral("1... e5 { [%csl Re5] }")));
+
+    // Reload into another controller
+    GameController reloaded;
+    QVERIFY(reloaded.loadPgn(pgn));
+    QCOMPARE(reloaded.uciMoves().size(), 2);
+
+    // Verify ply 0
+    QCOMPARE(reloaded.squaresAt(0), e4Square);
+    QVERIFY(reloaded.arrowsAt(0).empty());
+
+    // Verify ply 1
+    QCOMPARE(reloaded.arrowsAt(1), e2e4Arrow);
+    QCOMPARE(reloaded.commentAt(1), QStringLiteral("Best by test"));
+
+    // Verify ply 2
+    QCOMPARE(reloaded.squaresAt(2), e5Square);
+
+    // Full round-trip PGN match
+    QCOMPARE(reloaded.pgnText(), pgn);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

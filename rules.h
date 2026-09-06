@@ -83,7 +83,10 @@ public:
     [[nodiscard]] QString toSan(const Move &move) const;
     bool tryMoveSan(const QString &san);
 
-    bool loadPgn(const QString &pgnContent, QStringList *outPgnMoves = nullptr, QStringList *outUciMoves = nullptr);
+    bool loadPgn(const QString &pgnContent,
+                 QStringList *outPgnMoves = nullptr,
+                 QStringList *outUciMoves = nullptr,
+                 QStringList *outComments = nullptr);
 
 private:
     using Board = std::array<std::array<std::optional<Piece>, 8>, 8>;

@@ -1039,7 +1039,10 @@ QString Rules::toSan(const Move &move) const {
     return san;
 }
 
-bool Rules::loadPgn(const QString &pgnContent, QStringList *outPgnMoves, QStringList *outUciMoves) {
+bool Rules::loadPgn(const QString &pgnContent,
+                    QStringList *outPgnMoves,
+                    QStringList *outUciMoves,
+                    QStringList *outComments) {
     if (pgnContent.trimmed().isEmpty()) {
         return false;
     }
@@ -1055,32 +1058,154 @@ bool Rules::loadPgn(const QString &pgnContent, QStringList *outPgnMoves, QString
         reset();
     }
 
-    // Clean body text
-    QString body = pgnContent;
-    // Remove headers [ ... ]
-    body.remove(QRegularExpression(QStringLiteral("\\[[^\\]]*\\]")));
-    // Remove comments { ... }
-    body.remove(QRegularExpression(QStringLiteral("\\{[^\\}]*\\}")));
-    // Remove ; comments
-    body.remove(QRegularExpression(QStringLiteral(";[^\\n]*")));
-    // Remove move numbers e.g. "1.", "1..."
-    body.remove(QRegularExpression(QStringLiteral("\\b\\d+\\.+")));
-    // Remove NAGs e.g. "$1"
-    body.remove(QRegularExpression(QStringLiteral("\\$\\d+")));
-    // Remove game termination results
-    body.remove(QRegularExpression(QStringLiteral("\\b(1-0|0-1|1/2-1/2|\\*)\\b")));
-
-    const QStringList tokens = body.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-
     int moveNum = 1;
     bool isWhite = (currentPlayer() == Color::White);
     QStringList pgnFormatted;
     QStringList uciList;
+    QStringList comments;
+    comments.append(QString()); // Slot for ply 0 (initial position)
+    int currentPly = 0;
 
-    for (const QString &token : tokens) {
+    const int n = pgnContent.size();
+    int i = 0;
+
+    while (i < n) {
+        // Skip whitespace
+        while (i < n && pgnContent[i].isSpace()) {
+            ++i;
+        }
+        if (i >= n) {
+            break;
+        }
+
+        const QChar ch = pgnContent[i];
+
+        // Header tag outside comments: [Tag "Value"]
+        if (ch == QLatin1Char('[')) {
+            ++i;
+            while (i < n && pgnContent[i] != QLatin1Char(']')) {
+                ++i;
+            }
+            if (i < n && pgnContent[i] == QLatin1Char(']')) {
+                ++i;
+            }
+            continue;
+        }
+
+        // Brace comment: { ... }
+        if (ch == QLatin1Char('{')) {
+            ++i;
+            QString commentText;
+            int depth = 1;
+            while (i < n) {
+                if (pgnContent[i] == QLatin1Char('{')) {
+                    ++depth;
+                    commentText += pgnContent[i];
+                    ++i;
+                } else if (pgnContent[i] == QLatin1Char('}')) {
+                    --depth;
+                    if (depth == 0) {
+                        ++i;
+                        break;
+                    }
+                    commentText += pgnContent[i];
+                    ++i;
+                } else {
+                    commentText += pgnContent[i];
+                    ++i;
+                }
+            }
+            commentText = commentText.trimmed();
+            if (!commentText.isEmpty() && currentPly < comments.size()) {
+                if (!comments[currentPly].isEmpty()) {
+                    comments[currentPly] += QLatin1Char(' ');
+                }
+                comments[currentPly] += commentText;
+            }
+            continue;
+        }
+
+        // Line comment: ; ... \n
+        if (ch == QLatin1Char(';')) {
+            ++i;
+            QString commentText;
+            while (i < n && pgnContent[i] != QLatin1Char('\n')) {
+                commentText += pgnContent[i];
+                ++i;
+            }
+            commentText = commentText.trimmed();
+            if (!commentText.isEmpty() && currentPly < comments.size()) {
+                if (!comments[currentPly].isEmpty()) {
+                    comments[currentPly] += QLatin1Char(' ');
+                }
+                comments[currentPly] += commentText;
+            }
+            continue;
+        }
+
+        // Variation: ( ... )
+        if (ch == QLatin1Char('(')) {
+            ++i;
+            int depth = 1;
+            while (i < n && depth > 0) {
+                if (pgnContent[i] == QLatin1Char('(')) {
+                    ++depth;
+                } else if (pgnContent[i] == QLatin1Char(')')) {
+                    --depth;
+                }
+                ++i;
+            }
+            continue;
+        }
+
+        // NAG: $1, $2, etc.
+        if (ch == QLatin1Char('$')) {
+            ++i;
+            while (i < n && pgnContent[i].isDigit()) {
+                ++i;
+            }
+            continue;
+        }
+
+        // Read token up to whitespace or delimiter
+        const int tokenStart = i;
+        while (i < n && !pgnContent[i].isSpace() &&
+               pgnContent[i] != QLatin1Char('{') &&
+               pgnContent[i] != QLatin1Char(';') &&
+               pgnContent[i] != QLatin1Char('(') &&
+               pgnContent[i] != QLatin1Char(')') &&
+               pgnContent[i] != QLatin1Char('[')) {
+            ++i;
+        }
+        const QString token = pgnContent.mid(tokenStart, i - tokenStart);
+
+        if (token.isEmpty()) {
+            continue;
+        }
+
+        // Check for game termination
+        if (token == QLatin1String("1-0") || token == QLatin1String("0-1") ||
+            token == QLatin1String("1/2-1/2") || token == QLatin1String("*")) {
+            break;
+        }
+
+        // Check for move number (e.g. "1." or "1..." or "12.")
+        if (token.contains(QLatin1Char('.'))) {
+            bool isMoveNum = true;
+            for (const QChar tc : token) {
+                if (!tc.isDigit() && tc != QLatin1Char('.')) {
+                    isMoveNum = false;
+                    break;
+                }
+            }
+            if (isMoveNum) {
+                continue;
+            }
+        }
+
+        // Attempt to parse SAN
         const auto moveOpt = parseSan(token);
         if (!moveOpt.has_value()) {
-            // Unrecognized token or end of moves
             continue;
         }
 
@@ -1092,6 +1217,8 @@ bool Rules::loadPgn(const QString &pgnContent, QStringList *outPgnMoves, QString
         }
 
         uciList.append(uci);
+        ++currentPly;
+        comments.append(QString()); // Slot for this new ply
 
         if (isWhite) {
             pgnFormatted.append(QStringLiteral("%1. %2").arg(moveNum).arg(san.isEmpty() ? token : san));
@@ -1112,6 +1239,9 @@ bool Rules::loadPgn(const QString &pgnContent, QStringList *outPgnMoves, QString
     }
     if (outUciMoves) {
         *outUciMoves = uciList;
+    }
+    if (outComments) {
+        *outComments = comments;
     }
 
     return true;

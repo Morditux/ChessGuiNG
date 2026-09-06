@@ -51,6 +51,7 @@ private slots:
     void testSanPromotion();
     void testSanDisambiguation();
     void testPgnLoading();
+    void testPgnLoadingWithComments();
     void testMainWindowPasteFen();
     void testMainWindowNewGame();
     void testWhiteToPlayCheckBox();
@@ -243,6 +244,28 @@ void RulesTest::testPgnLoading() {
     QCOMPARE(uciMoves.size(), 7);
     QVERIFY(rules.isCheckmate(Rules::Color::Black));
     QVERIFY(rules.isGameOver());
+}
+
+void RulesTest::testPgnLoadingWithComments() {
+    Rules rules;
+    const QString pgn = QStringLiteral(
+        "[Event \"Commented Game\"]\n"
+        "[Result \"*\"]\n\n"
+        "{ Root note [%csl Ge4] } 1. e4 { [%cal Ge2e4] King pawn } e5 { [%csl Re5] } 2. Nf3 (2. Bc4) Nc6 ; line note\n *"
+    );
+
+    QStringList pgnMoves;
+    QStringList uciMoves;
+    QStringList comments;
+    QVERIFY(rules.loadPgn(pgn, &pgnMoves, &uciMoves, &comments));
+
+    QCOMPARE(uciMoves.size(), 4);
+    QCOMPARE(comments.size(), 5); // ply 0 to 4
+    QCOMPARE(comments.at(0), QStringLiteral("Root note [%csl Ge4]"));
+    QCOMPARE(comments.at(1), QStringLiteral("[%cal Ge2e4] King pawn"));
+    QCOMPARE(comments.at(2), QStringLiteral("[%csl Re5]"));
+    QCOMPARE(comments.at(3), QString());
+    QCOMPARE(comments.at(4), QStringLiteral("line note"));
 }
 
 void RulesTest::testMainWindowPasteFen() {

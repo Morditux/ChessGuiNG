@@ -117,12 +117,18 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
 
     connect(gameController_, &GameController::positionChanged, this, [this] {
         board_->setRules(gameController_->rules());
+        board_->setUserArrows(gameController_->arrowsAtCursor());
+        board_->setSquareAnnotations(gameController_->squaresAtCursor());
         const QSignalBlocker blocker(whiteToPlayCheckBox_);
         whiteToPlayCheckBox_->setChecked(
             gameController_->rules().currentPlayer() == Rules::Color::White);
         moveListWidget_->setCurrentMove(gameController_->moveCursor());
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
         updateNavigationActions();
+    });
+    connect(gameController_, &GameController::annotationsChanged, this, [this] {
+        board_->setUserArrows(gameController_->arrowsAtCursor());
+        board_->setSquareAnnotations(gameController_->squaresAtCursor());
     });
     connect(gameController_, &GameController::historyChanged, this, [this](const QString &text) {
         Q_UNUSED(text)
@@ -338,6 +344,10 @@ QLabel *MainWindow::visionStatusLabel() const {
     return visionStatusLabel_;
 }
 
+QAction *MainWindow::clearAnnotationsAction() const {
+    return clearAnnotationsAction_;
+}
+
 bool MainWindow::loadEngine(const QString &enginePath) {
     if (enginePath.isEmpty()) {
         return false;
@@ -519,6 +529,11 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event) {
+    if (event->key() == Qt::Key_Escape) {
+        clearBoardAnnotations();
+        event->accept();
+        return;
+    }
     if (event->matches(QKeySequence::Paste)) {
         pasteFromClipboard();
         event->accept();
@@ -1242,6 +1257,12 @@ void MainWindow::stepForward() {
     gameController_->stepForward();
 }
 
+void MainWindow::clearBoardAnnotations() {
+    if (board_) {
+        board_->clearUserAnnotations();
+    }
+}
+
 void MainWindow::updateNavigationActions() {
     if (stepBackAction_) {
         stepBackAction_->setEnabled(gameController_->canStepBack());
@@ -1541,6 +1562,19 @@ void MainWindow::setupUi() {
     addAction(pasteFenAction_);
     connect(pasteFenAction_, &QAction::triggered,
             this, &MainWindow::pasteFromClipboard);
+    menuGames->addSeparator();
+
+    clearAnnotationsAction_ = menuGames->addAction(tr("Clear board annotations"));
+    clearAnnotationsAction_->setObjectName(QStringLiteral("clearAnnotationsAction"));
+    clearAnnotationsAction_->setShortcut(QKeySequence(Qt::Key_Escape));
+    clearAnnotationsAction_->setShortcutContext(Qt::WindowShortcut);
+    clearAnnotationsAction_->setToolTip(
+        tr("Clear all user-drawn arrows and square highlights"));
+    clearAnnotationsAction_->setStatusTip(clearAnnotationsAction_->toolTip());
+    addAction(clearAnnotationsAction_);
+    connect(clearAnnotationsAction_, &QAction::triggered,
+            this, &MainWindow::clearBoardAnnotations);
+
     menubar->addMenu(menuGames);
 
     // Menu Engine
@@ -1903,6 +1937,10 @@ void MainWindow::setupUi() {
             .arg(handleColor.name(), hoverColor.name()));
 
     connect(board_, &ChessBoard::pieceMoved, this, &MainWindow::pieceMoved);
+    connect(board_, &ChessBoard::userAnnotationsChanged, this, [this] {
+        gameController_->setAnnotationsAtCursor(board_->userArrows(),
+                                               board_->squareAnnotations());
+    });
 
     setActivityMessage(
         tr("Paste or drop a chessboard screenshot to detect its position."));

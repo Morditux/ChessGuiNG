@@ -13,6 +13,7 @@
 #include <QWidget>
 
 #include "rules.h"
+#include "pgnannotations.h"
 
 #include <optional>
 #include <vector>
@@ -59,10 +60,20 @@ public:
     [[nodiscard]] std::optional<Rules::Move> recommendedMovePreview() const;
     void clearMovePreviews();
 
+    [[nodiscard]] const std::vector<UserArrow> &userArrows() const;
+    [[nodiscard]] const std::vector<SquareAnnotation> &squareAnnotations() const;
+    void setUserArrows(const std::vector<UserArrow> &arrows);
+    void setSquareAnnotations(const std::vector<SquareAnnotation> &annotations);
+    void toggleUserArrow(const Rules::Position &from, const Rules::Position &to, const QColor &color);
+    void toggleSquareAnnotation(const Rules::Position &pos, const QColor &color);
+    void clearUserAnnotations();
+    [[nodiscard]] bool hasUserAnnotations() const;
+
 signals:
     void pieceMoved(QChar piece, Rules::Position oldPosition,
                     Rules::Position newPosition);
     void boardFlippedChanged(bool flipped);
+    void userAnnotationsChanged();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -101,6 +112,12 @@ private:
     bool boardFlipped_ = false;
     std::optional<Rules::Move> computerMovePreview_;
     std::optional<Rules::Move> recommendedMovePreview_;
+    std::vector<UserArrow> userArrows_;
+    std::vector<SquareAnnotation> squareAnnotations_;
+    std::optional<Rules::Position> rightPressPosition_;
+    QPoint rightPressPoint_;
+    QPoint rightDragCurrentPoint_;
+    bool isRightDragging_ = false;
 
     [[nodiscard]] BoardGeometry boardGeometry() const;
     [[nodiscard]] Rules::Position displayedPosition(Rules::Position position) const;
@@ -117,6 +134,9 @@ private:
     void updateHoveredPosition(const QPoint &point);
     void drawMoveArrow(QPainter &painter, const Rules::Move &move,
                        const QColor &color, Qt::PenStyle style) const;
+    void drawArrow(QPainter &painter, const QPointF &start, const QPointF &end,
+                   const QColor &color, Qt::PenStyle style) const;
+    [[nodiscard]] static QColor annotationColorForModifiers(Qt::KeyboardModifiers modifiers);
 };
 
 

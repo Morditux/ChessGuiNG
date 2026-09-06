@@ -17,6 +17,7 @@
 #include "computergamesettings.h"
 #include "enginebackend.h"
 #include "heuristiceval.h"
+#include "pgnannotations.h"
 #include "rules.h"
 #include "uciengine.h"
 
@@ -103,6 +104,22 @@ public:
     [[nodiscard]] Rules::Color computerColor() const;
     [[nodiscard]] const ComputerGameSettings &currentComputerGameSettings() const;
 
+    // Visual annotations
+    [[nodiscard]] std::vector<UserArrow> arrowsAtCursor() const;
+    [[nodiscard]] std::vector<SquareAnnotation> squaresAtCursor() const;
+    [[nodiscard]] QString commentAtCursor() const;
+    void setAnnotationsAtCursor(const std::vector<UserArrow> &arrows,
+                                const std::vector<SquareAnnotation> &squares,
+                                const QString &comment = QString());
+    void clearAnnotationsAtCursor();
+    [[nodiscard]] bool hasAnnotationsAtCursor() const;
+
+    [[nodiscard]] const std::vector<UserArrow> &arrowsAt(int ply) const;
+    [[nodiscard]] const std::vector<SquareAnnotation> &squaresAt(int ply) const;
+    [[nodiscard]] QString commentAt(int ply) const;
+    [[nodiscard]] bool hasAnnotationsAt(int ply) const;
+    [[nodiscard]] int annotationCount() const;
+
 signals:
     void positionChanged();
     void historyChanged(const QString &pgnText);
@@ -114,6 +131,7 @@ signals:
     void computerGameStateChanged(bool active);
     void computerMovePreviewChanged(const std::optional<Rules::Move> &move);
     void recommendedMovePreviewChanged(const std::optional<Rules::Move> &move);
+    void annotationsChanged();
 
 private:
     void sendPositionToEngine();
@@ -136,6 +154,8 @@ private:
     void refreshMoveHistory();
     void updatePgnResult(const QString &result);
     [[nodiscard]] QString completedGameResult() const;
+    [[nodiscard]] QString buildPgnMovetext() const;
+    [[nodiscard]] QString formattedCommentAt(int ply) const;
     [[nodiscard]] static std::optional<Rules::Move> parseUciMove(const QString &moveText);
     [[nodiscard]] EngineBackend *selectedBackend() const;
     [[nodiscard]] EngineBackend *activeBackendForCommands() const;
@@ -150,6 +170,7 @@ private:
     QString historyPrefix_;
     QStringList pgnMoves_;
     QStringList uciMoves_;
+    QVector<PlyAnnotations> plyAnnotations_;
     QStringList pgnHeaders_;
     int pgnMoveNumber_ = 1;
     int moveCursor_ = 0;

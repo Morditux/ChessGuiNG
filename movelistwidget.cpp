@@ -89,6 +89,10 @@ void MoveListWidget::rebuildModel() {
         bool blackStartsPair = false;
         const QStringList tokens = pair.split(QLatin1Char(' '), Qt::SkipEmptyParts);
         for (const QString &token : tokens) {
+            if (token.startsWith(QLatin1Char('{')) || token.endsWith(QLatin1Char('}')) ||
+                token.startsWith(QLatin1String("[%"))) {
+                continue;
+            }
             if (token.endsWith(QLatin1Char('.'))) {
                 number = token.chopped(token.endsWith(QLatin1String("...")) ? 3 : 1);
                 blackStartsPair = token.endsWith(QLatin1String("..."));
@@ -206,6 +210,26 @@ void MoveListWidget::keyPressEvent(QKeyEvent *event) {
         activateMove(currentIndex());
         event->accept();
         return;
+    }
+    if (event->key() == Qt::Key_Left) {
+        if (currentPly_ > 0) {
+            emit moveSelected(currentPly_ - 1);
+            event->accept();
+            return;
+        }
+    } else if (event->key() == Qt::Key_Right) {
+        int maxPly = 0;
+        for (const int p : whitePlys_) {
+            maxPly = qMax(maxPly, p);
+        }
+        for (const int p : blackPlys_) {
+            maxPly = qMax(maxPly, p);
+        }
+        if (currentPly_ < maxPly) {
+            emit moveSelected(currentPly_ + 1);
+            event->accept();
+            return;
+        }
     }
     QTableView::keyPressEvent(event);
 }

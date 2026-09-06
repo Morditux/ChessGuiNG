@@ -135,6 +135,7 @@ void ChessBoard::setRules(const Rules &rules) {
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
     clearSelection();
+    clearUserAnnotations();
     update();
 }
 
@@ -143,6 +144,7 @@ void ChessBoard::reset() {
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
     clearSelection();
+    clearUserAnnotations();
     update();
 }
 
@@ -172,6 +174,94 @@ void ChessBoard::clearMovePreviews() {
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
     update();
+}
+
+const std::vector<UserArrow> &ChessBoard::userArrows() const {
+    return userArrows_;
+}
+
+const std::vector<SquareAnnotation> &ChessBoard::squareAnnotations() const {
+    return squareAnnotations_;
+}
+
+void ChessBoard::setUserArrows(const std::vector<UserArrow> &arrows) {
+    if (userArrows_ == arrows) {
+        return;
+    }
+    userArrows_ = arrows;
+    emit userAnnotationsChanged();
+    update();
+}
+
+void ChessBoard::setSquareAnnotations(const std::vector<SquareAnnotation> &annotations) {
+    if (squareAnnotations_ == annotations) {
+        return;
+    }
+    squareAnnotations_ = annotations;
+    emit userAnnotationsChanged();
+    update();
+}
+
+void ChessBoard::toggleUserArrow(const Rules::Position &from, const Rules::Position &to, const QColor &color) {
+    auto it = std::find_if(userArrows_.begin(), userArrows_.end(), [&](const UserArrow &a) {
+        return a.from == from && a.to == to;
+    });
+    if (it != userArrows_.end()) {
+        if (it->color == color) {
+            userArrows_.erase(it);
+        } else {
+            it->color = color;
+        }
+    } else {
+        userArrows_.push_back({from, to, color});
+    }
+    emit userAnnotationsChanged();
+    update();
+}
+
+void ChessBoard::toggleSquareAnnotation(const Rules::Position &pos, const QColor &color) {
+    auto it = std::find_if(squareAnnotations_.begin(), squareAnnotations_.end(), [&](const SquareAnnotation &s) {
+        return s.position == pos;
+    });
+    if (it != squareAnnotations_.end()) {
+        if (it->color == color) {
+            squareAnnotations_.erase(it);
+        } else {
+            it->color = color;
+        }
+    } else {
+        squareAnnotations_.push_back({pos, color});
+    }
+    emit userAnnotationsChanged();
+    update();
+}
+
+void ChessBoard::clearUserAnnotations() {
+    if (userArrows_.empty() && squareAnnotations_.empty()) {
+        return;
+    }
+    userArrows_.clear();
+    squareAnnotations_.clear();
+    emit userAnnotationsChanged();
+    update();
+}
+
+bool ChessBoard::hasUserAnnotations() const {
+    return !userArrows_.empty() || !squareAnnotations_.empty();
+}
+
+QColor ChessBoard::annotationColorForModifiers(Qt::KeyboardModifiers modifiers) {
+    if (modifiers.testFlag(Qt::ShiftModifier) &&
+        (modifiers.testFlag(Qt::AltModifier) || modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::MetaModifier))) {
+        return PgnAnnotations::orangeColor();
+    }
+    if (modifiers.testFlag(Qt::ShiftModifier)) {
+        return PgnAnnotations::redColor();
+    }
+    if (modifiers.testFlag(Qt::AltModifier) || modifiers.testFlag(Qt::ControlModifier) || modifiers.testFlag(Qt::MetaModifier)) {
+        return PgnAnnotations::blueColor();
+    }
+    return PgnAnnotations::greenColor();
 }
 
 ChessBoard::BoardGeometry ChessBoard::boardGeometry() const {
@@ -324,6 +414,19 @@ void ChessBoard::updateHoveredPosition(const QPoint &point) {
 }
 
 void ChessBoard::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::RightButton) {
+        const QPoint point = event->position().toPoint();
+        const auto pos = positionAt(point);
+        if (pos.has_value()) {
+            rightPressPosition_ = pos;
+            rightPressPoint_ = point;
+            rightDragCurrentPoint_ = point;
+            isRightDragging_ = false;
+        }
+        event->accept();
+        return;
+    }
+
     if (event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
@@ -331,6 +434,13 @@ void ChessBoard::mousePressEvent(QMouseEvent *event) {
 
     const QPoint point = event->position().toPoint();
     pressedPosition_ = positionAt(point);
+
+    const bool isPieceClick = pressedPosition_.has_value() &&
+                              (isCurrentPlayerPiece(*pressedPosition_) || isLegalDestination(*pressedPosition_));
+    if (!isPieceClick && hasUserAnnotations()) {
+        clearUserAnnotations();
+    }
+
     pressPoint_ = point;
     dragCursorPosition_ = point;
     dragging_ = false;
@@ -357,6 +467,20 @@ void ChessBoard::mousePressEvent(QMouseEvent *event) {
 
 void ChessBoard::mouseMoveEvent(QMouseEvent *event) {
     const QPoint point = event->position().toPoint();
+
+    if ((event->buttons() & Qt::RightButton) && rightPressPosition_.has_value()) {
+        rightDragCurrentPoint_ = point;
+        if (!isRightDragging_ &&
+            (point - rightPressPoint_).manhattanLength() >= QApplication::startDragDistance()) {
+            isRightDragging_ = true;
+        }
+        if (isRightDragging_) {
+            update();
+        }
+        event->accept();
+        return;
+    }
+
     dragCursorPosition_ = point - dragOffset_;
     updateHoveredPosition(point);
 
@@ -385,6 +509,26 @@ void ChessBoard::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ChessBoard::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::RightButton) {
+        if (rightPressPosition_.has_value()) {
+            const QPoint point = event->position().toPoint();
+            const auto releasedPosition = positionAt(point);
+            const QColor color = annotationColorForModifiers(event->modifiers());
+
+            if (!isRightDragging_) {
+                toggleSquareAnnotation(*rightPressPosition_, color);
+            } else if (releasedPosition.has_value() && *releasedPosition != *rightPressPosition_) {
+                toggleUserArrow(*rightPressPosition_, *releasedPosition, color);
+            }
+
+            rightPressPosition_.reset();
+            isRightDragging_ = false;
+            update();
+        }
+        event->accept();
+        return;
+    }
+
     if (event->button() != Qt::LeftButton) {
         QWidget::mouseReleaseEvent(event);
         return;
@@ -442,6 +586,10 @@ void ChessBoard::leaveEvent(QEvent *event) {
     if (!dragging_) {
         setCursor(Qt::ArrowCursor);
     }
+    if (isRightDragging_) {
+        isRightDragging_ = false;
+        rightPressPosition_.reset();
+    }
     update();
 
     QWidget::leaveEvent(event);
@@ -455,8 +603,11 @@ void ChessBoard::drawMoveArrow(QPainter &painter, const Rules::Move &move,
         return;
     }
 
-    const QPointF start = fromSquare.center();
-    const QPointF end = toSquare.center();
+    drawArrow(painter, fromSquare.center(), toSquare.center(), color, style);
+}
+
+void ChessBoard::drawArrow(QPainter &painter, const QPointF &start, const QPointF &end,
+                           const QColor &color, Qt::PenStyle style) const {
     const QLineF line(start, end);
     if (line.length() < 1.0) {
         return;
@@ -542,6 +693,12 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
         }
     }
 
+    for (const auto &annotation : squareAnnotations_) {
+        QColor highlightColor = annotation.color;
+        highlightColor.setAlpha(130);
+        painter.fillRect(squareRect(annotation.position), highlightColor);
+    }
+
     painter.setRenderHint(QPainter::Antialiasing, true);
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
@@ -590,6 +747,29 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
     }
     if (recommendedMovePreview_.has_value()) {
         drawMoveArrow(painter, *recommendedMovePreview_, QColor("#2878b5"), Qt::SolidLine);
+    }
+
+    for (const auto &arrow : userArrows_) {
+        const QRect fromSquare = squareRect(arrow.from);
+        const QRect toSquare = squareRect(arrow.to);
+        if (!fromSquare.isEmpty() && !toSquare.isEmpty()) {
+            drawArrow(painter, fromSquare.center(), toSquare.center(), arrow.color, Qt::SolidLine);
+        }
+    }
+
+    if (isRightDragging_ && rightPressPosition_.has_value()) {
+        const auto targetPos = positionAt(rightDragCurrentPoint_);
+        const QColor previewColor = annotationColorForModifiers(QApplication::keyboardModifiers());
+        const QRect fromSquare = squareRect(*rightPressPosition_);
+        if (!fromSquare.isEmpty()) {
+            if (targetPos.has_value() && *targetPos != *rightPressPosition_) {
+                drawArrow(painter, fromSquare.center(), squareRect(*targetPos).center(),
+                          previewColor, Qt::SolidLine);
+            } else {
+                drawArrow(painter, fromSquare.center(), rightDragCurrentPoint_,
+                          previewColor, Qt::DashLine);
+            }
+        }
     }
 
     painter.setRenderHint(QPainter::Antialiasing, false);

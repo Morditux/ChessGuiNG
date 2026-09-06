@@ -20,6 +20,7 @@ GameController::GameController(QObject *parent)
     : QObject(parent)
     , engine_(new UciEngine(this))
     , gateway_(new ChessGatewayClient(this)) {
+    plyAnnotations_.resize(1);
     connect(engine_, &EngineBackend::stateChanged,
             this, [this](EngineBackend::State) { handleEngineStateChanged(); });
     connect(engine_, &EngineBackend::analysisUpdated,
@@ -170,6 +171,8 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
     initialFen_ = fen;
     uciMoves_.clear();
     pgnMoves_.clear();
+    plyAnnotations_.clear();
+    plyAnnotations_.resize(1);
     pgnHeaders_.clear();
     pgnResult_ = QStringLiteral("*");
     whiteToMove_ = (rules_.currentPlayer() == Rules::Color::White);
@@ -202,6 +205,8 @@ void GameController::newGame() {
     rules_.reset();
     uciMoves_.clear();
     pgnMoves_.clear();
+    plyAnnotations_.clear();
+    plyAnnotations_.resize(1);
     pgnHeaders_.clear();
     pgnResult_ = QStringLiteral("*");
     whiteToMove_ = true;
@@ -223,8 +228,9 @@ bool GameController::loadPgn(const QString &pgnContent) {
     Rules newRules;
     QStringList pgnFormatted;
     QStringList uciList;
+    QStringList rawComments;
 
-    if (!newRules.loadPgn(pgnContent, &pgnFormatted, &uciList)) {
+    if (!newRules.loadPgn(pgnContent, &pgnFormatted, &uciList, &rawComments)) {
         return false;
     }
 
@@ -239,6 +245,18 @@ bool GameController::loadPgn(const QString &pgnContent) {
 
     pgnMoves_ = pgnFormatted;
     uciMoves_ = uciList;
+    plyAnnotations_.clear();
+    plyAnnotations_.resize(uciMoves_.size() + 1);
+    for (int i = 0; i < plyAnnotations_.size(); ++i) {
+        if (i < rawComments.size() && !rawComments.at(i).isEmpty()) {
+            PgnAnnotations::decode(rawComments.at(i),
+                                   plyAnnotations_[i].arrows,
+                                   plyAnnotations_[i].squares);
+            plyAnnotations_[i].comment =
+                PgnAnnotations::stripAnnotationTags(rawComments.at(i));
+        }
+    }
+
     pgnHeaders_ = PgnFile::parseHeaders(pgnContent);
     pgnResult_ = PgnFile::tagValue(pgnContent, QStringLiteral("Result"));
     if (pgnResult_.isEmpty()) {
@@ -607,16 +625,86 @@ QString GameController::pgnHeaderText() const {
     return historyPrefix_;
 }
 
+QString GameController::formattedCommentAt(int ply) const {
+    if (ply < 0 || ply >= plyAnnotations_.size()) {
+        return QString();
+    }
+    const auto &ann = plyAnnotations_.at(ply);
+    return PgnAnnotations::formatComment(ann.arrows, ann.squares, ann.comment);
+}
+
+QString GameController::buildPgnMovetext() const {
+    Rules replay;
+    if (!initialFen_.isEmpty() && replay.loadFen(initialFen_)) {
+        // Replay from initial FEN
+    } else {
+        replay.reset();
+    }
+
+    int moveNum = 1;
+    QString text;
+
+    // Ply 0 comment
+    const QString ply0Comment = formattedCommentAt(0);
+    if (!ply0Comment.isEmpty()) {
+        text += QStringLiteral("{ %1 }").arg(ply0Comment);
+    }
+
+    bool previousWhiteHadComment = false;
+    for (int i = 0; i < uciMoves_.size(); ++i) {
+        const auto move = parseUciMove(uciMoves_.at(i));
+        if (!move.has_value() || !replay.isValidMove(*move)) {
+            break;
+        }
+        const Rules::Color movingColor = replay.currentPlayer();
+        const QString san = replay.toSan(*move);
+        replay.tryMove(*move);
+
+        const int ply = i + 1;
+        const QString comment = formattedCommentAt(ply);
+        const bool hasComment = !comment.isEmpty();
+
+        if (movingColor == Rules::Color::White) {
+            if (!text.isEmpty()) {
+                text += QLatin1Char(' ');
+            }
+            text += QStringLiteral("%1. %2").arg(moveNum).arg(san);
+            if (hasComment) {
+                text += QStringLiteral(" { %1 }").arg(comment);
+                previousWhiteHadComment = true;
+            } else {
+                previousWhiteHadComment = false;
+            }
+        } else {
+            if (!text.isEmpty()) {
+                text += QLatin1Char(' ');
+            }
+            if (previousWhiteHadComment || (i == 0)) {
+                text += QStringLiteral("%1... %2").arg(moveNum).arg(san);
+            } else {
+                text += san;
+            }
+            if (hasComment) {
+                text += QStringLiteral(" { %1 }").arg(comment);
+            }
+            previousWhiteHadComment = false;
+            ++moveNum;
+        }
+    }
+
+    return text.trimmed();
+}
+
 QString GameController::pgnText() const {
-    if (pgnHeaders_.isEmpty() && pgnMoves_.isEmpty()) {
+    if (pgnHeaders_.isEmpty() && uciMoves_.isEmpty() && !hasAnnotationsAt(0)) {
         return historyPrefix_;
     }
 
     QString history;
     if (!pgnHeaders_.isEmpty()) {
-        history = pgnHeaders_.join(QChar('\n')) + tr("\n\n");
+        history = pgnHeaders_.join(QChar('\n')) + QStringLiteral("\n\n");
     }
-    history += pgnMoves_.join(QChar('\n'));
+    history += buildPgnMovetext();
     if (!pgnHeaders_.isEmpty()) {
         if (!history.endsWith(QChar('\n')) && !history.isEmpty()) {
             history += QChar(' ');
@@ -624,6 +712,84 @@ QString GameController::pgnText() const {
         history += pgnResult_;
     }
     return history;
+}
+
+std::vector<UserArrow> GameController::arrowsAtCursor() const {
+    return arrowsAt(moveCursor_);
+}
+
+std::vector<SquareAnnotation> GameController::squaresAtCursor() const {
+    return squaresAt(moveCursor_);
+}
+
+QString GameController::commentAtCursor() const {
+    return commentAt(moveCursor_);
+}
+
+void GameController::setAnnotationsAtCursor(const std::vector<UserArrow> &arrows,
+                                            const std::vector<SquareAnnotation> &squares,
+                                            const QString &comment) {
+    if (moveCursor_ < 0 || moveCursor_ >= plyAnnotations_.size()) {
+        return;
+    }
+    auto &ann = plyAnnotations_[moveCursor_];
+    if (ann.arrows == arrows && ann.squares == squares && ann.comment == comment) {
+        return;
+    }
+    ann.arrows = arrows;
+    ann.squares = squares;
+    ann.comment = comment;
+    refreshMoveHistory();
+    emit annotationsChanged();
+}
+
+void GameController::clearAnnotationsAtCursor() {
+    setAnnotationsAtCursor({}, {});
+}
+
+bool GameController::hasAnnotationsAtCursor() const {
+    return hasAnnotationsAt(moveCursor_);
+}
+
+const std::vector<UserArrow> &GameController::arrowsAt(int ply) const {
+    static const std::vector<UserArrow> emptyArrows;
+    if (ply >= 0 && ply < plyAnnotations_.size()) {
+        return plyAnnotations_.at(ply).arrows;
+    }
+    return emptyArrows;
+}
+
+const std::vector<SquareAnnotation> &GameController::squaresAt(int ply) const {
+    static const std::vector<SquareAnnotation> emptySquares;
+    if (ply >= 0 && ply < plyAnnotations_.size()) {
+        return plyAnnotations_.at(ply).squares;
+    }
+    return emptySquares;
+}
+
+QString GameController::commentAt(int ply) const {
+    if (ply >= 0 && ply < plyAnnotations_.size()) {
+        return plyAnnotations_.at(ply).comment;
+    }
+    return {};
+}
+
+bool GameController::hasAnnotationsAt(int ply) const {
+    if (ply >= 0 && ply < plyAnnotations_.size()) {
+        const auto &ann = plyAnnotations_.at(ply);
+        return !ann.arrows.empty() || !ann.squares.empty() || !ann.comment.isEmpty();
+    }
+    return false;
+}
+
+int GameController::annotationCount() const {
+    int count = 0;
+    for (const auto &ann : plyAnnotations_) {
+        if (!ann.empty()) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 bool GameController::isComputerGameActive() const {
@@ -694,6 +860,8 @@ void GameController::beginComputerGame() {
     initialFen_.clear();
     pgnMoves_.clear();
     uciMoves_.clear();
+    plyAnnotations_.clear();
+    plyAnnotations_.resize(1);
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
     whiteToMove_ = true;
@@ -861,10 +1029,14 @@ bool GameController::recordMove(const Rules::Move &move) {
         // A move played from the middle of the history discards the
         // abandoned continuation.
         uciMoves_.resize(moveCursor_);
+        if (plyAnnotations_.size() > moveCursor_ + 1) {
+            plyAnnotations_.resize(moveCursor_ + 1);
+        }
         rebuildPgnHistory();
     }
 
     uciMoves_.append(Rules::toUci(move));
+    plyAnnotations_.append(PlyAnnotations{});
     appendPgnMove(san, movingColor);
     ++moveCursor_;
 

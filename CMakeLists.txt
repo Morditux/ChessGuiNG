@@ -91,6 +91,8 @@ add_library(chesscore OBJECT
         gatewayclient.h
         heuristiceval.cpp
         heuristiceval.h
+        pgnannotations.cpp
+        pgnannotations.h
         pgnfile.cpp
         pgnfile.h
         rules.cpp
@@ -101,7 +103,7 @@ add_library(chesscore OBJECT
         uciparser.h
 )
 target_include_directories(chesscore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(chesscore PUBLIC Qt6::Core Qt6::Network)
+target_link_libraries(chesscore PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
 
 # The opening book resource is embedded once here and is available to every
 # target linking chesscore.
@@ -350,4 +352,10 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(UciOptionsDialogTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
     add_test(NAME UciOptionsDialogTest COMMAND UciOptionsDialogTest)
+
+    qt_add_executable(ChessBoardTest
+            tests/chessboard_test.cpp
+    )
+    target_link_libraries(ChessBoardTest PRIVATE chessui chesscore Qt6::Test)
+    add_test(NAME ChessBoardTest COMMAND ChessBoardTest)
 endif()
