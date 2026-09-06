@@ -27,15 +27,35 @@ struct SquareAnnotation {
     friend bool operator==(const SquareAnnotation &lhs, const SquareAnnotation &rhs) = default;
 };
 
+enum class AuditSeverity {
+    None,
+    Inaccuracy,
+    Mistake,
+    Blunder
+};
+
+struct AuditAnnotation {
+    AuditSeverity severity = AuditSeverity::None;
+    int centipawnLoss = 0;
+    QString bestMove;
+    QString playedMove;
+    bool forcedMate = false;
+
+    friend bool operator==(const AuditAnnotation &, const AuditAnnotation &) = default;
+    [[nodiscard]] bool isValid() const { return severity != AuditSeverity::None; }
+};
+
 struct PlyAnnotations {
+    // User-owned data is intentionally separate from engine audit data.
     std::vector<UserArrow> arrows;
     std::vector<SquareAnnotation> squares;
     QString comment;
+    AuditAnnotation audit;
 
     friend bool operator==(const PlyAnnotations &lhs, const PlyAnnotations &rhs) = default;
 
     [[nodiscard]] bool empty() const {
-        return arrows.empty() && squares.empty() && comment.isEmpty();
+        return arrows.empty() && squares.empty() && comment.isEmpty() && !audit.isValid();
     }
 };
 
@@ -73,6 +93,13 @@ bool decode(const QString &comment,
 [[nodiscard]] QString formatComment(const std::vector<UserArrow> &arrows,
                                     const std::vector<SquareAnnotation> &squares,
                                     const QString &commentText = QString());
+[[nodiscard]] QString auditSeverityText(AuditSeverity severity);
+[[nodiscard]] QString auditSymbol(AuditSeverity severity);
+[[nodiscard]] int auditNag(AuditSeverity severity);
+[[nodiscard]] QColor auditColor(AuditSeverity severity);
+[[nodiscard]] QString formatAuditComment(const AuditAnnotation &audit);
+[[nodiscard]] std::optional<AuditAnnotation> decodeAudit(const QString &comment);
+[[nodiscard]] QString stripAuditTags(const QString &comment);
 
 } // namespace PgnAnnotations
 

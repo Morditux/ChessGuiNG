@@ -10,6 +10,40 @@ namespace PgnFile {
 
 namespace {
 
+struct RawBlock {
+    QString text;
+    int start = 0;
+    int end = 0;
+};
+
+QVector<RawBlock> splitBlocks(const QString &content) {
+    QVector<RawBlock> blocks;
+    static const QRegularExpression separator(QStringLiteral("\\n\\s*\\n"));
+
+    int blockStart = 0;
+    const auto matches = separator.globalMatch(content);
+    auto appendBlock = [&blocks, &content](int start, int end) {
+        while (start < end && content.at(start).isSpace()) {
+            ++start;
+        }
+        while (end > start && content.at(end - 1).isSpace()) {
+            --end;
+        }
+        if (start < end) {
+            blocks.append({content.mid(start, end - start), start, end});
+        }
+    };
+
+    auto it = matches;
+    while (it.hasNext()) {
+        const QRegularExpressionMatch match = it.next();
+        appendBlock(blockStart, match.capturedStart());
+        blockStart = match.capturedEnd();
+    }
+    appendBlock(blockStart, content.size());
+    return blocks;
+}
+
 bool isTagBlock(const QString &block) {
     const QStringList lines = block.split(QChar('\n'), Qt::SkipEmptyParts);
     if (lines.isEmpty()) {
@@ -38,26 +72,63 @@ QString cleanBody(const QString &gameText) {
 
 } // namespace
 
-QStringList splitGames(const QString &content) {
-    const QStringList blocks =
-        content.split(QRegularExpression(QStringLiteral("\\n\\s*\\n")),
-                      Qt::SkipEmptyParts);
+QVector<GameSegment> splitGameSegments(const QString &content) {
+    const QVector<RawBlock> blocks = splitBlocks(content);
 
+    QVector<GameSegment> games;
+    int currentStart = -1;
+    int currentEnd = -1;
+    const auto finishCurrent = [&games, &content, &currentStart, &currentEnd] {
+        if (currentStart >= 0 && currentEnd >= currentStart) {
+            games.append({content.mid(currentStart, currentEnd - currentStart),
+                          currentStart, currentEnd});
+        }
+        currentStart = -1;
+        currentEnd = -1;
+    };
+
+    for (const RawBlock &rawBlock : blocks) {
+        const QString &block = rawBlock.text;
+        if (isTagBlock(block)) {
+            finishCurrent();
+            currentStart = rawBlock.start;
+            currentEnd = rawBlock.end;
+        } else if (currentStart >= 0) {
+            currentEnd = rawBlock.end;
+        }
+    }
+
+    finishCurrent();
+
+    // Keep the existing headerless-PGN behaviour useful while still giving a
+    // source range that can be replaced if the document contains one game.
+    if (games.isEmpty() && !content.trimmed().isEmpty()) {
+        int start = 0;
+        int end = content.size();
+        while (start < end && content.at(start).isSpace()) {
+            ++start;
+        }
+        while (end > start && content.at(end - 1).isSpace()) {
+            --end;
+        }
+        games.append({content.mid(start, end - start), start, end});
+    }
+    return games;
+}
+
+QStringList splitGames(const QString &content) {
     QStringList games;
     QString current;
-    for (const QString &rawBlock : blocks) {
-        const QString block = rawBlock.trimmed();
-        if (block.isEmpty()) {
-            continue;
-        }
+    for (const RawBlock &rawBlock : splitBlocks(content)) {
+        const QString &block = rawBlock.text;
         if (isTagBlock(block)) {
             if (!current.isEmpty()) {
                 games.append(current);
                 current.clear();
             }
-            current += block;
-        } else {
-            if (!current.isEmpty() && !current.endsWith(QChar('\n'))) {
+            current = block;
+        } else if (!current.isEmpty()) {
+            if (!current.endsWith(QChar('\n'))) {
                 current += QChar(' ');
             }
             current += block;
@@ -67,6 +138,23 @@ QStringList splitGames(const QString &content) {
         games.append(current);
     }
     return games;
+}
+
+QString replaceGame(const QString &content,
+                    const QVector<GameSegment> &segments,
+                    int index,
+                    const QString &replacement) {
+    if (index < 0 || index >= segments.size()) {
+        return content;
+    }
+
+    const GameSegment &segment = segments.at(index);
+    if (segment.start < 0 || segment.end < segment.start ||
+        segment.end > content.size()) {
+        return content;
+    }
+
+    return content.left(segment.start) + replacement + content.mid(segment.end);
 }
 
 QStringList parseHeaders(const QString &gameText) {

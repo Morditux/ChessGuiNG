@@ -119,22 +119,31 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         board_->setRules(gameController_->rules());
         board_->setUserArrows(gameController_->arrowsAtCursor());
         board_->setSquareAnnotations(gameController_->squaresAtCursor());
+        board_->setAuditAnnotation(gameController_->auditAt(gameController_->moveCursor()));
         const QSignalBlocker blocker(whiteToPlayCheckBox_);
         whiteToPlayCheckBox_->setChecked(
             gameController_->rules().currentPlayer() == Rules::Color::White);
         moveListWidget_->setCurrentMove(gameController_->moveCursor());
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
         updateNavigationActions();
+        refreshAuditUi();
     });
     connect(gameController_, &GameController::annotationsChanged, this, [this] {
         board_->setUserArrows(gameController_->arrowsAtCursor());
         board_->setSquareAnnotations(gameController_->squaresAtCursor());
+        board_->setAuditAnnotation(gameController_->auditAt(gameController_->moveCursor()));
     });
     connect(gameController_, &GameController::historyChanged, this, [this](const QString &text) {
         Q_UNUSED(text)
         pgnHeaderTextEdit_->setPlainText(gameController_->pgnHeaderText());
         moveListWidget_->setPgn(gameController_->pgnMoves(),
                                 gameController_->moveCursor());
+        QVector<AuditAnnotation> annotations;
+        annotations.reserve(gameController_->uciMoves().size() + 1);
+        for (int ply = 0; ply <= gameController_->uciMoves().size(); ++ply) {
+            annotations.append(gameController_->auditAt(ply));
+        }
+        moveListWidget_->setAuditAnnotations(annotations);
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
     });
     connect(moveListWidget_, &MoveListWidget::moveSelected, this, [this](int plyIndex) {
@@ -145,6 +154,10 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
     });
     connect(gameController_, &GameController::statusMessage, this, [this](const QString &message) {
         setActivityMessage(message);
+    });
+    connect(gameController_, &GameController::auditStateChanged, this, [this](bool) {
+        refreshAuditUi();
+        updateNavigationActions();
     });
     connect(gameController_, &GameController::computerGameStateChanged, this, [this](bool active) {
         whitePendulum_->stop();
@@ -346,6 +359,22 @@ QLabel *MainWindow::visionStatusLabel() const {
 
 QAction *MainWindow::clearAnnotationsAction() const {
     return clearAnnotationsAction_;
+}
+
+QAction *MainWindow::analyzeGameAction() const {
+    return analyzeGameAction_;
+}
+
+QString MainWindow::loadedPgnContent() const {
+    return loadedPgnContent_;
+}
+
+QStringList MainWindow::loadedPgnGames() const {
+    return loadedPgnGames_;
+}
+
+int MainWindow::selectedPgnGameIndex() const {
+    return selectedPgnGameIndex_;
 }
 
 bool MainWindow::loadEngine(const QString &enginePath) {
@@ -874,6 +903,8 @@ void MainWindow::onVisionResult(const VisionResult &result) {
         return;
     }
 
+    clearLoadedPgnSource();
+
     if (resumeAnalysisAfterVision_) {
         resumeAnalysisAfterVision_ = false;
         gameController_->startAnalysis();
@@ -948,7 +979,7 @@ bool MainWindow::loadPgnFile(const QString &filePath) {
     }
 
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         QMessageBox::warning(this, tr("Error"),
                              tr("Could not open file:\n%1").arg(path));
         return false;
@@ -960,17 +991,38 @@ bool MainWindow::loadPgnFile(const QString &filePath) {
     return loadPgnContent(content);
 }
 
-bool MainWindow::loadPgnContent(const QString &pgnContent) {
-    const QStringList games = PgnFile::splitGames(pgnContent);
+bool MainWindow::loadPgnContent(const QString &pgnContent, int selectedGameIndex) {
+    const QVector<PgnFile::GameSegment> segments =
+        PgnFile::splitGameSegments(pgnContent);
+    QStringList games;
+    for (const PgnFile::GameSegment &segment : segments) {
+        games.append(segment.text);
+    }
+
     QString game;
+    int selectedIndex = -1;
     if (games.size() <= 1) {
+        if (selectedGameIndex > 0) {
+            return false;
+        }
         game = games.isEmpty() ? pgnContent : games.first();
+        selectedIndex = segments.isEmpty() ? -1 : 0;
+    } else if (selectedGameIndex >= 0) {
+        if (selectedGameIndex >= games.size()) {
+            return false;
+        }
+        selectedIndex = selectedGameIndex;
+        game = games.at(selectedIndex);
     } else {
         PgnSelectDialog dialog(games, this);
         if (dialog.exec() != QDialog::Accepted) {
             return false;
         }
-        game = dialog.selectedGame();
+        selectedIndex = dialog.selectedIndex();
+        if (selectedIndex < 0 || selectedIndex >= games.size()) {
+            return false;
+        }
+        game = games.at(selectedIndex);
     }
 
     if (!gameController_->loadPgn(game)) {
@@ -979,7 +1031,32 @@ bool MainWindow::loadPgnContent(const QString &pgnContent) {
         return false;
     }
 
+    rememberLoadedPgnSource(pgnContent, segments, selectedIndex);
     return true;
+}
+
+void MainWindow::clearLoadedPgnSource() {
+    loadedPgnContent_.clear();
+    loadedPgnGames_.clear();
+    loadedPgnGameSegments_.clear();
+    selectedPgnGameIndex_ = -1;
+}
+
+void MainWindow::rememberLoadedPgnSource(
+    const QString &content,
+    const QVector<PgnFile::GameSegment> &segments,
+    int selectedGameIndex) {
+    loadedPgnContent_ = content;
+    loadedPgnGames_.clear();
+    loadedPgnGames_.reserve(segments.size());
+    for (const PgnFile::GameSegment &segment : segments) {
+        loadedPgnGames_.append(segment.text);
+    }
+    loadedPgnGameSegments_ = segments;
+    selectedPgnGameIndex_ = selectedGameIndex >= 0 &&
+                                    selectedGameIndex < segments.size()
+                                ? selectedGameIndex
+                                : -1;
 }
 
 void MainWindow::savePgn() {
@@ -987,7 +1064,8 @@ void MainWindow::savePgn() {
 }
 
 bool MainWindow::savePgnFile(const QString &filePath) {
-    if (gameController_->pgnText().trimmed().isEmpty()) {
+    const QString currentGame = gameController_->pgnText();
+    if (currentGame.trimmed().isEmpty()) {
         QMessageBox::information(this, tr("Save PGN"),
                                  tr("There is no game to save."));
         return false;
@@ -1011,15 +1089,40 @@ bool MainWindow::savePgnFile(const QString &filePath) {
         path += QStringLiteral(".pgn");
     }
 
+    const bool replacingLoadedGame =
+        loadedPgnGameSegments_.size() > 1 &&
+        selectedPgnGameIndex_ >= 0 &&
+        selectedPgnGameIndex_ < loadedPgnGameSegments_.size();
+    QString pgnToSave = currentGame;
+    if (replacingLoadedGame) {
+        pgnToSave = PgnFile::replaceGame(loadedPgnContent_,
+                                         loadedPgnGameSegments_,
+                                         selectedPgnGameIndex_,
+                                         currentGame);
+    }
+
     QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    const QIODevice::OpenMode writeMode =
+        replacingLoadedGame ? QIODevice::WriteOnly
+                            : QIODevice::WriteOnly | QIODevice::Text;
+    if (!file.open(writeMode)) {
         QMessageBox::warning(this, tr("Error"),
                              tr("Could not open file for writing:\n%1").arg(path));
         return false;
     }
 
-    file.write(gameController_->pgnText().toUtf8());
+    file.write(pgnToSave.toUtf8());
     file.close();
+
+    if (!loadedPgnGameSegments_.isEmpty()) {
+        const QVector<PgnFile::GameSegment> savedSegments =
+            PgnFile::splitGameSegments(pgnToSave);
+        if (savedSegments.size() == loadedPgnGameSegments_.size()) {
+            rememberLoadedPgnSource(pgnToSave, savedSegments,
+                                    selectedPgnGameIndex_);
+        }
+    }
+
     setActivityMessage(tr("Game saved to %1").arg(path));
     return true;
 }
@@ -1034,7 +1137,12 @@ bool MainWindow::pasteFen(const QString &fenText) {
         return false;
     }
 
-    return gameController_->loadFen(fen, tr("Position loaded from FEN."));
+    if (!gameController_->loadFen(fen, tr("Position loaded from FEN."))) {
+        return false;
+    }
+
+    clearLoadedPgnSource();
+    return true;
 }
 
 void MainWindow::pasteFromClipboard() {
@@ -1062,6 +1170,10 @@ void MainWindow::setWhiteToMove(bool whiteToMove) {
         return;
     }
 
+    if ((whiteToMove && gameController_->rules().currentPlayer() == Rules::Color::Black) ||
+        (!whiteToMove && gameController_->rules().currentPlayer() == Rules::Color::White)) {
+        clearLoadedPgnSource();
+    }
     gameController_->setSideToMove(whiteToMove);
 }
 
@@ -1082,6 +1194,7 @@ void MainWindow::playAgainstComputer() {
 
     whitePendulum_->stop();
     blackPendulum_->stop();
+    clearLoadedPgnSource();
     gameController_->startComputerGame(dialog.settings());
 }
 
@@ -1222,6 +1335,14 @@ void MainWindow::configureUciOptions() {
 void MainWindow::toggleAnalysis() {
     gameController_->toggleAnalysis();
 }
+
+void MainWindow::toggleGameAudit() {
+    if (gameController_->isGameAuditActive()) {
+        gameController_->cancelGameAudit();
+    } else if (!gameController_->startGameAudit()) {
+        setActivityMessage(tr("Game analysis is unavailable. Load a completed game and connect an engine."));
+    }
+}
 void MainWindow::startEngineAnalysis() {
     gameController_->startAnalysis();
 }
@@ -1243,6 +1364,7 @@ void MainWindow::stopEngineAnalysis() {
 
 void MainWindow::newGame() {
     gameController_->newGame();
+    clearLoadedPgnSource();
     if (engineOutputWidget_) {
         engineOutputWidget_->clearAnalysis();
     }
@@ -1422,6 +1544,19 @@ void MainWindow::refreshEngineStateUi() {
             break;
     }
     engineOutputWidget_->setEngineStatus(statusStr);
+    refreshAuditUi();
+}
+
+void MainWindow::refreshAuditUi() {
+    if (!analyzeGameAction_) return;
+    const bool active = gameController_->isGameAuditActive();
+    analyzeGameAction_->setEnabled(active || gameController_->canStartGameAudit());
+    analyzeGameAction_->setText(active ? tr("Cancel Game Analysis") : tr("Analyze Game"));
+    const QString description = active
+        ? tr("Cancel the fixed-depth game analysis")
+        : tr("Analyze the main line at depth 18 and mark inaccuracies, mistakes and blunders");
+    analyzeGameAction_->setToolTip(description);
+    analyzeGameAction_->setStatusTip(description);
 }
 
 void MainWindow::setActivityMessage(const QString &message) {
@@ -1616,6 +1751,14 @@ void MainWindow::setupUi() {
     toggleAnalysisAction_->setEnabled(false);
     connect(toggleAnalysisAction_, &QAction::triggered, this, &MainWindow::toggleAnalysis);
 
+    analyzeGameAction_ = menuEngine->addAction(tr("Analyze Game"));
+    analyzeGameAction_->setObjectName(QStringLiteral("analyzeGameAction"));
+    configureToolAction(analyzeGameAction_,
+                        QStringLiteral(":/icons/toolbar-analysis.svg"),
+                        tr("Analyze the main line at depth 18"));
+    analyzeGameAction_->setEnabled(false);
+    connect(analyzeGameAction_, &QAction::triggered, this, &MainWindow::toggleGameAudit);
+
     stopEngineAction_ = menuEngine->addAction(tr("Disconnect Engine"));
     configureToolAction(stopEngineAction_,
                         QStringLiteral(":/icons/toolbar-disconnect-engine.svg"),
@@ -1648,6 +1791,7 @@ void MainWindow::setupUi() {
     toolBar->addAction(loadEngineAction);
     toolBar->addAction(configureEngineAction_);
     toolBar->addAction(toggleAnalysisAction_);
+    toolBar->addAction(analyzeGameAction_);
     toolBar->addAction(stopEngineAction_);
 
     auto *layout = new QGridLayout(this);

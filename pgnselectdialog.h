@@ -18,6 +18,7 @@ public:
     explicit PgnSelectDialog(const QStringList &games, QWidget *parent = nullptr);
 
     [[nodiscard]] QString selectedGame() const;
+    [[nodiscard]] int selectedIndex() const;
 
 private slots:
     void onSelectionChanged();

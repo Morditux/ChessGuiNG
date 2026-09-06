@@ -22,6 +22,7 @@ private slots:
     void testSetPgnResetsCurrentMove();
     void testFocusAndActivationDoNotChangeDisplayedMove();
     void testEmptyCellsDoNotNavigate();
+    void testAuditMarkersExposeSeverityAndDescription();
 };
 
 QString cellText(MoveListWidget &widget, int row, int column) {
@@ -208,6 +209,27 @@ void MoveListWidgetTest::testEmptyCellsDoNotNavigate() {
     clickOnCell(widget, 1, 0);
     QCOMPARE(spy.takeFirst().first().toInt(), 1);
     QCOMPARE(widget.currentMoveText(), QStringLiteral("12… Nf6"));
+}
+
+void MoveListWidgetTest::testAuditMarkersExposeSeverityAndDescription() {
+    MoveListWidget widget;
+    widget.setPgn({QStringLiteral("1. e4 e5")}, 1);
+    QVector<AuditAnnotation> annotations(3);
+    annotations[1] = {AuditSeverity::Inaccuracy, 70, QStringLiteral("d2d4"),
+                      QStringLiteral("e2e4"), false};
+    annotations[2] = {AuditSeverity::Blunder, 240, QStringLiteral("c7c5"),
+                      QStringLiteral("e7e5"), false};
+    widget.setAuditAnnotations(annotations);
+
+    const QModelIndex white = widget.model()->index(1, 1);
+    const QModelIndex black = widget.model()->index(1, 2);
+    QCOMPARE(white.data().toString(), QStringLiteral("e4 ?!"));
+    QCOMPARE(black.data().toString(), QStringLiteral("e5 ??"));
+    QCOMPARE(white.data(MoveListWidget::AuditSeverityRole).toInt(),
+             static_cast<int>(AuditSeverity::Inaccuracy));
+    QCOMPARE(black.data(MoveListWidget::AuditLossRole).toInt(), 240);
+    QVERIFY(black.data(Qt::AccessibleDescriptionRole).toString().contains(QStringLiteral("Blunder")));
+    QCOMPARE(widget.currentMoveText(), QStringLiteral("1. e4 ?!"));
 }
 
 QTEST_MAIN(MoveListWidgetTest)

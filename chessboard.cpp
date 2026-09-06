@@ -176,6 +176,16 @@ void ChessBoard::clearMovePreviews() {
     update();
 }
 
+void ChessBoard::setAuditAnnotation(const AuditAnnotation &annotation) {
+    if (auditAnnotation_ == annotation) return;
+    auditAnnotation_ = annotation;
+    update();
+}
+
+AuditAnnotation ChessBoard::auditAnnotation() const {
+    return auditAnnotation_;
+}
+
 const std::vector<UserArrow> &ChessBoard::userArrows() const {
     return userArrows_;
 }
@@ -699,6 +709,25 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
         painter.fillRect(squareRect(annotation.position), highlightColor);
     }
 
+    // The audit overlay is deliberately not part of user annotations: it is
+    // a read-only visual explanation of the selected audited move.
+    if (auditAnnotation_.isValid()) {
+        const auto parseAuditMove = [](const QString &text) -> std::optional<Rules::Move> {
+            if (text.size() < 4) return std::nullopt;
+            const int fromColumn = text.at(0).toLatin1() - 'a';
+            const int fromRow = 8 - text.at(1).digitValue();
+            const int toColumn = text.at(2).toLatin1() - 'a';
+            const int toRow = 8 - text.at(3).digitValue();
+            Rules::Move move{{fromRow, fromColumn}, {toRow, toColumn}, Rules::PieceType::None};
+            return Rules::isInside(move.from) && Rules::isInside(move.to) ? std::optional<Rules::Move>(move) : std::nullopt;
+        };
+        if (const auto move = parseAuditMove(auditAnnotation_.playedMove); move.has_value()) {
+            QColor color = PgnAnnotations::auditColor(auditAnnotation_.severity);
+            color.setAlpha(125);
+            painter.fillRect(squareRect(move->to), color);
+        }
+    }
+
     painter.setRenderHint(QPainter::Antialiasing, true);
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
@@ -747,6 +776,17 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
     }
     if (recommendedMovePreview_.has_value()) {
         drawMoveArrow(painter, *recommendedMovePreview_, QColor("#2878b5"), Qt::SolidLine);
+    }
+    if (auditAnnotation_.isValid()) {
+        const QString text = auditAnnotation_.playedMove;
+        if (text.size() >= 4) {
+            const Rules::Move move{{8 - text.at(1).digitValue(), text.at(0).toLatin1() - 'a'},
+                                   {8 - text.at(3).digitValue(), text.at(2).toLatin1() - 'a'},
+                                   Rules::PieceType::None};
+            if (Rules::isInside(move.from) && Rules::isInside(move.to)) {
+                drawMoveArrow(painter, move, PgnAnnotations::auditColor(auditAnnotation_.severity), Qt::SolidLine);
+            }
+        }
     }
 
     for (const auto &arrow : userArrows_) {

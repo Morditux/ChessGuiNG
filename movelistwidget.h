@@ -12,13 +12,15 @@
 #include <QTableView>
 #include <QVector>
 
+#include "pgnannotations.h"
+
 class QStandardItemModel;
 
 class MoveListWidget : public QTableView {
     Q_OBJECT
 
 public:
-    enum { CurrentMoveRole = Qt::UserRole + 1 };
+    enum { CurrentMoveRole = Qt::UserRole + 1, AuditSeverityRole, AuditLossRole };
 
     explicit MoveListWidget(QWidget *parent = nullptr);
 
@@ -30,6 +32,7 @@ public:
     // Re-renders the list with a different current ply without changing the
     // displayed moves.
     void setCurrentMove(int currentPly);
+    void setAuditAnnotations(const QVector<AuditAnnotation> &annotations);
 
     [[nodiscard]] int currentMove() const;
     [[nodiscard]] QString currentMoveText() const;
@@ -53,6 +56,7 @@ private:
     QVector<int> whitePlys_;
     QVector<int> blackPlys_;
     int currentPly_ = 0;
+    QVector<AuditAnnotation> auditAnnotations_;
 };
 
 #endif // CHESSGUI_MOVELISTWIDGET_H

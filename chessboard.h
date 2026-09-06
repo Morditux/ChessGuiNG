@@ -59,6 +59,8 @@ public:
     void setRecommendedMovePreview(const std::optional<Rules::Move> &move);
     [[nodiscard]] std::optional<Rules::Move> recommendedMovePreview() const;
     void clearMovePreviews();
+    void setAuditAnnotation(const AuditAnnotation &annotation);
+    [[nodiscard]] AuditAnnotation auditAnnotation() const;
 
     [[nodiscard]] const std::vector<UserArrow> &userArrows() const;
     [[nodiscard]] const std::vector<SquareAnnotation> &squareAnnotations() const;
@@ -112,6 +114,7 @@ private:
     bool boardFlipped_ = false;
     std::optional<Rules::Move> computerMovePreview_;
     std::optional<Rules::Move> recommendedMovePreview_;
+    AuditAnnotation auditAnnotation_;
     std::vector<UserArrow> userArrows_;
     std::vector<SquareAnnotation> squareAnnotations_;
     std::optional<Rules::Position> rightPressPosition_;

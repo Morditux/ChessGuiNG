@@ -193,4 +193,90 @@ QString formatComment(const std::vector<UserArrow> &arrows,
     return tags + QLatin1Char(' ') + text;
 }
 
+QString auditSeverityText(AuditSeverity severity) {
+    switch (severity) {
+    case AuditSeverity::Inaccuracy: return QStringLiteral("Inaccuracy");
+    case AuditSeverity::Mistake: return QStringLiteral("Mistake");
+    case AuditSeverity::Blunder: return QStringLiteral("Blunder");
+    case AuditSeverity::None: return {};
+    }
+    return {};
+}
+
+QString auditSymbol(AuditSeverity severity) {
+    switch (severity) {
+    case AuditSeverity::Inaccuracy: return QStringLiteral("?!");
+    case AuditSeverity::Mistake: return QStringLiteral("?");
+    case AuditSeverity::Blunder: return QStringLiteral("??");
+    case AuditSeverity::None: return {};
+    }
+    return {};
+}
+
+int auditNag(AuditSeverity severity) {
+    switch (severity) {
+    case AuditSeverity::Inaccuracy: return 6;
+    case AuditSeverity::Mistake: return 2;
+    case AuditSeverity::Blunder: return 4;
+    case AuditSeverity::None: return 0;
+    }
+    return 0;
+}
+
+QColor auditColor(AuditSeverity severity) {
+    switch (severity) {
+    case AuditSeverity::Inaccuracy: return orangeColor();
+    case AuditSeverity::Mistake: return redColor();
+    case AuditSeverity::Blunder: return QColor(QStringLiteral("#7a1f1f"));
+    case AuditSeverity::None: return QColor();
+    }
+    return QColor();
+}
+
+QString formatAuditComment(const AuditAnnotation &audit) {
+    if (!audit.isValid()) {
+        return {};
+    }
+    const QString readable = audit.forcedMate
+        ? QStringLiteral("ChessGui audit: %1; forced mate lost; best move %2.")
+              .arg(auditSeverityText(audit.severity).toLower(), audit.bestMove)
+        : QStringLiteral("ChessGui audit: %1, %2 cp lost; best move %3.")
+              .arg(auditSeverityText(audit.severity).toLower())
+              .arg(audit.centipawnLoss)
+              .arg(audit.bestMove);
+    return QStringLiteral("%1 [%chessgui-audit severity=%2 loss=%3 best=%4 played=%5 mate=%6]")
+        .arg(readable, auditSeverityText(audit.severity).toLower())
+        .arg(audit.centipawnLoss)
+        .arg(audit.bestMove, audit.playedMove)
+        .arg(audit.forcedMate ? 1 : 0);
+}
+
+std::optional<AuditAnnotation> decodeAudit(const QString &comment) {
+    static const QRegularExpression expression(
+        QStringLiteral(R"(\[%chessgui-audit\s+severity=(inaccuracy|mistake|blunder)\s+loss=(\d+)\s+best=([^\s\]]*)\s+played=([^\s\]]*)\s+mate=([01])\])"));
+    const auto match = expression.match(comment);
+    if (!match.hasMatch()) {
+        return std::nullopt;
+    }
+    AuditAnnotation audit;
+    const QString severity = match.captured(1);
+    audit.severity = severity == QStringLiteral("inaccuracy") ? AuditSeverity::Inaccuracy
+                   : severity == QStringLiteral("mistake") ? AuditSeverity::Mistake
+                   : AuditSeverity::Blunder;
+    audit.centipawnLoss = match.captured(2).toInt();
+    audit.bestMove = match.captured(3);
+    audit.playedMove = match.captured(4);
+    audit.forcedMate = match.captured(5) == QStringLiteral("1");
+    return audit;
+}
+
+QString stripAuditTags(const QString &comment) {
+    QString result = comment;
+    result.remove(QRegularExpression(QStringLiteral(R"(\s*\[%chessgui-audit\s+severity=(?:inaccuracy|mistake|blunder)\s+loss=\d+\s+best=[^\s\]]*\s+played=[^\s\]]*\s+mate=[01]\])")));
+    result.remove(QRegularExpression(
+        QStringLiteral(R"(ChessGui audit: (?:inaccuracy|mistake|blunder)(?:, \d+ cp lost|; forced mate lost); best move [^.]+\.\s*)"),
+        QRegularExpression::CaseInsensitiveOption));
+    return result.trimmed();
+}
+
 } // namespace PgnAnnotations

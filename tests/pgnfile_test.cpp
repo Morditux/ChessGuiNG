@@ -15,6 +15,7 @@ private slots:
     void testParseHeaders();
     void testMoveCount();
     void testMoveCountIgnoresCommentsAndNags();
+    void testReplaceGamePreservesOtherGames();
 };
 
 void PgnFileTest::testSplitSingleGame() {
@@ -111,6 +112,37 @@ void PgnFileTest::testMoveCountIgnoresCommentsAndNags() {
         "1. e4 {King's pawn} e5 $1 2. Nf3 ; a comment\n"
         "2... Nc6 1-0");
     QCOMPARE(PgnFile::moveCount(game), 4);
+}
+
+void PgnFileTest::testReplaceGamePreservesOtherGames() {
+    const QString pgn = QStringLiteral(
+        "[Event \"First\"]\r\n"
+        "[White \"Alice\"]\r\n"
+        "\r\n"
+        "1. e4 e5 *\r\n"
+        "\r\n\r\n"
+        "[Event \"Second\"]\r\n"
+        "[White \"Bob\"]\r\n"
+        "\r\n"
+        "1. d4 d5 *\r\n\r\n");
+    const QVector<PgnFile::GameSegment> segments =
+        PgnFile::splitGameSegments(pgn);
+
+    QCOMPARE(segments.size(), 2);
+    const QString secondHeader = QStringLiteral("[Event \"Second\"]");
+    const int secondStart = pgn.indexOf(secondHeader);
+    QVERIFY(secondStart >= 0);
+
+    const QString replacement = QStringLiteral(
+        "[Event \"First\"]\n\n1. e4 $4 { analysis } *");
+    const QString replaced = PgnFile::replaceGame(pgn, segments, 0, replacement);
+    const int replacedSecondStart = replaced.indexOf(secondHeader);
+    QVERIFY(replacedSecondStart >= 0);
+
+    QCOMPARE(replaced.mid(replacedSecondStart), pgn.mid(secondStart));
+    QCOMPARE(replaced.left(segments.at(0).start),
+             pgn.left(segments.at(0).start));
+    QVERIFY(replaced.contains(replacement));
 }
 
 QTEST_GUILESS_MAIN(PgnFileTest)

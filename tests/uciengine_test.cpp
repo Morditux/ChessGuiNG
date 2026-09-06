@@ -28,9 +28,48 @@
 #include "uciparser.h"
 
 #include <QFile>
+#include <QDir>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+
+namespace {
+
+QString writeMultiGameAuditEngineScript(const QString &fileName) {
+    const QString scriptPath = QDir::current().filePath(fileName);
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return {};
+    }
+
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then\n"
+        "    echo \"id name MultiGameAuditEngine\"\n"
+        "    echo \"uciok\"\n"
+        "  elif [ \"$line\" = \"isready\" ]; then\n"
+        "    echo \"readyok\"\n"
+        "  elif [ \"$line\" = \"go depth 18\" ]; then\n"
+        "    echo \"info depth 18 score cp 100 pv d2d4\"\n"
+        "    echo \"bestmove d2d4\"\n"
+        "  elif [ \"$line\" = \"stop\" ]; then\n"
+        "    echo \"bestmove 0000\"\n"
+        "  elif [ \"$line\" = \"quit\" ]; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "done\n";
+
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser |
+                                      QFile::ReadGroup | QFile::ExeGroup |
+                                      QFile::ReadOther | QFile::ExeOther);
+    return scriptPath;
+}
+
+} // namespace
 
 class UciEngineTest : public QObject {
     Q_OBJECT
@@ -43,6 +82,8 @@ private slots:
     void testMainWindowControlButtons();
     void testMainWindowComputerGame();
     void testMainWindowRemoteEngineEagerLoad();
+    void testMainWindowGameAuditActionAvailability();
+    void testMainWindowMultiGameAuditSavePreservesOtherGames();
 };
 
 void UciEngineTest::testInitialState() {
@@ -72,6 +113,75 @@ void UciEngineTest::testMainWindowEngineIntegration() {
     // Engine output widget is wired
     QVERIFY(window.engineOutputWidget() != nullptr);
     QCOMPARE(window.engineOutputWidget()->engineStatus(), QStringLiteral("Disconnected"));
+}
+
+void UciEngineTest::testMainWindowGameAuditActionAvailability() {
+    MainWindow window;
+    QVERIFY(window.analyzeGameAction() != nullptr);
+    QCOMPARE(window.analyzeGameAction()->text(), QStringLiteral("Analyze Game"));
+    QVERIFY(!window.analyzeGameAction()->isEnabled());
+    QVERIFY(window.loadPgnContent(QStringLiteral("1. e4 e5")));
+    // A game alone is insufficient: the audit must not start without an
+    // operational engine.
+    QVERIFY(!window.analyzeGameAction()->isEnabled());
+}
+
+void UciEngineTest::testMainWindowMultiGameAuditSavePreservesOtherGames() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString scriptPath = writeMultiGameAuditEngineScript(
+        QStringLiteral("mock_multi_game_audit_engine.sh"));
+    QVERIFY(!scriptPath.isEmpty());
+
+    const QString pgn = QStringLiteral(
+        "[Event \"First\"]\r\n"
+        "[White \"Alice\"]\r\n"
+        "[Black \"Bob\"]\r\n"
+        "[Result \"*\"]\r\n"
+        "\r\n"
+        "1. e4 e5 *\r\n"
+        "\r\n\r\n"
+        "[Event \"Second\"]\r\n"
+        "[White \"Carol\"]\r\n"
+        "[Black \"Dan\"]\r\n"
+        "[Result \"*\"]\r\n"
+        "\r\n"
+        "1. d4 d5 2. c4 c6 *\r\n\r\n");
+    const QString secondHeader = QStringLiteral("[Event \"Second\"]");
+    const int originalSecondStart = pgn.indexOf(secondHeader);
+    QVERIFY(originalSecondStart >= 0);
+
+    MainWindow window(nullptr, tempDir.filePath(QStringLiteral("chessGui.conf")));
+    QVERIFY(window.loadPgnContent(pgn, 0));
+    QCOMPARE(window.loadedPgnContent(), pgn);
+    QCOMPARE(window.loadedPgnGames().size(), 2);
+    QCOMPARE(window.selectedPgnGameIndex(), 0);
+
+    QVERIFY(window.uciEngine()->startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Ready, 2000);
+
+    QTRY_VERIFY_WITH_TIMEOUT(window.analyzeGameAction()->isEnabled(), 2000);
+    window.analyzeGameAction()->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.gameController()->isGameAuditActive(), 5000);
+    QVERIFY(!window.gameController()->auditFindings().isEmpty());
+
+    const QString savePath = tempDir.filePath(QStringLiteral("multi-game.pgn"));
+    QVERIFY(window.savePgnFile(savePath));
+
+    QFile savedFile(savePath);
+    QVERIFY(savedFile.open(QIODevice::ReadOnly));
+    const QString saved = QString::fromUtf8(savedFile.readAll());
+    savedFile.close();
+
+    const int savedSecondStart = saved.indexOf(secondHeader);
+    QVERIFY(savedSecondStart >= 0);
+    QCOMPARE(saved.mid(savedSecondStart), pgn.mid(originalSecondStart));
+    QVERIFY(saved.contains(QStringLiteral("[%chessgui-audit")));
+    QCOMPARE(window.loadedPgnGames().size(), 2);
+
+    window.stopEngine();
+    QFile::remove(scriptPath);
 }
 
 void UciEngineTest::testMockEngineProcess() {

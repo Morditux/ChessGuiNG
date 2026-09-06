@@ -97,6 +97,11 @@ QString PgnSelectDialog::selectedGame() const {
     return games_.at(row);
 }
 
+int PgnSelectDialog::selectedIndex() const {
+    const int row = gameTable_->currentRow();
+    return row >= 0 && row < games_.size() ? row : -1;
+}
+
 void PgnSelectDialog::onSelectionChanged() {
     buttonBox_->button(QDialogButtonBox::Ok)
         ->setEnabled(gameTable_->selectionModel()->hasSelection());

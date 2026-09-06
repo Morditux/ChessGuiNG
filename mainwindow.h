@@ -11,6 +11,7 @@
 #include <QWidget>
 
 #include "appconfig.h"
+#include "pgnfile.h"
 #include "rules.h"
 
 class ChessBoard;
@@ -70,6 +71,10 @@ public:
     [[nodiscard]] QToolButton *flipBoardButton() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
+    [[nodiscard]] QAction *analyzeGameAction() const;
+    [[nodiscard]] QString loadedPgnContent() const;
+    [[nodiscard]] QStringList loadedPgnGames() const;
+    [[nodiscard]] int selectedPgnGameIndex() const;
 
     bool loadEngine(const QString &enginePath);
     void loadConfiguration(const QString &configFilePath = QString());
@@ -82,7 +87,7 @@ public slots:
     void updateEvaluation();
     void loadPgn();
     bool loadPgnFile(const QString &filePath = QString());
-    bool loadPgnContent(const QString &pgnContent);
+    bool loadPgnContent(const QString &pgnContent, int selectedGameIndex = -1);
     void savePgn();
     bool savePgnFile(const QString &filePath = QString());
     bool pasteFen(const QString &fenText = QString());
@@ -105,6 +110,7 @@ public slots:
     void stepBack();
     void stepForward();
     void clearBoardAnnotations();
+    void toggleGameAudit();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -134,6 +140,11 @@ private:
     void loadRemoteImage(const QUrl &url);
     void applyConfiguredEngineOptions();
     void refreshEngineStateUi();
+    void refreshAuditUi();
+    void clearLoadedPgnSource();
+    void rememberLoadedPgnSource(const QString &content,
+                                 const QVector<PgnFile::GameSegment> &segments,
+                                 int selectedGameIndex);
     void updateNavigationActions();
     void setHistorySectionExpanded(int section, bool expanded);
     void rememberExpandedHistorySizes();
@@ -182,6 +193,12 @@ private:
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;
     QAction *clearAnnotationsAction_ = nullptr;
+    QAction *analyzeGameAction_ = nullptr;
+
+    QString loadedPgnContent_;
+    QStringList loadedPgnGames_;
+    QVector<PgnFile::GameSegment> loadedPgnGameSegments_;
+    int selectedPgnGameIndex_ = -1;
 
     VisionWorker *visionWorker_ = nullptr;
     QThread *visionThread_ = nullptr;

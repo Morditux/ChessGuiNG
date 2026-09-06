@@ -62,6 +62,12 @@ void MoveListWidget::setCurrentMove(int currentPly) {
     selectPly(ply);
 }
 
+void MoveListWidget::setAuditAnnotations(const QVector<AuditAnnotation> &annotations) {
+    if (auditAnnotations_ == annotations) return;
+    auditAnnotations_ = annotations;
+    rebuildModel();
+}
+
 int MoveListWidget::currentMove() const {
     return currentPly_;
 }
@@ -109,10 +115,38 @@ void MoveListWidget::rebuildModel() {
         }
         model_->setItem(row, kColumnNumber, new QStandardItem(number));
         if (!white.isEmpty()) {
-            model_->setItem(row, kColumnWhite, new QStandardItem(white));
+            auto *item = new QStandardItem(white);
+            if (whitePly >= 0 && whitePly < auditAnnotations_.size() && auditAnnotations_.at(whitePly).isValid()) {
+                const AuditAnnotation &audit = auditAnnotations_.at(whitePly);
+                item->setText(white + QLatin1Char(' ') + PgnAnnotations::auditSymbol(audit.severity));
+                const QString description = tr("%1: %2 cp lost. Best move: %3.")
+                    .arg(PgnAnnotations::auditSeverityText(audit.severity))
+                    .arg(audit.centipawnLoss).arg(audit.bestMove);
+                item->setToolTip(description);
+                item->setData(description, Qt::AccessibleDescriptionRole);
+                item->setData(item->text() + QStringLiteral(", ") + description, Qt::AccessibleTextRole);
+                item->setData(static_cast<int>(audit.severity), AuditSeverityRole);
+                item->setData(audit.centipawnLoss, AuditLossRole);
+                item->setForeground(PgnAnnotations::auditColor(audit.severity));
+            }
+            model_->setItem(row, kColumnWhite, item);
         }
         if (!black.isEmpty()) {
-            model_->setItem(row, kColumnBlack, new QStandardItem(black));
+            auto *item = new QStandardItem(black);
+            if (blackPly >= 0 && blackPly < auditAnnotations_.size() && auditAnnotations_.at(blackPly).isValid()) {
+                const AuditAnnotation &audit = auditAnnotations_.at(blackPly);
+                item->setText(black + QLatin1Char(' ') + PgnAnnotations::auditSymbol(audit.severity));
+                const QString description = tr("%1: %2 cp lost. Best move: %3.")
+                    .arg(PgnAnnotations::auditSeverityText(audit.severity))
+                    .arg(audit.centipawnLoss).arg(audit.bestMove);
+                item->setToolTip(description);
+                item->setData(description, Qt::AccessibleDescriptionRole);
+                item->setData(item->text() + QStringLiteral(", ") + description, Qt::AccessibleTextRole);
+                item->setData(static_cast<int>(audit.severity), AuditSeverityRole);
+                item->setData(audit.centipawnLoss, AuditLossRole);
+                item->setForeground(PgnAnnotations::auditColor(audit.severity));
+            }
+            model_->setItem(row, kColumnBlack, item);
         }
         whitePlys_.append(whitePly);
         blackPlys_.append(blackPly);

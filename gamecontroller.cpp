@@ -27,6 +27,8 @@ GameController::GameController(QObject *parent)
             this, &GameController::onAnalysisLine);
     connect(engine_, &EngineBackend::timedBestMoveReceived,
             this, &GameController::onEngineTimedMove);
+    connect(engine_, &EngineBackend::bestMoveReceived,
+            this, &GameController::onAuditBestMove);
 
     connect(gateway_, &EngineBackend::stateChanged,
             this, [this](EngineBackend::State state) {
@@ -42,6 +44,8 @@ GameController::GameController(QObject *parent)
             this, &GameController::onAnalysisLine);
     connect(gateway_, &EngineBackend::timedBestMoveReceived,
             this, &GameController::onEngineTimedMove);
+    connect(gateway_, &EngineBackend::bestMoveReceived,
+            this, &GameController::onAuditBestMove);
 }
 
 void GameController::handleEngineStateChanged() {
@@ -53,6 +57,9 @@ void GameController::handleEngineStateChanged() {
     const UciEngine::State state = engineState();
 
     if (state == UciEngine::State::Disconnected) {
+        if (auditActive_) {
+            finishGameAudit(false, tr("Game analysis stopped because the engine disconnected."));
+        }
         pendingComputerGameStart_ = false;
         pendingAnalysisStart_ = false;
         pendingGatewaySelection_ = false;
@@ -61,7 +68,12 @@ void GameController::handleEngineStateChanged() {
                                tr("The engine disconnected."));
         }
     } else if (state == UciEngine::State::Ready) {
-        if (pendingComputerGameStart_) {
+        if (auditActive_ && auditStartPending_) {
+            auditStartPending_ = false;
+            startNextAuditPosition();
+        } else if (auditRestorePending_) {
+            restoreAfterGameAudit();
+        } else if (pendingComputerGameStart_) {
             beginComputerGame();
         } else if (pendingAnalysisStart_) {
             pendingAnalysisStart_ = false;
@@ -175,6 +187,7 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
     plyAnnotations_.resize(1);
     pgnHeaders_.clear();
     pgnResult_ = QStringLiteral("*");
+    auditFindings_.clear();
     whiteToMove_ = (rules_.currentPlayer() == Rules::Color::White);
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
@@ -209,6 +222,7 @@ void GameController::newGame() {
     plyAnnotations_.resize(1);
     pgnHeaders_.clear();
     pgnResult_ = QStringLiteral("*");
+    auditFindings_.clear();
     whiteToMove_ = true;
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
@@ -252,8 +266,12 @@ bool GameController::loadPgn(const QString &pgnContent) {
             PgnAnnotations::decode(rawComments.at(i),
                                    plyAnnotations_[i].arrows,
                                    plyAnnotations_[i].squares);
+            if (const auto audit = PgnAnnotations::decodeAudit(rawComments.at(i)); audit.has_value()) {
+                plyAnnotations_[i].audit = *audit;
+            }
             plyAnnotations_[i].comment =
-                PgnAnnotations::stripAnnotationTags(rawComments.at(i));
+                PgnAnnotations::stripAuditTags(
+                    PgnAnnotations::stripAnnotationTags(rawComments.at(i)));
         }
     }
 
@@ -265,6 +283,12 @@ bool GameController::loadPgn(const QString &pgnContent) {
     whiteToMove_ = (rules_.currentPlayer() == Rules::Color::White);
     pgnMoveNumber_ = (uciMoves_.size() / 2) + 1;
     moveCursor_ = uciMoves_.size();
+    auditFindings_.clear();
+    for (int ply = 1; ply < plyAnnotations_.size(); ++ply) {
+        const AuditAnnotation audit = plyAnnotations_.at(ply).audit;
+        if (audit.isValid()) auditFindings_.append({audit.severity, ply, audit.centipawnLoss,
+                                                    audit.bestMove, audit.forcedMate});
+    }
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -306,7 +330,7 @@ void GameController::setSideToMove(bool whiteToMove) {
 }
 
 bool GameController::stepBack() {
-    if (!canStepBack()) {
+    if (auditActive_ || !canStepBack()) {
         return false;
     }
 
@@ -328,7 +352,7 @@ bool GameController::stepBack() {
 }
 
 bool GameController::stepForward() {
-    if (!canStepForward()) {
+    if (auditActive_ || !canStepForward()) {
         return false;
     }
 
@@ -360,7 +384,7 @@ bool GameController::canStepForward() const {
 }
 
 bool GameController::goToMove(int moveIndex) {
-    if (computerGameActive_ || pendingComputerGameStart_) {
+    if (auditActive_ || computerGameActive_ || pendingComputerGameStart_) {
         return false;
     }
 
@@ -391,7 +415,7 @@ int GameController::moveCursor() const {
 }
 
 bool GameController::requestMove(Rules::Position from, Rules::Position to) {
-    if (computerGameActive_ && rules_.currentPlayer() == computerColor_) {
+    if (auditActive_ || (computerGameActive_ && rules_.currentPlayer() == computerColor_)) {
         return false;
     }
 
@@ -517,7 +541,7 @@ void GameController::setRemainingTime(qint64 whiteMilliseconds,
 }
 
 void GameController::toggleAnalysis() {
-    if (computerGameActive_) {
+    if (computerGameActive_ || auditActive_) {
         return;
     }
 
@@ -529,7 +553,7 @@ void GameController::toggleAnalysis() {
 }
 
 void GameController::startAnalysis() {
-    if (computerGameActive_) {
+    if (computerGameActive_ || auditActive_) {
         return;
     }
 
@@ -544,7 +568,7 @@ void GameController::startAnalysis() {
 }
 
 void GameController::stopAnalysis() {
-    if (computerGameActive_ || !isEngineConnected()) {
+    if (computerGameActive_ || auditActive_ || !isEngineConnected()) {
         return;
     }
 
@@ -602,6 +626,53 @@ void GameController::updateEvaluation() {
     emit evaluationChanged(heuristicEval_.evaluateDisplayPercentage(rules_));
 }
 
+bool GameController::canStartGameAudit() const {
+    return !auditActive_ && !computerGameActive_ && !pendingComputerGameStart_ &&
+           !uciMoves_.isEmpty() && isEngineConnected();
+}
+
+bool GameController::startGameAudit() {
+    if (!canStartGameAudit()) {
+        return false;
+    }
+
+    auditActive_ = true;
+    auditSavedCursor_ = moveCursor_;
+    auditPosition_ = 0;
+    auditScores_.clear();
+    auditScores_.resize(uciMoves_.size() + 1);
+    auditBestMoves_.fill(QString(), uciMoves_.size() + 1);
+    auditLatestLine_.reset();
+    auditResumeManualAnalysis_ = isEngineAnalyzing();
+    auditStartPending_ = true;
+    emit auditStateChanged(true);
+    emit auditProgressChanged(0, auditScores_.size());
+    emit statusMessage(tr("Analyzing game: 0 of %1 positions.").arg(auditScores_.size()));
+
+    if (isEngineAnalyzing()) {
+        stopEngineAnalysis();
+    } else if (engineState() == UciEngine::State::Ready) {
+        auditStartPending_ = false;
+        startNextAuditPosition();
+    }
+    return true;
+}
+
+void GameController::cancelGameAudit() {
+    if (!auditActive_) {
+        return;
+    }
+    finishGameAudit(false, tr("Game analysis cancelled."));
+}
+
+bool GameController::isGameAuditActive() const {
+    return auditActive_;
+}
+
+QVector<GameController::AuditFinding> GameController::auditFindings() const {
+    return auditFindings_;
+}
+
 const Rules &GameController::rules() const {
     return rules_;
 }
@@ -630,7 +701,10 @@ QString GameController::formattedCommentAt(int ply) const {
         return QString();
     }
     const auto &ann = plyAnnotations_.at(ply);
-    return PgnAnnotations::formatComment(ann.arrows, ann.squares, ann.comment);
+    QString comment = PgnAnnotations::formatComment(ann.arrows, ann.squares, ann.comment);
+    const QString audit = PgnAnnotations::formatAuditComment(ann.audit);
+    if (!comment.isEmpty() && !audit.isEmpty()) comment += QLatin1Char(' ');
+    return comment + audit;
 }
 
 QString GameController::buildPgnMovetext() const {
@@ -669,6 +743,9 @@ QString GameController::buildPgnMovetext() const {
                 text += QLatin1Char(' ');
             }
             text += QStringLiteral("%1. %2").arg(moveNum).arg(san);
+            if (const int nag = PgnAnnotations::auditNag(plyAnnotations_.at(ply).audit.severity); nag != 0) {
+                text += QStringLiteral(" $%1").arg(nag);
+            }
             if (hasComment) {
                 text += QStringLiteral(" { %1 }").arg(comment);
                 previousWhiteHadComment = true;
@@ -683,6 +760,9 @@ QString GameController::buildPgnMovetext() const {
                 text += QStringLiteral("%1... %2").arg(moveNum).arg(san);
             } else {
                 text += san;
+            }
+            if (const int nag = PgnAnnotations::auditNag(plyAnnotations_.at(ply).audit.severity); nag != 0) {
+                text += QStringLiteral(" $%1").arg(nag);
             }
             if (hasComment) {
                 text += QStringLiteral(" { %1 }").arg(comment);
@@ -792,6 +872,11 @@ int GameController::annotationCount() const {
     return count;
 }
 
+AuditAnnotation GameController::auditAt(int ply) const {
+    return ply >= 0 && ply < plyAnnotations_.size() ? plyAnnotations_.at(ply).audit
+                                                      : AuditAnnotation{};
+}
+
 bool GameController::isComputerGameActive() const {
     return computerGameActive_;
 }
@@ -866,6 +951,7 @@ void GameController::beginComputerGame() {
     moveCursor_ = 0;
     whiteToMove_ = true;
     pgnResult_ = QStringLiteral("*");
+    auditFindings_.clear();
     pgnHeaders_ = computerGameSettings_.pgnHeaders(pgnResult_);
 
     emit computerGameStateChanged(true);
@@ -1001,6 +1087,11 @@ void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
 }
 
 void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
+    if (auditActive_ && auditPosition_ >= 0 && auditPosition_ < auditScores_.size() &&
+        line.multipv == 1 && line.depth.value_or(0) >= 25 &&
+        (line.scoreCp.has_value() || line.mateIn.has_value())) {
+        auditLatestLine_ = line;
+    }
     updateMovePreviews(line);
 
     if (line.multipv <= 1 &&
@@ -1015,6 +1106,107 @@ void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
         const double winPct =
             UciParser::scoreToWinningPercentage(whiteScoreCp, mateForWhite);
         emit evaluationChanged(winPct);
+    }
+}
+
+void GameController::onAuditBestMove(const QString &bestMove, const QString &ponder) {
+    Q_UNUSED(ponder)
+    if (!auditActive_ || auditPosition_ < 0 || auditPosition_ >= auditScores_.size()) return;
+    if (!auditLatestLine_.has_value()) {
+        finishGameAudit(false, tr("Game analysis stopped because the engine did not return a depth 25 score."));
+        return;
+    }
+    auditScores_[auditPosition_] = {auditLatestLine_->scoreCp, auditLatestLine_->mateIn};
+    const QStringList pv = auditLatestLine_->pv.split(QChar(' '), Qt::SkipEmptyParts);
+    auditBestMoves_[auditPosition_] = pv.isEmpty() ? bestMove : pv.first();
+    ++auditPosition_;
+    emit auditProgressChanged(auditPosition_, auditScores_.size());
+    emit statusMessage(tr("Analyzing game: %1 of %2 positions.").arg(auditPosition_).arg(auditScores_.size()));
+    if (auditPosition_ == auditScores_.size()) {
+        finishGameAudit(true, tr("Game analysis completed."));
+        return;
+    }
+    auditLatestLine_.reset();
+    QTimer::singleShot(0, this, [this] {
+        if (!auditActive_) return;
+        if (engineState() == UciEngine::State::Ready) startNextAuditPosition();
+        else auditStartPending_ = true;
+    });
+}
+
+void GameController::startNextAuditPosition() {
+    if (!auditActive_) return;
+    EngineBackend *backend = activeBackendForCommands();
+    if (backend == nullptr || engineState() != UciEngine::State::Ready) {
+        auditStartPending_ = true;
+        return;
+    }
+    if (auditPosition_ >= auditScores_.size()) {
+        finishGameAudit(true, tr("Game analysis completed."));
+        return;
+    }
+    auditLatestLine_.reset();
+    backend->sendPosition(initialFen_, uciMoves_.mid(0, auditPosition_));
+    backend->startAnalysis(25);
+}
+
+void GameController::finishGameAudit(bool applyResults, const QString &message) {
+    if (!auditActive_) return;
+    if (applyResults) {
+        QVector<AuditFinding> findings;
+        QVector<AuditAnnotation> annotations(plyAnnotations_.size());
+        bool usable = auditScores_.size() == uciMoves_.size() + 1;
+        for (const AuditScore &score : std::as_const(auditScores_))
+            usable = usable && (score.centipawns.has_value() || score.mateIn.has_value());
+        for (int ply = 1; usable && ply <= uciMoves_.size(); ++ply) {
+            const AuditScore &before = auditScores_.at(ply - 1);
+            const AuditScore &after = auditScores_.at(ply);
+            const bool lostForcedMate = before.mateIn.has_value() && *before.mateIn > 0 &&
+                (!after.mateIn.has_value() || *after.mateIn >= 0);
+            const bool allowedForcedMate = after.mateIn.has_value() && *after.mateIn > 0;
+            int loss = 0;
+            AuditSeverity severity = AuditSeverity::None;
+            if (lostForcedMate || allowedForcedMate) severity = AuditSeverity::Blunder;
+            else if (before.centipawns.has_value() && after.centipawns.has_value()) {
+                loss = qMax(0, qRound(*before.centipawns + *after.centipawns));
+                severity = loss >= 200 ? AuditSeverity::Blunder : loss >= 100 ? AuditSeverity::Mistake :
+                           loss >= 50 ? AuditSeverity::Inaccuracy : AuditSeverity::None;
+            } else if (before.mateIn.has_value() || after.mateIn.has_value()) continue;
+            else { usable = false; break; }
+            if (severity != AuditSeverity::None) {
+                AuditAnnotation annotation{severity, loss, auditBestMoves_.at(ply - 1),
+                                           uciMoves_.at(ply - 1), lostForcedMate || allowedForcedMate};
+                annotations[ply] = annotation;
+                findings.append({severity, ply, loss, annotation.bestMove, annotation.forcedMate});
+            }
+        }
+        if (usable) {
+            for (PlyAnnotations &annotation : plyAnnotations_) annotation.audit = {};
+            for (int ply = 1; ply < annotations.size(); ++ply) plyAnnotations_[ply].audit = annotations.at(ply);
+            auditFindings_ = findings;
+            refreshMoveHistory();
+            emit annotationsChanged();
+        } else applyResults = false;
+    }
+    auditActive_ = false;
+    auditStartPending_ = false;
+    auditLatestLine_.reset();
+    auditRestorePending_ = isEngineConnected();
+    emit auditStateChanged(false);
+    emit auditCompleted(applyResults);
+    emit statusMessage(message);
+    if (isEngineAnalyzing()) stopEngineAnalysis();
+    else if (auditRestorePending_ && engineState() == UciEngine::State::Ready) restoreAfterGameAudit();
+}
+
+void GameController::restoreAfterGameAudit() {
+    if (!auditRestorePending_ || engineState() != UciEngine::State::Ready) return;
+    auditRestorePending_ = false;
+    moveCursor_ = qBound(0, auditSavedCursor_, uciMoves_.size());
+    sendPositionToEngine();
+    if (auditResumeManualAnalysis_) {
+        auditResumeManualAnalysis_ = false;
+        startEngineAnalysis();
     }
 }
 

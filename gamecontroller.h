@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVector>
 
 #include <optional>
 
@@ -20,14 +21,22 @@
 #include "pgnannotations.h"
 #include "rules.h"
 #include "uciengine.h"
+#include "uciparser.h"
 
 class ChessGatewayClient;
-struct EngineAnalysisLine;
 
 class GameController : public QObject {
     Q_OBJECT
 
 public:
+    struct AuditFinding {
+        AuditSeverity severity = AuditSeverity::None;
+        int ply = 0;
+        int centipawnLoss = 0;
+        QString bestMove;
+        bool forcedMate = false;
+    };
+
     explicit GameController(QObject *parent = nullptr);
 
     // Engine
@@ -90,6 +99,14 @@ public:
     void setRecommendedMovePreviewEnabled(bool enabled);
     void updateEvaluation();
 
+    // Fixed-depth, mainline-only engine audit.  Results are committed as one
+    // transaction so cancelling or losing the engine cannot leave a partial PGN.
+    [[nodiscard]] bool canStartGameAudit() const;
+    bool startGameAudit();
+    void cancelGameAudit();
+    [[nodiscard]] bool isGameAuditActive() const;
+    [[nodiscard]] QVector<AuditFinding> auditFindings() const;
+
     // State
     [[nodiscard]] const Rules &rules() const;
     [[nodiscard]] QString initialFen() const;
@@ -119,6 +136,7 @@ public:
     [[nodiscard]] QString commentAt(int ply) const;
     [[nodiscard]] bool hasAnnotationsAt(int ply) const;
     [[nodiscard]] int annotationCount() const;
+    [[nodiscard]] AuditAnnotation auditAt(int ply) const;
 
 signals:
     void positionChanged();
@@ -132,6 +150,9 @@ signals:
     void computerMovePreviewChanged(const std::optional<Rules::Move> &move);
     void recommendedMovePreviewChanged(const std::optional<Rules::Move> &move);
     void annotationsChanged();
+    void auditStateChanged(bool active);
+    void auditProgressChanged(int completedPositions, int totalPositions);
+    void auditCompleted(bool applied);
 
 private:
     void sendPositionToEngine();
@@ -147,6 +168,10 @@ private:
     void startMovePreviewAnalysis();
     void updateMovePreviews(const EngineAnalysisLine &line);
     void onAnalysisLine(const EngineAnalysisLine &line);
+    void onAuditBestMove(const QString &bestMove, const QString &ponder);
+    void startNextAuditPosition();
+    void finishGameAudit(bool applyResults, const QString &message);
+    void restoreAfterGameAudit();
     bool recordMove(const Rules::Move &move);
     void appendPgnMove(const QString &san, Rules::Color movingColor);
     void rebuildPositionToCursor();
@@ -194,6 +219,21 @@ private:
     Rules::Color computerColor_ = Rules::Color::Black;
     qint64 whiteRemainingMs_ = 300000;
     qint64 blackRemainingMs_ = 300000;
+
+    struct AuditScore {
+        std::optional<double> centipawns;
+        std::optional<int> mateIn;
+    };
+    bool auditActive_ = false;
+    bool auditStartPending_ = false;
+    bool auditRestorePending_ = false;
+    bool auditResumeManualAnalysis_ = false;
+    int auditSavedCursor_ = 0;
+    int auditPosition_ = 0;
+    QVector<AuditScore> auditScores_;
+    QStringList auditBestMoves_;
+    std::optional<EngineAnalysisLine> auditLatestLine_;
+    QVector<AuditFinding> auditFindings_;
 };
 
 #endif // CHESSGUI_GAMECONTROLLER_H

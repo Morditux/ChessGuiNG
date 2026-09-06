@@ -61,6 +61,58 @@ QString writeMockEngineScript(const QString &fileName) {
     return scriptPath;
 }
 
+QString writeAuditEngineScript(const QString &fileName) {
+    const QString scriptPath = QDir::current().filePath(fileName);
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) return {};
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "moves=0\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then echo \"id name AuditEngine\"; echo \"uciok\";\n"
+        "  elif [ \"$line\" = \"isready\" ]; then echo \"readyok\";\n"
+        "  elif [[ \"$line\" == position* ]]; then\n"
+        "    moves=0; if [[ \"$line\" == *\" moves \"* ]]; then rest=${line#* moves }; for m in $rest; do moves=$((moves + 1)); done; fi;\n"
+        "  elif [ \"$line\" = \"go depth 18\" ]; then\n"
+        "    if [ \"$moves\" -eq 0 ]; then echo \"info depth 18 score cp 100 pv d2d4\"; echo \"bestmove d2d4\";\n"
+        "    elif [ \"$moves\" -eq 1 ]; then echo \"info depth 18 score cp -10 pv e7e5\"; echo \"bestmove e7e5\";\n"
+        "    else echo \"info depth 18 score cp 150 pv g1f3\"; echo \"bestmove g1f3\"; fi;\n"
+        "  elif [ \"$line\" = \"stop\" ]; then echo \"bestmove 0000\";\n"
+        "  elif [ \"$line\" = \"quit\" ]; then exit 0; fi\n"
+        "done\n";
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser | QFile::ReadGroup |
+                                      QFile::ExeGroup | QFile::ReadOther | QFile::ExeOther);
+    return scriptPath;
+}
+
+QString writeMateAuditEngineScript(const QString &fileName) {
+    const QString scriptPath = QDir::current().filePath(fileName);
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) return {};
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "moves=0\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then echo \"id name MateAuditEngine\"; echo \"uciok\";\n"
+        "  elif [ \"$line\" = \"isready\" ]; then echo \"readyok\";\n"
+        "  elif [[ \"$line\" == position* ]]; then moves=0; if [[ \"$line\" == *\" moves \"* ]]; then moves=1; fi;\n"
+        "  elif [ \"$line\" = \"go depth 18\" ]; then\n"
+        "    if [ \"$moves\" -eq 0 ]; then echo \"info depth 18 score mate 3 pv d2d4\"; echo \"bestmove d2d4\";\n"
+        "    else echo \"info depth 18 score mate 2 pv e7e5\"; echo \"bestmove e7e5\"; fi;\n"
+        "  elif [ \"$line\" = \"stop\" ]; then echo \"bestmove 0000\";\n"
+        "  elif [ \"$line\" = \"quit\" ]; then exit 0; fi\n"
+        "done\n";
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser | QFile::ReadGroup |
+                                      QFile::ExeGroup | QFile::ReadOther | QFile::ExeOther);
+    return scriptPath;
+}
+
 } // namespace
 
 class GameControllerTest : public QObject {
@@ -88,6 +140,9 @@ private slots:
     void testAnnotationsPersistAcrossNavigation();
     void testAnnotationsTruncatedOnBranching();
     void testPgnTextWithAnnotationsRoundTrip();
+    void testGameAuditExportsAndReloadsMarkers();
+    void testGameAuditCanBeCancelledWithoutPartialResults();
+    void testGameAuditMarksLostForcedMateAsBlunder();
 };
 
 void GameControllerTest::initTestCase() {
@@ -684,6 +739,75 @@ void GameControllerTest::testPgnTextWithAnnotationsRoundTrip() {
 
     // Full round-trip PGN match
     QCOMPARE(reloaded.pgnText(), pgn);
+}
+
+void GameControllerTest::testGameAuditExportsAndReloadsMarkers() {
+    const QString scriptPath = writeAuditEngineScript(QStringLiteral("mock_audit_engine.sh"));
+    GameController controller;
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e5
+    const std::vector<SquareAnnotation> manualSquare{{Rules::Position{4, 4}, PgnAnnotations::greenColor()}};
+    controller.setAnnotationsAtCursor({}, manualSquare, QStringLiteral("Manual note"));
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, WaitTimeout);
+
+    QSignalSpy progressSpy(&controller, &GameController::auditProgressChanged);
+    QSignalSpy completedSpy(&controller, &GameController::auditCompleted);
+    QVERIFY(controller.canStartGameAudit());
+    QVERIFY(controller.startGameAudit());
+    QTRY_COMPARE_WITH_TIMEOUT(completedSpy.count(), 1, WaitTimeout);
+    QVERIFY(completedSpy.first().first().toBool());
+    QCOMPARE(progressSpy.last().at(0).toInt(), 3);
+    QCOMPARE(progressSpy.last().at(1).toInt(), 3);
+
+    QCOMPARE(controller.auditAt(1).severity, AuditSeverity::Inaccuracy);
+    QCOMPARE(controller.auditAt(1).centipawnLoss, 90);
+    QCOMPARE(controller.auditAt(2).severity, AuditSeverity::Mistake);
+    QCOMPARE(controller.auditAt(2).centipawnLoss, 140);
+    QCOMPARE(controller.squaresAt(2), manualSquare);
+    QCOMPARE(controller.commentAt(2), QStringLiteral("Manual note"));
+    const QString pgn = controller.pgnText();
+    QVERIFY(pgn.contains(QStringLiteral("$6")));
+    QVERIFY(pgn.contains(QStringLiteral("$2")));
+    QVERIFY(pgn.contains(QStringLiteral("[%chessgui-audit severity=inaccuracy")));
+
+    GameController reloaded;
+    QVERIFY(reloaded.loadPgn(pgn));
+    QCOMPARE(reloaded.auditAt(1), controller.auditAt(1));
+    QCOMPARE(reloaded.auditAt(2), controller.auditAt(2));
+    QCOMPARE(reloaded.squaresAt(2), manualSquare);
+    QCOMPARE(reloaded.commentAt(2), QStringLiteral("Manual note"));
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testGameAuditCanBeCancelledWithoutPartialResults() {
+    const QString scriptPath = writeAuditEngineScript(QStringLiteral("mock_cancel_audit_engine.sh"));
+    GameController controller;
+    QVERIFY(controller.requestMove({6, 4}, {4, 4}));
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, WaitTimeout);
+    QVERIFY(controller.startGameAudit());
+    controller.cancelGameAudit();
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.isGameAuditActive(), WaitTimeout);
+    QVERIFY(controller.auditFindings().isEmpty());
+    QVERIFY(!controller.pgnText().contains(QStringLiteral("chessgui-audit")));
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testGameAuditMarksLostForcedMateAsBlunder() {
+    const QString scriptPath = writeMateAuditEngineScript(QStringLiteral("mock_mate_audit_engine.sh"));
+    GameController controller;
+    QVERIFY(controller.requestMove({6, 4}, {4, 4}));
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, WaitTimeout);
+    QVERIFY(controller.startGameAudit());
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.isGameAuditActive(), WaitTimeout);
+    QCOMPARE(controller.auditAt(1).severity, AuditSeverity::Blunder);
+    QVERIFY(controller.auditAt(1).forcedMate);
+    controller.stopEngine();
+    QFile::remove(scriptPath);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)
