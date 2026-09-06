@@ -41,17 +41,35 @@ find_library(ONNXRUNTIME_LIBRARY
         /usr/local/lib
 )
 
-if (NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
+if (WIN32)
+    find_file(ONNXRUNTIME_RUNTIME_LIBRARY
+            NAMES onnxruntime.dll
+            HINTS
+            "${ONNXRUNTIME_ROOT}/lib"
+            "${ONNXRUNTIME_ROOT}/bin"
+    )
+endif()
+
+if (NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY
+        OR (WIN32 AND NOT ONNXRUNTIME_RUNTIME_LIBRARY))
     message(FATAL_ERROR
             "ONNX Runtime development files not found. Install libonnxruntime-dev "
             "or set ONNXRUNTIME_ROOT to its installation prefix.")
 endif()
 
 add_library(onnxruntime::onnxruntime SHARED IMPORTED GLOBAL)
-set_target_properties(onnxruntime::onnxruntime PROPERTIES
-        IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
-)
+if (WIN32)
+    set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_IMPLIB "${ONNXRUNTIME_LIBRARY}"
+            IMPORTED_LOCATION "${ONNXRUNTIME_RUNTIME_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+    )
+else()
+    set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+    )
+endif()
 
 set(CHESSGUI_MODEL "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/chess-tiles-v2.onnx")
 set(CHESSGUI_BUILD_MODEL "${CMAKE_CURRENT_BINARY_DIR}/model/chess-tiles-v2.onnx")
@@ -217,6 +235,11 @@ install(TARGETS ChessGui
 install(FILES "${CHESSGUI_MODEL}"
         DESTINATION ${CMAKE_INSTALL_BINDIR}/model
 )
+if (WIN32)
+    install(FILES "${ONNXRUNTIME_RUNTIME_LIBRARY}"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
         DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/chessgui
 )

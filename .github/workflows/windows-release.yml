@@ -1,0 +1,192 @@
+name: Windows release
+
+on:
+  push:
+    branches:
+      - windows-release
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows release
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qtsvg
+          cache: true
+
+      - name: Download ONNX Runtime 1.23.2
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-1.23.2.zip"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-1.23.2"
+          $uri = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip"
+          $expectedHash = "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd"
+
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+              throw "ONNX Runtime checksum mismatch: expected $expectedHash, got $actualHash"
+          }
+
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP -Force
+          $requiredFiles = @(
+              (Join-Path $runtimeRoot "include\onnxruntime_cxx_api.h"),
+              (Join-Path $runtimeRoot "lib\onnxruntime.lib"),
+              (Join-Path $runtimeRoot "lib\onnxruntime.dll")
+          )
+          foreach ($file in $requiredFiles) {
+              if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                  throw "ONNX Runtime file is missing: $file"
+              }
+          }
+
+          "ONNXRUNTIME_ROOT=$runtimeRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure Release build
+        shell: pwsh
+        run: |
+          if (-not $env:QT_ROOT_DIR) {
+              throw "install-qt-action did not provide QT_ROOT_DIR"
+          }
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+              "-DCMAKE_BUILD_TYPE=Release" `
+              "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
+              "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Run QtTest suite
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$env:PATH"
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage executable and runtime files
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:RUNNER_TEMP "chessgui-install"
+          $packageRoot = Join-Path $env:GITHUB_WORKSPACE "ChessGui-windows-x64"
+          if (Test-Path -LiteralPath $installRoot) {
+              Remove-Item -LiteralPath $installRoot -Recurse -Force
+          }
+          if (Test-Path -LiteralPath $packageRoot) {
+              Remove-Item -LiteralPath $packageRoot -Recurse -Force
+          }
+
+          cmake --install build --config Release --prefix $installRoot
+          $installBin = Join-Path $installRoot "bin"
+          $executable = Join-Path $installBin "ChessGui.exe"
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Installed executable is missing: $executable"
+          }
+
+          $windeployqt = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
+          & $windeployqt --release --no-translations $executable
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
+          New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+          Copy-Item -Path (Join-Path $installBin "*") -Destination $packageRoot -Recurse -Force
+
+          $documentationRoot = Join-Path $installRoot "share\doc\chessgui"
+          Copy-Item (Join-Path $documentationRoot "LICENSE") $packageRoot
+          Copy-Item (Join-Path $documentationRoot "THIRD_PARTY_NOTICES.md") $packageRoot
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE "assets\pieces\LICENSE-2.0.txt") `
+              (Join-Path $packageRoot "LICENSE-CHESSNUT.txt")
+
+          $onnxNotices = Join-Path $packageRoot "third-party\onnxruntime"
+          New-Item -ItemType Directory -Path $onnxNotices -Force | Out-Null
+          foreach ($notice in @("LICENSE", "Privacy.md", "ThirdPartyNotices.txt")) {
+              Copy-Item (Join-Path $env:ONNXRUNTIME_ROOT $notice) $onnxNotices
+          }
+
+          "CHESSGUI_PACKAGE_ROOT=$packageRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate Windows package contents
+        shell: pwsh
+        run: |
+          $packageRoot = $env:CHESSGUI_PACKAGE_ROOT
+          $requiredFiles = @(
+              "ChessGui.exe",
+              "onnxruntime.dll",
+              "model\chess-tiles-v2.onnx",
+              "platforms\qwindows.dll",
+              "LICENSE",
+              "THIRD_PARTY_NOTICES.md",
+              "LICENSE-CHESSNUT.txt",
+              "third-party\onnxruntime\LICENSE",
+              "third-party\onnxruntime\Privacy.md",
+              "third-party\onnxruntime\ThirdPartyNotices.txt"
+          )
+          foreach ($relativePath in $requiredFiles) {
+              $path = Join-Path $packageRoot $relativePath
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                  throw "Windows package file is missing: $relativePath"
+              }
+          }
+
+      - name: Create Windows ZIP
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE "ChessGui-windows-x64.zip"
+          if (Test-Path -LiteralPath $zip) {
+              Remove-Item -LiteralPath $zip -Force
+          }
+          Compress-Archive -Path (Join-Path $env:CHESSGUI_PACKAGE_ROOT "*") `
+              -DestinationPath $zip -CompressionLevel Optimal
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+              throw "Windows ZIP was not created: $zip"
+          }
+
+      - name: Remove previous Windows artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/artifacts?name=ChessGui-windows-x64&per_page=100"
+          $artifactIds = @(gh api --paginate $endpoint --jq ".artifacts[].id")
+          foreach ($artifactId in $artifactIds) {
+              gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$artifactId"
+              if ($LASTEXITCODE -ne 0) {
+                  exit $LASTEXITCODE
+              }
+          }
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChessGui-windows-x64
+          path: ChessGui-windows-x64.zip
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Verify one artifact with the release name
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $endpoint = "repos/$env:GITHUB_REPOSITORY/actions/artifacts?name=ChessGui-windows-x64&per_page=100"
+          $artifactIds = @(gh api --paginate $endpoint --jq ".artifacts[].id")
+          if ($artifactIds.Count -ne 1) {
+              throw "Expected exactly one ChessGui-windows-x64 artifact, found $($artifactIds.Count)"
+          }
