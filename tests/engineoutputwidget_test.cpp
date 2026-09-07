@@ -281,7 +281,13 @@ void EngineOutputWidgetTest::testSignalEmission() {
     widget.setDetailsVisible(true);
     widget.pvTable()->setCurrentCell(0, 0);
     widget.pvTable()->setFocus();
+#ifdef Q_OS_MACOS
+    // Qt uses Return for the native table-editing path on macOS; Ctrl+O is
+    // the platform-specific keyboard activation shortcut for item views.
+    QTest::keyClick(widget.pvTable(), Qt::Key_O, Qt::ControlModifier);
+#else
     QTest::keyClick(widget.pvTable(), Qt::Key_Return);
+#endif
     QCOMPARE(spy.count(), 1);
     QCOMPARE(spy.takeFirst().at(0).toInt(), 1);
 }
