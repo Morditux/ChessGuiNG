@@ -49,6 +49,8 @@ private slots:
     void testFenEndgame();
     void testFenInvalid();
     void testToFenRoundTrip();
+    void testFenClocks();
+    void testInsufficientMaterial();
     void testSanParsingAndExecution();
     void testSanPromotion();
     void testSanDisambiguation();
@@ -169,6 +171,73 @@ void RulesTest::testToFenRoundTrip() {
     const QString startFen = QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     QVERIFY(rules.loadFen(startFen));
     QCOMPARE(rules.toFen(), startFen);
+}
+
+void RulesTest::testFenClocks() {
+    Rules rules;
+
+    // A pawn move resets the halfmove clock; the fullmove number is still 1
+    // after White's first move.
+    QVERIFY(rules.tryMoveSan(QStringLiteral("e4")));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(4), QStringLiteral("0"));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(5), QStringLiteral("1"));
+
+    QVERIFY(rules.tryMoveSan(QStringLiteral("e5")));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(4), QStringLiteral("0"));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(5), QStringLiteral("2"));
+
+    // A non-pawn, non-capture move increments the halfmove clock.
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Nf3")));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(4), QStringLiteral("1"));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(5), QStringLiteral("2"));
+
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Nc6")));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(4), QStringLiteral("2"));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(5), QStringLiteral("3"));
+
+    QVERIFY(rules.tryMoveSan(QStringLiteral("d4")));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(4), QStringLiteral("0"));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(5), QStringLiteral("3"));
+
+    // A capture resets the halfmove clock and advances the fullmove number
+    // once Black replies.
+    QVERIFY(rules.tryMoveSan(QStringLiteral("exd4")));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(4), QStringLiteral("0"));
+    QCOMPARE(rules.toFen().split(QLatin1Char(' ')).at(5), QStringLiteral("4"));
+
+    // Non-zero clocks survive a FEN round trip.
+    const QString clockFen = QStringLiteral("4k3/8/8/8/8/8/4P3/4K3 b - - 12 34");
+    QVERIFY(rules.loadFen(clockFen));
+    QCOMPARE(rules.toFen(), clockFen);
+}
+
+void RulesTest::testInsufficientMaterial() {
+    Rules rules;
+
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/8/4K3 w - - 0 1")));
+    QVERIFY(rules.isInsufficientMaterial());
+    QVERIFY(rules.isGameOver());
+
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/2B5/4K3 w - - 0 1")));
+    QVERIFY(rules.isInsufficientMaterial());
+
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/2N5/4K3 w - - 0 1")));
+    QVERIFY(rules.isInsufficientMaterial());
+
+    // Bishops confined to the same-colored squares cannot deliver mate.
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/2b1B3/8/4K3 w - - 0 1")));
+    QVERIFY(rules.isInsufficientMaterial());
+    QVERIFY(rules.isGameOver());
+
+    // Bishops on opposite-colored squares still allow checkmate.
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/2bB4/8/4K3 w - - 0 1")));
+    QVERIFY(!rules.isInsufficientMaterial());
+
+    // Rooks and queens always allow checkmate.
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/2R5/4K3 w - - 0 1")));
+    QVERIFY(!rules.isInsufficientMaterial());
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/2Q5/4K3 w - - 0 1")));
+    QVERIFY(!rules.isInsufficientMaterial());
 }
 
 void RulesTest::testSanParsingAndExecution() {

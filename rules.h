@@ -69,6 +69,7 @@ public:
     [[nodiscard]] bool isCheckmate(Color color) const;
     [[nodiscard]] bool isStalemate(Color color) const;
     [[nodiscard]] bool isGameOver() const;
+    [[nodiscard]] bool isInsufficientMaterial() const;
 
     [[nodiscard]] static bool isInside(Position position);
     [[nodiscard]] static QString toUci(Position from, Position to, PieceType promotion = PieceType::None);
@@ -94,6 +95,8 @@ private:
     Board board_{};
     Color currentPlayer_ = Color::White;
     std::optional<Move> lastMove_;
+    int halfmoveClock_ = 0;
+    int fullmoveNumber_ = 1;
 
     [[nodiscard]] static Color opposite(Color color);
     [[nodiscard]] static bool isPromotionPiece(PieceType type);

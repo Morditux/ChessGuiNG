@@ -40,6 +40,8 @@ void Rules::reset() {
 
     currentPlayer_ = Color::White;
     lastMove_.reset();
+    halfmoveClock_ = 0;
+    fullmoveNumber_ = 1;
 }
 
 std::optional<Rules::Piece> Rules::pieceAt(Position position) const {
@@ -83,8 +85,24 @@ bool Rules::tryMove(const Move &move) {
         return false;
     }
 
+    // Copy before applyMoveUnchecked destroys the source square contents.
+    const Piece movingPiece = *board_[move.from.row][move.from.column];
+    const bool isCapture = board_[move.to.row][move.to.column].has_value();
+
     applyMoveUnchecked(move);
     lastMove_ = move;
+
+    // A pawn move or a capture resets the halfmove clock; an en passant
+    // capture is always a pawn move and is covered by the first condition.
+    if (movingPiece.type == PieceType::Pawn || isCapture) {
+        halfmoveClock_ = 0;
+    } else {
+        ++halfmoveClock_;
+    }
+
+    if (currentPlayer_ == Color::Black) {
+        ++fullmoveNumber_;
+    }
     currentPlayer_ = opposite(currentPlayer_);
     return true;
 }
@@ -142,7 +160,56 @@ bool Rules::isStalemate(Color color) const {
 
 bool Rules::isGameOver() const {
     return isCheckmate(Color::White) || isCheckmate(Color::Black) ||
-           isStalemate(Color::White) || isStalemate(Color::Black);
+           isStalemate(Color::White) || isStalemate(Color::Black) ||
+           isInsufficientMaterial();
+}
+
+bool Rules::isInsufficientMaterial() const {
+    int knights = 0;
+    int evenSquaredBishops = 0;
+    int oddSquaredBishops = 0;
+
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto &square = board_[row][column];
+            if (!square.has_value() || square->type == PieceType::King) {
+                continue;
+            }
+
+            switch (square->type) {
+            case PieceType::Knight:
+                ++knights;
+                break;
+            case PieceType::Bishop:
+                if ((row + column) % 2 == 0) {
+                    ++evenSquaredBishops;
+                } else {
+                    ++oddSquaredBishops;
+                }
+                break;
+            default:
+                // Pawns, rooks, and queens always allow checkmate.
+                return false;
+            }
+        }
+    }
+
+    if (knights == 0 && evenSquaredBishops == 0 && oddSquaredBishops == 0) {
+        return true; // King versus king.
+    }
+    if (knights == 1 && evenSquaredBishops == 0 && oddSquaredBishops == 0) {
+        return true; // King and knight versus king.
+    }
+    if (knights == 0 && evenSquaredBishops + oddSquaredBishops == 1) {
+        return true; // King and bishop versus king.
+    }
+    if (knights == 0 &&
+        evenSquaredBishops + oddSquaredBishops == 2 &&
+        (evenSquaredBishops == 2 || oddSquaredBishops == 2)) {
+        return true; // Only bishops confined to same-colored squares.
+    }
+
+    return false;
 }
 
 bool Rules::isInside(Position position) {
@@ -690,9 +757,19 @@ bool Rules::loadFen(const QString &fen) {
         return false;
     }
 
+    bool halfmoveOk = false;
+    bool fullmoveOk = false;
+    const int halfmove = parts[4].toInt(&halfmoveOk);
+    const int fullmove = parts[5].toInt(&fullmoveOk);
+    if (!halfmoveOk || !fullmoveOk) {
+        return false;
+    }
+
     board_ = newBoard;
     currentPlayer_ = newPlayer;
     lastMove_ = newLastMove;
+    halfmoveClock_ = halfmove;
+    fullmoveNumber_ = fullmove;
     return true;
 }
 
@@ -778,7 +855,8 @@ QString Rules::toFen() const {
             ep = QString(QChar('a' + lm.to.column)) + QString::number(8 - epRow);
         }
     }
-    fen += ep + QStringLiteral(" 0 1");
+    fen += ep + QStringLiteral(" ") + QString::number(halfmoveClock_) +
+           QStringLiteral(" ") + QString::number(fullmoveNumber_);
 
     return fen;
 }

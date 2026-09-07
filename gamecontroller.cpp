@@ -1367,7 +1367,8 @@ QString GameController::completedGameResult() const {
     if (!rules_.isGameOver()) {
         return QStringLiteral("*");
     }
-    if (rules_.isStalemate(rules_.currentPlayer())) {
+    if (rules_.isStalemate(rules_.currentPlayer()) ||
+        rules_.isInsufficientMaterial()) {
         return QStringLiteral("1/2-1/2");
     }
     return rules_.currentPlayer() == Rules::Color::White
