@@ -78,7 +78,7 @@ From: ubuntu:26.04
 %labels
     Name ChessGui
     Description Modern chess GUI with engine analysis
-    Version 1.0.4
+    Version 1.0.5
 
 %help
     ChessGui in an Apptainer/Singularity container.

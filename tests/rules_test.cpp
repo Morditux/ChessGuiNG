@@ -6,6 +6,7 @@
 #include <QTest>
 #include <QAction>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QComboBox>
 #include <QFrame>
 #include <QImage>
@@ -20,6 +21,7 @@
 
 #include "chessboard.h"
 #include "computergamedialog.h"
+#include "gamecontroller.h"
 #include "mainwindow.h"
 #include "movelistwidget.h"
 #include "pendulumwidget.h"
@@ -62,6 +64,8 @@ private slots:
     void testBoardEmitsMoveIntentWithoutMutating();
     void testMovePreviewControls();
     void testMainWindowLoadPgnContent();
+    void testMainWindowCopyFenAndPgn();
+    void testMainWindowNavigationHomeAndEnd();
     void testMainWindowRecognizesScreenshotWhenProvided();
     void testComputerGameDialogSettings();
 };
@@ -595,6 +599,45 @@ void RulesTest::testMainWindowLoadPgnContent() {
     QVERIFY(!moveListText(window).contains(QStringLiteral("[Event")));
     QVERIFY(moveListText(window).contains(QStringLiteral("Qxf7#")));
     QVERIFY(window.chessBoard()->rules().isCheckmate(Rules::Color::Black));
+}
+
+void RulesTest::testMainWindowCopyFenAndPgn() {
+    MainWindow window;
+    const QString customFen = QStringLiteral("r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5");
+    QVERIFY(window.pasteFen(customFen));
+
+    QVERIFY(window.copyFenAction() != nullptr);
+    QVERIFY(window.copyPgnAction() != nullptr);
+
+    QGuiApplication::clipboard()->clear();
+
+    window.copyFenAction()->trigger();
+    QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), window.gameController()->rules().toFen());
+
+    window.copyPgnAction()->trigger();
+    QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), window.gameController()->pgnText());
+}
+
+void RulesTest::testMainWindowNavigationHomeAndEnd() {
+    MainWindow window;
+    const QString pgn = QStringLiteral("1. e4 e5 2. Nf3 Nc6 *");
+    QVERIFY(window.loadPgnContent(pgn));
+
+    QVERIFY(window.firstMoveAction() != nullptr);
+    QVERIFY(window.lastMoveAction() != nullptr);
+    QCOMPARE(window.gameController()->moveCursor(), 4);
+    QVERIFY(window.firstMoveAction()->isEnabled());
+    QVERIFY(!window.lastMoveAction()->isEnabled());
+
+    window.firstMoveAction()->trigger();
+    QCOMPARE(window.gameController()->moveCursor(), 0);
+    QVERIFY(!window.firstMoveAction()->isEnabled());
+    QVERIFY(window.lastMoveAction()->isEnabled());
+
+    window.lastMoveAction()->trigger();
+    QCOMPARE(window.gameController()->moveCursor(), 4);
+    QVERIFY(window.firstMoveAction()->isEnabled());
+    QVERIFY(!window.lastMoveAction()->isEnabled());
 }
 
 void RulesTest::testMainWindowRecognizesScreenshotWhenProvided() {

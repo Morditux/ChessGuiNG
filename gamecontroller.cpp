@@ -387,6 +387,14 @@ bool GameController::canStepForward() const {
            moveCursor_ < uciMoves_.size();
 }
 
+bool GameController::goToStart() {
+    return goToMove(0);
+}
+
+bool GameController::goToEnd() {
+    return goToMove(uciMoves_.size());
+}
+
 bool GameController::goToMove(int moveIndex) {
     if (auditActive_ || computerGameActive_ || pendingComputerGameStart_) {
         return false;
@@ -418,7 +426,28 @@ int GameController::moveCursor() const {
     return moveCursor_;
 }
 
-bool GameController::requestMove(Rules::Position from, Rules::Position to) {
+bool GameController::isPromotionMove(Rules::Position from, Rules::Position to) const {
+    if (auditActive_ || (computerGameActive_ && rules_.currentPlayer() == computerColor_)) {
+        return false;
+    }
+
+    const auto movedPiece = rules_.pieceAt(from);
+    if (!movedPiece.has_value() || movedPiece->type != Rules::PieceType::Pawn ||
+        movedPiece->color != rules_.currentPlayer()) {
+        return false;
+    }
+
+    const bool reachesPromotion = (movedPiece->color == Rules::Color::White && to.row == 0) ||
+                                  (movedPiece->color == Rules::Color::Black && to.row == 7);
+    if (!reachesPromotion) {
+        return false;
+    }
+
+    return rules_.isValidMove(from, to);
+}
+
+bool GameController::requestMove(Rules::Position from, Rules::Position to,
+                                 Rules::PieceType promotion) {
     if (auditActive_ || (computerGameActive_ && rules_.currentPlayer() == computerColor_)) {
         return false;
     }
@@ -432,13 +461,16 @@ bool GameController::requestMove(Rules::Position from, Rules::Position to) {
         return false;
     }
 
-    const Rules::PieceType promotion =
-        movedPiece->type == Rules::PieceType::Pawn &&
-                (to.row == 0 || to.row == 7)
-            ? Rules::PieceType::Queen
-            : Rules::PieceType::None;
+    const bool reachesPromotion = movedPiece->type == Rules::PieceType::Pawn &&
+                                  (to.row == 0 || to.row == 7);
+    Rules::PieceType effectivePromotion = Rules::PieceType::None;
+    if (reachesPromotion) {
+        effectivePromotion = (promotion != Rules::PieceType::None)
+                                 ? promotion
+                                 : Rules::PieceType::Queen;
+    }
 
-    if (!recordMove({from, to, promotion})) {
+    if (!recordMove({from, to, effectivePromotion})) {
         return false;
     }
 

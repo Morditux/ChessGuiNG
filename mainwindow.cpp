@@ -15,6 +15,7 @@
 #include "pendulumwidget.h"
 #include "pgnfile.h"
 #include "pgnselectdialog.h"
+#include "promotiondialog.h"
 #include "remoteenginedialog.h"
 #include "uciengine.h"
 #include "ucioptionsdialog.h"
@@ -365,6 +366,22 @@ QAction *MainWindow::analyzeGameAction() const {
     return analyzeGameAction_;
 }
 
+QAction *MainWindow::firstMoveAction() const {
+    return firstMoveAction_;
+}
+
+QAction *MainWindow::lastMoveAction() const {
+    return lastMoveAction_;
+}
+
+QAction *MainWindow::copyFenAction() const {
+    return copyFenAction_;
+}
+
+QAction *MainWindow::copyPgnAction() const {
+    return copyPgnAction_;
+}
+
 QString MainWindow::loadedPgnContent() const {
     return loadedPgnContent_;
 }
@@ -560,6 +577,16 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 void MainWindow::keyPressEvent(QKeyEvent *event) {
     if (event->key() == Qt::Key_Escape) {
         clearBoardAnnotations();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Home && !event->isAutoRepeat()) {
+        goToStart();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_End && !event->isAutoRepeat()) {
+        goToEnd();
         event->accept();
         return;
     }
@@ -1127,6 +1154,18 @@ bool MainWindow::savePgnFile(const QString &filePath) {
     return true;
 }
 
+void MainWindow::copyFen() {
+    const QString fen = gameController_->rules().toFen();
+    QGuiApplication::clipboard()->setText(fen);
+    setActivityMessage(tr("FEN copied to clipboard."));
+}
+
+void MainWindow::copyPgn() {
+    const QString pgn = gameController_->pgnText();
+    QGuiApplication::clipboard()->setText(pgn);
+    setActivityMessage(tr("PGN copied to clipboard."));
+}
+
 bool MainWindow::pasteFen(const QString &fenText) {
     QString fen = fenText;
     if (fen.isEmpty()) {
@@ -1379,6 +1418,14 @@ void MainWindow::stepForward() {
     gameController_->stepForward();
 }
 
+void MainWindow::goToStart() {
+    gameController_->goToStart();
+}
+
+void MainWindow::goToEnd() {
+    gameController_->goToEnd();
+}
+
 void MainWindow::clearBoardAnnotations() {
     if (board_) {
         board_->clearUserAnnotations();
@@ -1386,11 +1433,19 @@ void MainWindow::clearBoardAnnotations() {
 }
 
 void MainWindow::updateNavigationActions() {
+    const bool canBack = gameController_->canStepBack();
+    const bool canForward = gameController_->canStepForward();
+    if (firstMoveAction_) {
+        firstMoveAction_->setEnabled(canBack);
+    }
     if (stepBackAction_) {
-        stepBackAction_->setEnabled(gameController_->canStepBack());
+        stepBackAction_->setEnabled(canBack);
     }
     if (stepForwardAction_) {
-        stepForwardAction_->setEnabled(gameController_->canStepForward());
+        stepForwardAction_->setEnabled(canForward);
+    }
+    if (lastMoveAction_) {
+        lastMoveAction_->setEnabled(canForward);
     }
 }
 
@@ -1620,6 +1675,16 @@ void MainWindow::setupUi() {
     connect(newGameAction_, &QAction::triggered, this, &MainWindow::newGame);
     menuGames->addSeparator();
 
+    firstMoveAction_ = menuGames->addAction(tr("Go to start"));
+    firstMoveAction_->setObjectName(QStringLiteral("firstMoveAction"));
+    configureToolAction(firstMoveAction_, QStringLiteral(":/icons/toolbar-step-back.svg"),
+                        tr("Go to the beginning of the game"));
+    firstMoveAction_->setShortcut(QKeySequence(Qt::Key_Home));
+    firstMoveAction_->setShortcutContext(Qt::WindowShortcut);
+    firstMoveAction_->setEnabled(false);
+    addAction(firstMoveAction_);
+    connect(firstMoveAction_, &QAction::triggered, this, &MainWindow::goToStart);
+
     stepBackAction_ = menuGames->addAction(tr("Step back"));
     stepBackAction_->setObjectName(QStringLiteral("stepBackAction"));
     configureToolAction(stepBackAction_, QStringLiteral(":/icons/toolbar-step-back.svg"),
@@ -1639,6 +1704,16 @@ void MainWindow::setupUi() {
     stepForwardAction_->setEnabled(false);
     addAction(stepForwardAction_);
     connect(stepForwardAction_, &QAction::triggered, this, &MainWindow::stepForward);
+
+    lastMoveAction_ = menuGames->addAction(tr("Go to end"));
+    lastMoveAction_->setObjectName(QStringLiteral("lastMoveAction"));
+    configureToolAction(lastMoveAction_, QStringLiteral(":/icons/toolbar-step-forward.svg"),
+                        tr("Go to the end of the game"));
+    lastMoveAction_->setShortcut(QKeySequence(Qt::Key_End));
+    lastMoveAction_->setShortcutContext(Qt::WindowShortcut);
+    lastMoveAction_->setEnabled(false);
+    addAction(lastMoveAction_);
+    connect(lastMoveAction_, &QAction::triggered, this, &MainWindow::goToEnd);
     menuGames->addSeparator();
 
     playAgainstComputerAction_ = menuGames->addAction(
@@ -1680,6 +1755,24 @@ void MainWindow::setupUi() {
     savePgnAction_->setShortcutContext(Qt::WindowShortcut);
     addAction(savePgnAction_);
     connect(savePgnAction_, &QAction::triggered, this, &MainWindow::savePgn);
+
+    copyFenAction_ = menuGames->addAction(tr("Copy FEN"));
+    copyFenAction_->setObjectName(QStringLiteral("copyFenAction"));
+    configureToolAction(copyFenAction_, QStringLiteral(":/icons/toolbar-paste.svg"),
+                        tr("Copy current board position as FEN to clipboard"));
+    copyFenAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+F")));
+    copyFenAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(copyFenAction_);
+    connect(copyFenAction_, &QAction::triggered, this, &MainWindow::copyFen);
+
+    copyPgnAction_ = menuGames->addAction(tr("Copy PGN"));
+    copyPgnAction_->setObjectName(QStringLiteral("copyPgnAction"));
+    configureToolAction(copyPgnAction_, QStringLiteral(":/icons/toolbar-save-pgn.svg"),
+                        tr("Copy current game as PGN to clipboard"));
+    copyPgnAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+C")));
+    copyPgnAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(copyPgnAction_);
+    connect(copyPgnAction_, &QAction::triggered, this, &MainWindow::copyPgn);
 
     QAction *loadImageAction = menuGames->addAction(tr("Load screenshot..."));
     configureToolAction(loadImageAction,
@@ -1779,12 +1872,16 @@ void MainWindow::setupUi() {
     toolBar->addAction(quitAction);
     toolBar->addSeparator();
     toolBar->addAction(newGameAction_);
+    toolBar->addAction(firstMoveAction_);
     toolBar->addAction(stepBackAction_);
     toolBar->addAction(stepForwardAction_);
+    toolBar->addAction(lastMoveAction_);
     toolBar->addAction(playAgainstComputerAction_);
     toolBar->addSeparator();
     toolBar->addAction(loadPgnAction_);
     toolBar->addAction(savePgnAction_);
+    toolBar->addAction(copyFenAction_);
+    toolBar->addAction(copyPgnAction_);
     toolBar->addAction(loadImageAction);
     toolBar->addAction(pasteFenAction_);
     toolBar->addSeparator();
@@ -2103,7 +2200,22 @@ void MainWindow::pieceMoved(QChar piece, Rules::Position oldPosition,
         humanClock->stop();
     }
 
+    Rules::PieceType promotion = Rules::PieceType::None;
+    if (gameController_->isPromotionMove(oldPosition, newPosition)) {
+        PromotionDialog dialog(gameController_->rules().currentPlayer(), this);
+        if (dialog.exec() == QDialog::Accepted) {
+            promotion = dialog.selectedPiece();
+        } else {
+            // Player cancelled promotion selection: refresh board to revert piece position.
+            board_->setRules(gameController_->rules());
+            board_->setUserArrows(gameController_->arrowsAtCursor());
+            board_->setSquareAnnotations(gameController_->squaresAtCursor());
+            board_->setAuditAnnotation(gameController_->auditAt(gameController_->moveCursor()));
+            return;
+        }
+    }
+
     // The board never mutated its position cache: the controller is the only
     // source of truth, and a rejected move simply leaves the board unchanged.
-    gameController_->requestMove(oldPosition, newPosition);
+    gameController_->requestMove(oldPosition, newPosition, promotion);
 }

@@ -21,7 +21,7 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
 - **Complete Chess Rules Engine**
   - Clean, UI-independent C++20 rules implementation (`Rules`).
   - Full FIDE rule support: legal move generation, check detection, checkmate, and stalemate.
-  - Special moves: kingside & queenside castling, *en passant* captures, and pawn promotions.
+  - Special moves: kingside & queenside castling, *en passant* captures, and pawn promotions (including interactive underpromotions to Queen, Rook, Bishop, or Knight with visual icons and keyboard shortcuts).
 
 - **Real-Time Heuristic Position Evaluation**
   - Self-contained classical evaluator (`HeuristicEval`) with no external model files required.
@@ -53,6 +53,7 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
 - **PGN & FEN Management (Games Menu)**
   - Start a new game against the currently loaded UCI engine with PGN tags, side selection, and standard time controls (2h, 1h, 30m, 15m, or 5m blitz per player).
   - Load full PGN game files (`Load PGN...`) with automatic move replay, check/mate validation, and live move history update.
+  - Copy current FEN (`Ctrl+Shift+F`) or full PGN (`Ctrl+Shift+C`) directly to the clipboard.
   - Paste any FEN position directly from the clipboard using `Ctrl+V` or the `Games -> Paste FEN or screenshot` menu action.
   - Import a chessboard screenshot from the clipboard, a browser drag, or a file-manager drag. The board is detected, classified with ONNX Runtime, and loaded into the chessboard automatically.
   - Use the visible `White to play` checkbox to choose the side to move when a screenshot does not contain game-state metadata.
@@ -64,9 +65,10 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
   - Displays confidence and orientation feedback, while retaining a manual FEN fallback.
   - Detection and classification run in a dedicated worker thread (`VisionWorker`), so pasting or dropping a screenshot never freezes the UI; a request counter discards stale results when several images are processed in a row.
 
-- **PGN Move History**
+- **PGN Move History & Navigation**
   - Automatic algebraic notation generator supporting piece markers, capture markers (`x`), checks (`+`), checkmates (`#`), castling (`O-O` / `O-O-O`), and promotions (`=Q`).
   - Split-view layout allowing seamless game recording and review.
+  - Full game navigation: Step backward/forward (`Left` / `Right`) and jump to start/end (`Home` / `End`, toolbar buttons, and menu actions).
 
 - **UI-Independent Game Controller**
   - `GameController` owns the authoritative position, PGN history, UCI engine, opening book, heuristic evaluator, and the computer-game state machine.
@@ -93,6 +95,7 @@ ChessGui/
 ├── computergamesettings.h / .cpp  # ComputerGameSettings struct shared by dialog and controller
 ├── chessboard.h / .cpp            # Chessboard widget (SVG rendering & input handling)
 ├── chessboard.ui                  # Qt Designer UI form for ChessBoard
+├── promotiondialog.h / .cpp       # Pawn promotion piece selection dialog (Queen, Rook, Bishop, Knight)
 ├── rules.h / .cpp                 # Standalone chess rules & move validation engine
 ├── heuristiceval.h / .cpp         # Self-contained classical position evaluator
 ├── evaluationbar.h / .cpp         # Vertical evaluation bar widget
@@ -130,6 +133,8 @@ ChessGui/
 │   ├── engineoutputwidget_test.cpp# Unit tests for EngineOutputWidget
 │   ├── appconfig_test.cpp         # Unit tests for application configuration management
 │   ├── gamecontroller_test.cpp    # Unit tests for the game controller
+│   ├── chessboard_test.cpp        # Unit tests for chessboard widget and user interactions
+│   ├── promotiondialog_test.cpp   # Unit tests for promotion selection dialog
 │   └── vision_test.cpp            # Unit tests for board detection and FEN recognition
 ├── AGENTS.md                      # Guidelines and conventions for development agents
 └── README.md                      # Project documentation
@@ -199,10 +204,10 @@ The CMake configuration enables CPack's DEB generator on Linux. After configurin
 cpack --config build/CPackConfig.cmake
 ```
 
-This creates `chessgui_1.0.4_amd64.deb` in the project root. Install it with:
+This creates `chessgui_1.0.5_amd64.deb` in the project root. Install it with:
 
 ```bash
-sudo apt install ./chessgui_1.0.4_amd64.deb
+sudo apt install ./chessgui_1.0.5_amd64.deb
 ```
 
 The package installs the `ChessGui` executable, its desktop launcher, the generated application

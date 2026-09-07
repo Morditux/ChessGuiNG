@@ -231,7 +231,8 @@ bool MoveListWidget::event(QEvent *event) {
     if (event->type() == QEvent::ShortcutOverride) {
         const auto *key = static_cast<QKeyEvent *>(event);
         if (key->modifiers() == Qt::NoModifier &&
-            (key->key() == Qt::Key_Left || key->key() == Qt::Key_Right)) {
+            (key->key() == Qt::Key_Left || key->key() == Qt::Key_Right ||
+             key->key() == Qt::Key_Home || key->key() == Qt::Key_End)) {
             event->ignore();
             return false; // Let the existing window navigation actions handle these.
         }
@@ -245,7 +246,26 @@ void MoveListWidget::keyPressEvent(QKeyEvent *event) {
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_Left) {
+    if (event->key() == Qt::Key_Home) {
+        if (currentPly_ > 0) {
+            emit moveSelected(0);
+            event->accept();
+            return;
+        }
+    } else if (event->key() == Qt::Key_End) {
+        int maxPly = 0;
+        for (const int p : whitePlys_) {
+            maxPly = qMax(maxPly, p);
+        }
+        for (const int p : blackPlys_) {
+            maxPly = qMax(maxPly, p);
+        }
+        if (currentPly_ < maxPly) {
+            emit moveSelected(maxPly);
+            event->accept();
+            return;
+        }
+    } else if (event->key() == Qt::Key_Left) {
         if (currentPly_ > 0) {
             emit moveSelected(currentPly_ - 1);
             event->accept();

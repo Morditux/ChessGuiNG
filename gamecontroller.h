@@ -69,13 +69,17 @@ public:
     void setSideToMove(bool whiteToMove);
 
     // Human move intent; validates, records and continues the game flow.
-    bool requestMove(Rules::Position from, Rules::Position to);
+    bool requestMove(Rules::Position from, Rules::Position to,
+                     Rules::PieceType promotion = Rules::PieceType::None);
+    [[nodiscard]] bool isPromotionMove(Rules::Position from, Rules::Position to) const;
 
     // Navigation through the played moves: the board position is moved back
     // or forward one ply without altering the recorded history. Disabled
     // while a computer game is active.
     bool stepBack();
     bool stepForward();
+    bool goToStart();
+    bool goToEnd();
     // Jumps directly to the position after the given ply (0 is the starting
     // position). Follows the same rules as stepBack/stepForward.
     bool goToMove(int moveIndex);

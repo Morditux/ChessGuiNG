@@ -143,6 +143,8 @@ private slots:
     void testGameAuditExportsAndReloadsMarkers();
     void testGameAuditCanBeCancelledWithoutPartialResults();
     void testGameAuditMarksLostForcedMateAsBlunder();
+    void testPromotionAndUnderpromotion();
+    void testGoToStartAndGoToEnd();
 };
 
 void GameControllerTest::initTestCase() {
@@ -808,6 +810,87 @@ void GameControllerTest::testGameAuditMarksLostForcedMateAsBlunder() {
     QVERIFY(controller.auditAt(1).forcedMate);
     controller.stopEngine();
     QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testPromotionAndUnderpromotion() {
+    GameController controller;
+    const QString fen = QStringLiteral("k7/4P3/8/8/8/8/8/K7 w - - 0 1");
+    QVERIFY(controller.loadFen(fen));
+
+    const Rules::Position e7{1, 4};
+    const Rules::Position e8{0, 4};
+    const Rules::Position d8{0, 3};
+
+    // Non-promotion move check
+    QVERIFY(!controller.isPromotionMove({7, 0}, {6, 0}));
+    // Illegal pawn move check
+    QVERIFY(!controller.isPromotionMove(e7, d8));
+    // Valid promotion move check
+    QVERIFY(controller.isPromotionMove(e7, e8));
+
+    // 1. Underpromote to Knight
+    QVERIFY(controller.requestMove(e7, e8, Rules::PieceType::Knight));
+    const auto knight = controller.rules().pieceAt(e8);
+    QVERIFY(knight.has_value());
+    QCOMPARE(knight->type, Rules::PieceType::Knight);
+    QCOMPARE(controller.uciMoves().last(), QStringLiteral("e7e8n"));
+    QVERIFY(controller.pgnMoves().last().endsWith(QStringLiteral("=N")) ||
+            controller.pgnMoves().last().endsWith(QStringLiteral("=N+")));
+
+    // 2. Test underpromotion to Rook
+    controller.loadFen(fen);
+    QVERIFY(controller.requestMove(e7, e8, Rules::PieceType::Rook));
+    const auto rook = controller.rules().pieceAt(e8);
+    QVERIFY(rook.has_value());
+    QCOMPARE(rook->type, Rules::PieceType::Rook);
+    QCOMPARE(controller.uciMoves().last(), QStringLiteral("e7e8r"));
+
+    // 3. Test underpromotion to Bishop
+    controller.loadFen(fen);
+    QVERIFY(controller.requestMove(e7, e8, Rules::PieceType::Bishop));
+    const auto bishop = controller.rules().pieceAt(e8);
+    QVERIFY(bishop.has_value());
+    QCOMPARE(bishop->type, Rules::PieceType::Bishop);
+    QCOMPARE(controller.uciMoves().last(), QStringLiteral("e7e8b"));
+
+    // 4. Test default promotion (PieceType::None) -> promotes to Queen
+    controller.loadFen(fen);
+    QVERIFY(controller.requestMove(e7, e8, Rules::PieceType::None));
+    const auto queen = controller.rules().pieceAt(e8);
+    QVERIFY(queen.has_value());
+    QCOMPARE(queen->type, Rules::PieceType::Queen);
+    QCOMPARE(controller.uciMoves().last(), QStringLiteral("e7e8q"));
+}
+
+void GameControllerTest::testGoToStartAndGoToEnd() {
+    GameController controller;
+    const QString pgn = QStringLiteral("1. e4 e5 2. Nf3 Nc6 *");
+    QVERIFY(controller.loadPgn(pgn));
+    QCOMPARE(controller.moveCursor(), 4);
+    QVERIFY(controller.canStepBack());
+    QVERIFY(!controller.canStepForward());
+
+    // Go to start
+    QVERIFY(controller.goToStart());
+    QCOMPARE(controller.moveCursor(), 0);
+    QVERIFY(!controller.canStepBack());
+    QVERIFY(controller.canStepForward());
+
+    // Go to start again should return false (already at start)
+    QVERIFY(!controller.goToStart());
+
+    // Step forward one
+    QVERIFY(controller.stepForward());
+    QCOMPARE(controller.moveCursor(), 1);
+
+    // Go to end
+    QVERIFY(controller.goToEnd());
+    QCOMPARE(controller.moveCursor(), 4);
+    QVERIFY(controller.canStepBack());
+    QVERIFY(!controller.canStepForward());
+
+    // Go to end again should return false (already at end)
+    QVERIFY(!controller.goToEnd());
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

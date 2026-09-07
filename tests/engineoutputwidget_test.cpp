@@ -470,7 +470,7 @@ void EngineOutputWidgetTest::testMainWindowLayout() {
             QVERIFY(!action->icon().isNull());
         }
     }
-    QCOMPARE(toolActionCount, 14);
+    QCOMPARE(toolActionCount, 18);
 
     // Verify main splitter contains top pane and bottom engine output widget
     auto splitters = window.findChildren<QSplitter *>();

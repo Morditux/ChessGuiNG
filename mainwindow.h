@@ -72,6 +72,10 @@ public:
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
     [[nodiscard]] QAction *analyzeGameAction() const;
+    [[nodiscard]] QAction *firstMoveAction() const;
+    [[nodiscard]] QAction *lastMoveAction() const;
+    [[nodiscard]] QAction *copyFenAction() const;
+    [[nodiscard]] QAction *copyPgnAction() const;
     [[nodiscard]] QString loadedPgnContent() const;
     [[nodiscard]] QStringList loadedPgnGames() const;
     [[nodiscard]] int selectedPgnGameIndex() const;
@@ -90,6 +94,8 @@ public slots:
     bool loadPgnContent(const QString &pgnContent, int selectedGameIndex = -1);
     void savePgn();
     bool savePgnFile(const QString &filePath = QString());
+    void copyFen();
+    void copyPgn();
     bool pasteFen(const QString &fenText = QString());
     void pasteFromClipboard();
     void playAgainstComputer();
@@ -109,6 +115,8 @@ public slots:
     void setWhiteToMove(bool whiteToMove);
     void stepBack();
     void stepForward();
+    void goToStart();
+    void goToEnd();
     void clearBoardAnnotations();
     void toggleGameAudit();
 
@@ -180,10 +188,14 @@ private:
 
     QAction *loadPgnAction_ = nullptr;
     QAction *savePgnAction_ = nullptr;
+    QAction *copyFenAction_ = nullptr;
+    QAction *copyPgnAction_ = nullptr;
     QAction *pasteFenAction_ = nullptr;
     QAction *newGameAction_ = nullptr;
+    QAction *firstMoveAction_ = nullptr;
     QAction *stepBackAction_ = nullptr;
     QAction *stepForwardAction_ = nullptr;
+    QAction *lastMoveAction_ = nullptr;
     QAction *configureEngineAction_ = nullptr;
     QAction *uciOptionsAction_ = nullptr;
     QAction *configureRemoteEngineAction_ = nullptr;
