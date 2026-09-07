@@ -99,8 +99,19 @@ jobs:
               Push-Location $testRoot
               try {
                   foreach ($testName in @("AppConfigTest", "GameControllerTest")) {
+                      $detailFile = Join-Path $env:RUNNER_TEMP "$testName-qt-test.txt"
+                      if (Test-Path -LiteralPath $detailFile) {
+                          Remove-Item -LiteralPath $detailFile -Force
+                      }
                       Write-Host "Re-running $testName for detailed QtTest output"
-                      & ".\Release\$testName.exe" -o -,txt
+                      & ".\Release\$testName.exe" "-o" "$detailFile,txt"
+                      $testExitCode = $LASTEXITCODE
+                      if (Test-Path -LiteralPath $detailFile -PathType Leaf) {
+                          Get-Content -LiteralPath $detailFile
+                      } else {
+                          Write-Host "QtTest did not create an output file for $testName"
+                      }
+                      Write-Host "$testName exit code: $testExitCode"
                   }
               } finally {
                   Pop-Location
