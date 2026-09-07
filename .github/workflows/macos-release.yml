@@ -1,0 +1,159 @@
+name: macOS release
+
+on:
+  push:
+    branches:
+      - macos-release
+
+concurrency:
+  group: macos-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build macOS ARM release
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          host: mac
+          target: desktop
+          arch: clang_64
+          archives: qtbase qtsvg
+          cache: true
+
+      - name: Download ONNX Runtime 1.23.2
+        env:
+          ONNXRUNTIME_VERSION: 1.23.2
+          ONNXRUNTIME_SHA256: b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz"
+          runtime_root="$RUNNER_TEMP/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}"
+          uri="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz"
+
+          curl --fail --location --retry 3 --output "$archive" "$uri"
+          echo "${ONNXRUNTIME_SHA256}  ${archive}" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+
+          test -d "$runtime_root"
+          test -f "$runtime_root/include/onnxruntime_cxx_api.h"
+          test -f "$runtime_root/lib/libonnxruntime.dylib"
+          test -f "$runtime_root/LICENSE"
+          test -f "$runtime_root/Privacy.md"
+          test -f "$runtime_root/ThirdPartyNotices.txt"
+
+          echo "ONNXRUNTIME_ROOT=$runtime_root" >> "$GITHUB_ENV"
+
+      - name: Read project version
+        run: |
+          set -euo pipefail
+
+          project_version="$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*$/\1/p' CMakeLists.txt | head -n 1)"
+          test -n "$project_version"
+          echo "PROJECT_VERSION=$project_version" >> "$GITHUB_ENV"
+
+      - name: Configure Release build
+        run: |
+          set -euo pipefail
+
+          test -n "${QT_ROOT_DIR:-}"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DONNXRUNTIME_ROOT="$ONNXRUNTIME_ROOT" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Build Release
+        run: cmake --build build --parallel
+
+      - name: Run QtTest suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Stage macOS application
+        run: |
+          set -euo pipefail
+
+          install_root="$RUNNER_TEMP/chessgui-install"
+          package_root="$RUNNER_TEMP/ChessGui-macos-arm64"
+          rm -rf "$install_root" "$package_root"
+
+          cmake --install build --prefix "$install_root"
+          app="$install_root/ChessGui.app"
+          test -d "$app"
+
+          "$QT_ROOT_DIR/bin/macdeployqt" "$app" -always-overwrite
+
+          test -f "$app/Contents/MacOS/ChessGui"
+          test -f "$app/Contents/MacOS/model/chess-tiles-v2.onnx"
+          test -f "$app/Contents/Frameworks/libonnxruntime.dylib"
+          file "$app/Contents/MacOS/ChessGui" | grep -q 'arm64'
+          otool -L "$app/Contents/MacOS/ChessGui"
+
+          mkdir -p "$package_root/third-party/onnxruntime"
+          cp -R "$app" "$package_root/"
+          cp "$install_root/share/doc/chessgui/LICENSE" "$package_root/"
+          cp "$install_root/share/doc/chessgui/THIRD_PARTY_NOTICES.md" "$package_root/"
+          cp "$install_root/share/doc/chessgui/LICENSE-CHESSNUT.txt" "$package_root/"
+          cp "$ONNXRUNTIME_ROOT/LICENSE" \
+            "$ONNXRUNTIME_ROOT/Privacy.md" \
+            "$ONNXRUNTIME_ROOT/ThirdPartyNotices.txt" \
+            "$package_root/third-party/onnxruntime/"
+          ln -s /Applications "$package_root/Applications"
+
+          for required_file in \
+              "$package_root/ChessGui.app/Contents/MacOS/ChessGui" \
+              "$package_root/ChessGui.app/Contents/MacOS/model/chess-tiles-v2.onnx" \
+              "$package_root/ChessGui.app/Contents/Frameworks/libonnxruntime.dylib" \
+              "$package_root/LICENSE" \
+              "$package_root/THIRD_PARTY_NOTICES.md" \
+              "$package_root/LICENSE-CHESSNUT.txt" \
+              "$package_root/third-party/onnxruntime/LICENSE" \
+              "$package_root/third-party/onnxruntime/Privacy.md" \
+              "$package_root/third-party/onnxruntime/ThirdPartyNotices.txt"; do
+            test -f "$required_file"
+          done
+
+          dmg="$GITHUB_WORKSPACE/ChessGui-macos-arm64.dmg"
+          rm -f "$dmg"
+          hdiutil create \
+            -volname "ChessGui macOS ARM" \
+            -srcfolder "$package_root" \
+            -ov \
+            -format UDZO \
+            "$dmg"
+          hdiutil imageinfo "$dmg" >/dev/null
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="macos-v${PROJECT_VERSION}-build.${GITHUB_RUN_NUMBER}"
+          title="ChessGui macOS ARM v${PROJECT_VERSION} (build ${GITHUB_RUN_NUMBER})"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              "${GITHUB_WORKSPACE}/ChessGui-macos-arm64.dmg" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$tag" \
+              "${GITHUB_WORKSPACE}/ChessGui-macos-arm64.dmg" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --notes "Automated unsigned macOS ARM release for ChessGui ${PROJECT_VERSION}."
+          fi

@@ -198,7 +198,23 @@ target_include_directories(chessapp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(chessapp PUBLIC Qt6::Network Qt6::Widgets chesscore chessui chessvision)
 target_compile_definitions(chessapp PRIVATE CHESSGUI_SOURCE_MODEL_PATH="${CHESSGUI_MODEL}")
 
-qt_add_executable(ChessGui main.cpp)
+if (APPLE)
+    qt_add_executable(ChessGui MACOSX_BUNDLE main.cpp)
+    set_target_properties(ChessGui PROPERTIES
+            MACOSX_BUNDLE_BUNDLE_NAME "ChessGui"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "com.chessgui.ChessGui"
+            MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+            INSTALL_RPATH "@loader_path/../Frameworks"
+    )
+    if (ONNXRUNTIME_ROOT)
+        set_target_properties(ChessGui PROPERTIES
+                BUILD_RPATH "${ONNXRUNTIME_ROOT}/lib"
+        )
+    endif()
+else()
+    qt_add_executable(ChessGui main.cpp)
+endif()
 target_link_libraries(ChessGui PRIVATE chessapp chesscore chessui chessvision)
 
 qt_add_resources(ChessGui "ChessGui_app_resources"
@@ -247,12 +263,28 @@ if (TARGET Qt6::LinguistTools AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/translatio
     endif()
 endif()
 
-install(TARGETS ChessGui
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-install(FILES "${CHESSGUI_MODEL}"
-        DESTINATION ${CMAKE_INSTALL_BINDIR}/model
-)
+if (APPLE)
+    install(TARGETS ChessGui
+            BUNDLE DESTINATION .
+    )
+    install(FILES "${CHESSGUI_MODEL}"
+            DESTINATION "ChessGui.app/Contents/MacOS/model"
+    )
+    if (ONNXRUNTIME_ROOT)
+        install(DIRECTORY "${ONNXRUNTIME_ROOT}/lib/"
+                DESTINATION "ChessGui.app/Contents/Frameworks"
+                FILES_MATCHING
+                PATTERN "libonnxruntime*.dylib"
+        )
+    endif()
+else()
+    install(TARGETS ChessGui
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+    install(FILES "${CHESSGUI_MODEL}"
+            DESTINATION ${CMAKE_INSTALL_BINDIR}/model
+    )
+endif()
 if (WIN32)
     install(FILES
             "${ONNXRUNTIME_RUNTIME_LIBRARY}"
@@ -263,6 +295,13 @@ endif()
 install(FILES LICENSE THIRD_PARTY_NOTICES.md
         DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/chessgui
 )
+
+if (APPLE)
+    install(FILES assets/pieces/LICENSE-2.0.txt
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/chessgui
+            RENAME LICENSE-CHESSNUT.txt
+    )
+endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     install(FILES packaging/chessgui.desktop
