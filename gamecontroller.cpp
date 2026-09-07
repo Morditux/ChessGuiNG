@@ -16,6 +16,10 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+    constexpr int GameAuditDepth = 18;
+}
+
 GameController::GameController(QObject *parent)
     : QObject(parent)
     , engine_(new UciEngine(this))
@@ -1088,7 +1092,7 @@ void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
 
 void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
     if (auditActive_ && auditPosition_ >= 0 && auditPosition_ < auditScores_.size() &&
-        line.multipv == 1 && line.depth.value_or(0) >= 25 &&
+        line.multipv == 1 && line.depth.value_or(0) >= GameAuditDepth &&
         (line.scoreCp.has_value() || line.mateIn.has_value())) {
         auditLatestLine_ = line;
     }
@@ -1113,7 +1117,9 @@ void GameController::onAuditBestMove(const QString &bestMove, const QString &pon
     Q_UNUSED(ponder)
     if (!auditActive_ || auditPosition_ < 0 || auditPosition_ >= auditScores_.size()) return;
     if (!auditLatestLine_.has_value()) {
-        finishGameAudit(false, tr("Game analysis stopped because the engine did not return a depth 25 score."));
+        finishGameAudit(false,
+                        tr("Game analysis stopped because the engine did not return a depth %1 score.")
+                            .arg(GameAuditDepth));
         return;
     }
     auditScores_[auditPosition_] = {auditLatestLine_->scoreCp, auditLatestLine_->mateIn};
@@ -1147,7 +1153,7 @@ void GameController::startNextAuditPosition() {
     }
     auditLatestLine_.reset();
     backend->sendPosition(initialFen_, uciMoves_.mid(0, auditPosition_));
-    backend->startAnalysis(25);
+    backend->startAnalysis(GameAuditDepth);
 }
 
 void GameController::finishGameAudit(bool applyResults, const QString &message) {

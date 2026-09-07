@@ -99,8 +99,8 @@ public:
     void setRecommendedMovePreviewEnabled(bool enabled);
     void updateEvaluation();
 
-    // Fixed-depth, mainline-only engine audit.  Results are committed as one
-    // transaction so cancelling or losing the engine cannot leave a partial PGN.
+    // Fixed-depth (18), mainline-only engine audit. Results are committed as
+    // one transaction so cancelling or losing the engine cannot leave a partial PGN.
     [[nodiscard]] bool canStartGameAudit() const;
     bool startGameAudit();
     void cancelGameAudit();

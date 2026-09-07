@@ -10,10 +10,7 @@
 #include <cstdio>
 #include <stdexcept>
 
-#ifdef _WIN32
-#include <fcntl.h>
-#include <io.h>
-#else
+#ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -29,55 +26,41 @@ namespace {
     constexpr char Labels[] = "1KQRBNPkqrbnp";
 
     /**
-     * Temporarily redirects the process stderr stream while ONNX Runtime is
+     * Temporarily redirects the POSIX stderr descriptor while ONNX Runtime is
      * initialized.
      *
      * The Ubuntu ONNX package enables static schema registration, while its
      * ONNX Runtime package registers the same schemas again in Ort::Env. The
-     * duplicate messages are harmless but noisy. This guard suppresses those
+     * duplicate messages are harmless but noisy. The guard suppresses those
      * diagnostics during construction; exceptions are still reported through
-     * FenRecognizer::error_.
+     * FenRecognizer::error_. The official Windows package does not need this
+     * workaround, so it deliberately does not replace the Windows CRT stream.
      */
+#ifndef _WIN32
     class ScopedStderrSilencer {
     public:
         ScopedStderrSilencer() {
-#ifdef _WIN32
-            _flushall();
-            savedFd_ = _dup(_fileno(stderr));
-            nullFd_ = _open("NUL", _O_WRONLY);
-            if (savedFd_ >= 0 && nullFd_ >= 0)
-                _dup2(nullFd_, _fileno(stderr));
-#else
             std::fflush(stderr);
             savedFd_ = ::dup(STDERR_FILENO);
             nullFd_ = ::open("/dev/null", O_WRONLY);
             if (savedFd_ >= 0 && nullFd_ >= 0)
                 ::dup2(nullFd_, STDERR_FILENO);
-#endif
         }
 
         ~ScopedStderrSilencer() {
-#ifdef _WIN32
-            if (savedFd_ >= 0)
-                _dup2(savedFd_, _fileno(stderr));
-            if (savedFd_ >= 0)
-                _close(savedFd_);
-            if (nullFd_ >= 0)
-                _close(nullFd_);
-#else
             if (savedFd_ >= 0)
                 ::dup2(savedFd_, STDERR_FILENO);
             if (savedFd_ >= 0)
                 ::close(savedFd_);
             if (nullFd_ >= 0)
                 ::close(nullFd_);
-#endif
         }
 
     private:
         int savedFd_ = -1;
         int nullFd_ = -1;
     };
+#endif
 
     /**
      * Reads one grayscale pixel, clamping coordinates to the image edges.
@@ -145,10 +128,24 @@ FenRecognizer::FenRecognizer(const QString &modelPath) {
     }
 
     try {
+#ifndef _WIN32
         ScopedStderrSilencer silence;
+#endif
+        // The Windows 1.23.2 C++ header uses a process-global API pointer.
+        // Initialize it after the application has started rather than from a
+        // static initializer in every executable that includes the header.
+        const OrtApiBase *apiBase = OrtGetApiBase();
+        if (apiBase == nullptr)
+            throw std::runtime_error("ONNX Runtime API is unavailable");
+
+        const OrtApi *api = apiBase->GetApi(ORT_API_VERSION);
+        if (api == nullptr)
+            throw std::runtime_error("ONNX Runtime API version is unsupported");
+
+        Ort::InitApi(api);
         environment_ = std::make_unique<Ort::Env>(
-            ORT_LOGGING_LEVEL_WARNING,
-            "chessVision");
+                ORT_LOGGING_LEVEL_WARNING,
+                "chessVision");
 
         Ort::SessionOptions options;
         options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);

@@ -142,6 +142,10 @@ add_library(chessvision OBJECT
 )
 target_include_directories(chessvision PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(chessvision PUBLIC Qt6::Gui onnxruntime::onnxruntime)
+target_compile_definitions(chessvision PUBLIC
+        ORT_API_MANUAL_INIT
+        ORT_DLL_IMPORT
+)
 
 # chessui: reusable widgets.
 # Generate the legacy .qrc explicitly because Visual Studio multi-config
