@@ -1047,6 +1047,13 @@ void GameController::startMovePreviewAnalysis() {
 }
 
 void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
+    // During a computer turn the engine is performing the actual timed
+    // search. Its intermediate PV must not be published as a planned move:
+    // doing so races with the preview analysis that starts after bestmove.
+    if (computerGameActive_ && rules_.currentPlayer() == computerColor_) {
+        return;
+    }
+
     if (line.multipv != 1) {
         return;
     }

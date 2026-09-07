@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QAction>
 #include <QScopeGuard>
+#include <QScreen>
 #include "movelistwidget.h"
 #include "gamecontroller.h"
 
@@ -221,7 +222,29 @@ void AppConfigTest::testHistoryLayout() {
         QDir().mkpath(outputDir);
         QVERIFY(window.grab().save(outputDir + '/' + QString::fromLatin1(QTest::currentDataTag()) + ".png"));
     }
-    QCOMPARE(window.size(), windowSize);
+    // A window manager may clamp a top-level window to the available desktop
+    // size. This happens on the Windows runner for the 1280x800 data rows.
+    // Keep the exact assertion where the requested size fits, while accepting
+    // an OS-imposed reduction when the requested size is too large.
+    const QSize actualWindowSize = window.size();
+    if (actualWindowSize != windowSize) {
+        const QScreen *screen = window.screen();
+        QVERIFY(screen != nullptr);
+        const QSize availableSize = screen->availableGeometry().size();
+        QVERIFY2(windowSize.width() > availableSize.width() ||
+                     windowSize.height() > availableSize.height(),
+                 qPrintable(QStringLiteral("unexpected window size clamp: actual %1x%2, requested %3x%4, available %5x%6")
+                                .arg(actualWindowSize.width())
+                                .arg(actualWindowSize.height())
+                                .arg(windowSize.width())
+                                .arg(windowSize.height())
+                                .arg(availableSize.width())
+                                .arg(availableSize.height())));
+        QVERIFY(actualWindowSize.width() <= windowSize.width());
+        QVERIFY(actualWindowSize.height() <= windowSize.height());
+    } else {
+        QCOMPARE(actualWindowSize, windowSize);
+    }
     QVERIFY(qAbs(moves->columnWidth(1) - moves->columnWidth(2)) <= 1);
     QVERIFY(moves->columnWidth(1) >= moves->fontMetrics().horizontalAdvance("White") + 8);
     QVERIFY2(moves->height() > 100, qPrintable(QString::number(moves->height())));
