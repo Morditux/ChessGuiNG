@@ -50,7 +50,8 @@ jobs:
           $requiredFiles = @(
               (Join-Path $runtimeRoot "include\onnxruntime_cxx_api.h"),
               (Join-Path $runtimeRoot "lib\onnxruntime.lib"),
-              (Join-Path $runtimeRoot "lib\onnxruntime.dll")
+              (Join-Path $runtimeRoot "lib\onnxruntime.dll"),
+              (Join-Path $runtimeRoot "lib\onnxruntime_providers_shared.dll")
           )
           foreach ($file in $requiredFiles) {
               if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
@@ -74,10 +75,23 @@ jobs:
       - name: Build Release
         run: cmake --build build --config Release --parallel
 
+      - name: Stage test runtime files
+        shell: pwsh
+        run: |
+          $testBin = Join-Path $env:GITHUB_WORKSPACE "build\Release"
+          foreach ($runtimeFile in @("onnxruntime.dll", "onnxruntime_providers_shared.dll")) {
+              Copy-Item (Join-Path $env:ONNXRUNTIME_ROOT "lib\$runtimeFile") $testBin -Force
+          }
+
       - name: Run QtTest suite
         shell: pwsh
         run: |
-          $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$env:PATH"
+          $gitBin = Join-Path $env:ProgramFiles "Git\bin"
+          if (Test-Path -LiteralPath (Join-Path $gitBin "bash.exe") -PathType Leaf) {
+              $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$gitBin;$env:PATH"
+          } else {
+              $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$env:PATH"
+          }
           ctest --test-dir build -C Release --output-on-failure
 
       - name: Stage executable and runtime files
@@ -129,6 +143,7 @@ jobs:
           $requiredFiles = @(
               "ChessGui.exe",
               "onnxruntime.dll",
+              "onnxruntime_providers_shared.dll",
               "model\chess-tiles-v2.onnx",
               "platforms\qwindows.dll",
               "LICENSE",

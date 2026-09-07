@@ -4,7 +4,35 @@
 
 #include "uciengine.h"
 
+#include <QDir>
 #include <QFileInfo>
+#include <QStandardPaths>
+
+namespace {
+
+QString findWindowsBash() {
+    QString bashPath = QStandardPaths::findExecutable(QStringLiteral("bash"));
+    if (!bashPath.isEmpty()) {
+        return bashPath;
+    }
+
+    const QStringList candidates = {
+        qEnvironmentVariable("ProgramW6432") + QStringLiteral("/Git/bin/bash.exe"),
+        qEnvironmentVariable("ProgramFiles") + QStringLiteral("/Git/bin/bash.exe"),
+        qEnvironmentVariable("ProgramW6432") + QStringLiteral("/Git/usr/bin/bash.exe"),
+        qEnvironmentVariable("ProgramFiles") + QStringLiteral("/Git/usr/bin/bash.exe"),
+        QStringLiteral("C:/Program Files/Git/bin/bash.exe"),
+        QStringLiteral("C:/Program Files/Git/usr/bin/bash.exe")
+    };
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return QDir::cleanPath(candidate);
+        }
+    }
+    return {};
+}
+
+} // namespace
 
 UciEngine::UciEngine(QObject *parent)
     : EngineBackend(QStringLiteral("UCI Engine"), parent) {
@@ -31,7 +59,20 @@ bool UciEngine::startEngine(const QString &executablePath) {
     connect(process_, &QProcess::finished,
             this, &UciEngine::onProcessFinished);
 
-    process_->start(executablePath, QStringList());
+    QString program = executablePath;
+    QStringList arguments;
+#ifdef Q_OS_WIN
+    // The test suite and user tooling may provide POSIX shell wrappers. Windows
+    // cannot execute a .sh file directly, but Git for Windows supplies bash.
+    if (QFileInfo(executablePath).suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0) {
+        const QString bashPath = findWindowsBash();
+        if (!bashPath.isEmpty()) {
+            program = bashPath;
+            arguments << QDir::fromNativeSeparators(executablePath);
+        }
+    }
+#endif
+    process_->start(program, arguments);
     if (!process_->waitForStarted(3000)) {
         setState(State::Disconnected);
         delete process_;

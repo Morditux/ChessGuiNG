@@ -48,10 +48,17 @@ if (WIN32)
             "${ONNXRUNTIME_ROOT}/lib"
             "${ONNXRUNTIME_ROOT}/bin"
     )
+    find_file(ONNXRUNTIME_PROVIDER_RUNTIME_LIBRARY
+            NAMES onnxruntime_providers_shared.dll
+            HINTS
+            "${ONNXRUNTIME_ROOT}/lib"
+            "${ONNXRUNTIME_ROOT}/bin"
+    )
 endif()
 
 if (NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY
-        OR (WIN32 AND NOT ONNXRUNTIME_RUNTIME_LIBRARY))
+        OR (WIN32 AND (NOT ONNXRUNTIME_RUNTIME_LIBRARY
+                       OR NOT ONNXRUNTIME_PROVIDER_RUNTIME_LIBRARY)))
     message(FATAL_ERROR
             "ONNX Runtime development files not found. Install libonnxruntime-dev "
             "or set ONNXRUNTIME_ROOT to its installation prefix.")
@@ -247,7 +254,9 @@ install(FILES "${CHESSGUI_MODEL}"
         DESTINATION ${CMAKE_INSTALL_BINDIR}/model
 )
 if (WIN32)
-    install(FILES "${ONNXRUNTIME_RUNTIME_LIBRARY}"
+    install(FILES
+            "${ONNXRUNTIME_RUNTIME_LIBRARY}"
+            "${ONNXRUNTIME_PROVIDER_RUNTIME_LIBRARY}"
             DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
 endif()
