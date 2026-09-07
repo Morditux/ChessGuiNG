@@ -144,6 +144,13 @@ target_include_directories(chessvision PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(chessvision PUBLIC Qt6::Gui onnxruntime::onnxruntime)
 
 # chessui: reusable widgets.
+# Generate the legacy .qrc explicitly because Visual Studio multi-config
+# generators can lose AUTORCC object dependencies for OBJECT libraries.
+set(chessui_resources)
+qt_add_resources(chessui_resources
+        "${CMAKE_CURRENT_SOURCE_DIR}/pieces.qrc"
+)
+
 add_library(chessui OBJECT
         chessboard.cpp
         chessboard.h
@@ -156,8 +163,8 @@ add_library(chessui OBJECT
         movelistwidget.h
         pendulumwidget.cpp
         pendulumwidget.h
-        pieces.qrc
 )
+target_sources(chessui PRIVATE ${chessui_resources})
 target_include_directories(chessui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(chessui PUBLIC Qt6::Widgets Qt6::Svg chesscore)
 
