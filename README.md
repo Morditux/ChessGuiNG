@@ -210,6 +210,13 @@ icon, the GPL-2.0 license, and the runtime Qt dependencies detected by CPack.
 
 ---
 
+## Downloads
+
+The latest successful Windows x64 portable build is published automatically by
+the Windows release workflow:
+
+[Download ChessGui for Windows x64](https://github.com/Morditux/ChessGuiNG/releases/download/windows-latest/ChessGui-windows-x64.zip)
+
 ## Running Tests
 
 ChessGui includes automated unit tests built with QtTest and integrated with CTest.

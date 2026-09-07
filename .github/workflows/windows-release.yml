@@ -11,7 +11,7 @@ concurrency:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -229,4 +229,45 @@ jobs:
           $artifactIds = @(gh api --paginate $endpoint --jq ".artifacts[].id")
           if ($artifactIds.Count -ne 1) {
               throw "Expected exactly one ChessGui-windows-x64 artifact, found $($artifactIds.Count)"
+          }
+
+      - name: Publish Windows release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $releaseTag = "windows-latest"
+          gh release view $releaseTag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) {
+              gh release create $releaseTag `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --target $env:GITHUB_SHA `
+                  --title "Windows latest" `
+                  --notes "Latest successful Windows x64 portable build from commit $env:GITHUB_SHA."
+              if ($LASTEXITCODE -ne 0) {
+                  exit $LASTEXITCODE
+              }
+          }
+
+          gh release upload $releaseTag "ChessGui-windows-x64.zip" `
+              --repo $env:GITHUB_REPOSITORY `
+              --clobber
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
+      - name: Verify Windows release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $assetNames = @(gh release view windows-latest `
+              --repo $env:GITHUB_REPOSITORY `
+              --json assets `
+              --jq ".assets[].name")
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+          if (-not ($assetNames -contains "ChessGui-windows-x64.zip")) {
+              throw "Windows release asset is missing: ChessGui-windows-x64.zip"
           }
