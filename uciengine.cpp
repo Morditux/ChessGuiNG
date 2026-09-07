@@ -64,11 +64,15 @@ bool UciEngine::startEngine(const QString &executablePath) {
 #ifdef Q_OS_WIN
     // The test suite and user tooling may provide POSIX shell wrappers. Windows
     // cannot execute a .sh file directly, but Git for Windows supplies bash.
-    if (QFileInfo(executablePath).suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0) {
+    const QFileInfo executableInfo(executablePath);
+    if (executableInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0) {
         const QString bashPath = findWindowsBash();
         if (!bashPath.isEmpty()) {
             program = bashPath;
-            arguments << QDir::fromNativeSeparators(executablePath);
+            // Running from the script directory avoids MSYS path conversion
+            // differences between the workspace drive and the temp drive.
+            process_->setWorkingDirectory(executableInfo.absolutePath());
+            arguments << QStringLiteral("--") << executableInfo.fileName();
         }
     }
 #endif

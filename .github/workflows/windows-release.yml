@@ -93,6 +93,20 @@ jobs:
               $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$env:PATH"
           }
           ctest --test-dir build -C Release --output-on-failure
+          $ctestExitCode = $LASTEXITCODE
+          if ($ctestExitCode -ne 0) {
+              $testRoot = Join-Path $env:GITHUB_WORKSPACE "build"
+              Push-Location $testRoot
+              try {
+                  foreach ($testName in @("AppConfigTest", "GameControllerTest")) {
+                      Write-Host "Re-running $testName for detailed QtTest output"
+                      & ".\Release\$testName.exe" -o -,txt
+                  }
+              } finally {
+                  Pop-Location
+              }
+          }
+          exit $ctestExitCode
 
       - name: Stage executable and runtime files
         shell: pwsh
