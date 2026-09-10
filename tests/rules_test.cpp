@@ -735,14 +735,15 @@ void RulesTest::testComputerGameDialogSettings() {
     QCOMPARE(settings.engineName, QStringLiteral("Test Engine"));
     QVERIFY(!settings.enginePlaysWhite);
     QCOMPARE(settings.timeLimitMilliseconds, 7200000LL);
-    QCOMPARE(settings.timeControl, QStringLiteral("7200"));
+    QCOMPARE(settings.incrementMilliseconds, 0LL);
+    QCOMPARE(settings.pgnTimeControl(), QStringLiteral("7200+0"));
 
     const QStringList headers = settings.pgnHeaders();
     QCOMPARE(headers.size(), 8);
     QVERIFY(headers.at(0).startsWith(QStringLiteral("[Event \"Casual Game\"]")));
     QVERIFY(headers.at(4).contains(QStringLiteral("Player")));
     QVERIFY(headers.at(5).contains(QStringLiteral("Test Engine")));
-    QVERIFY(headers.at(6).contains(QStringLiteral("7200")));
+    QVERIFY(headers.at(6).contains(QStringLiteral("7200+0")));
 
     auto *timeControl = dialog.findChild<QComboBox *>(QStringLiteral("timeControlCombo"));
     QVERIFY(timeControl != nullptr);
@@ -752,6 +753,28 @@ void RulesTest::testComputerGameDialogSettings() {
     QCOMPARE(timeControl->itemData(2).toLongLong(), 1800000LL);
     QCOMPARE(timeControl->itemData(3).toLongLong(), 900000LL);
     QCOMPARE(timeControl->itemData(4).toLongLong(), 300000LL);
+
+    auto *increment = dialog.findChild<QComboBox *>(QStringLiteral("incrementCombo"));
+    QVERIFY(increment != nullptr);
+    QCOMPARE(increment->currentIndex(), 0);
+    QCOMPARE(increment->itemData(0).toLongLong(), 0LL);
+    bool hasThreeSeconds = false;
+    for (int index = 0; index < increment->count(); ++index) {
+        hasThreeSeconds = hasThreeSeconds || increment->itemData(index).toLongLong() == 3000LL;
+    }
+    QVERIFY(hasThreeSeconds);
+
+    for (int index = 0; index < increment->count(); ++index) {
+        if (increment->itemData(index).toLongLong() != 3000LL) {
+            continue;
+        }
+        increment->setCurrentIndex(index);
+        const ComputerGameSettings incremented = dialog.settings();
+        QCOMPARE(incremented.incrementMilliseconds, 3000LL);
+        QCOMPARE(incremented.pgnTimeControl(), QStringLiteral("7200+3"));
+        QVERIFY(incremented.pgnHeaders().at(6).contains(QStringLiteral("7200+3")));
+        break;
+    }
 }
 
 QTEST_MAIN(RulesTest)

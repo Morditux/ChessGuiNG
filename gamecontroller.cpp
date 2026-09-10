@@ -627,7 +627,9 @@ void GameController::stopEngineAnalysis() {
 void GameController::startEngineTimedSearch(qint64 whiteTimeMilliseconds,
                                             qint64 blackTimeMilliseconds) {
     if (EngineBackend *backend = activeBackendForCommands(); backend != nullptr) {
-        backend->startTimedSearch(whiteTimeMilliseconds, blackTimeMilliseconds);
+        backend->startTimedSearch(whiteTimeMilliseconds, blackTimeMilliseconds,
+                                  computerGameSettings_.incrementMilliseconds,
+                                  computerGameSettings_.incrementMilliseconds);
     }
 }
 
@@ -1280,6 +1282,13 @@ bool GameController::recordMove(const Rules::Move &move) {
     refreshMoveHistory();
     updateEvaluation();
     emit positionChanged();
+
+    if (computerGameActive_ && computerGameSettings_.incrementMilliseconds > 0 &&
+        !rules_.isGameOver()) {
+        emit clockIncrementGranted(movingColor,
+                                   computerGameSettings_.incrementMilliseconds);
+    }
+
     return true;
 }
 

@@ -149,6 +149,9 @@ signals:
     void statusMessage(const QString &message);
     void computerTurnBegan();
     void humanTurnBegan();
+    // Emitted after a move played in a computer game, for the color that just
+    // moved: the UI adds this increment to that player's clock.
+    void clockIncrementGranted(Rules::Color color, qint64 milliseconds);
     void gameFinished(const QString &result, const QString &message);
     void computerGameStateChanged(bool active);
     void computerMovePreviewChanged(const std::optional<Rules::Move> &move);

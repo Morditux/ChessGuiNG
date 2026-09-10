@@ -30,6 +30,9 @@ public:
 
     [[nodiscard]] qint64 remainingMilliseconds() const;
     void setRemainingMilliseconds(qint64 milliseconds);
+    // Adds the given amount to the current remaining time, without changing
+    // the reset baseline. Used for time increments after a move.
+    void addMilliseconds(qint64 milliseconds);
 
     [[nodiscard]] bool isRunning() const;
     [[nodiscard]] PieceColor pieceColor() const;

@@ -5,6 +5,7 @@
 #ifndef CHESSGUI_RULES_H
 #define CHESSGUI_RULES_H
 
+#include <QMetaType>
 #include <QString>
 #include <QStringList>
 #include <array>
@@ -108,5 +109,7 @@ private:
 
     void applyMoveUnchecked(const Move &move);
 };
+
+Q_DECLARE_METATYPE(Rules::Color)
 
 #endif // CHESSGUI_RULES_H

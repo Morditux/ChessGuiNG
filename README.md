@@ -51,7 +51,7 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
   - Smooth proportions, 50% equilibrium center marker, and dynamic evaluation tooltip.
 
 - **PGN & FEN Management (Games Menu)**
-  - Start a new game against the currently loaded UCI engine with PGN tags, side selection, and standard time controls (2h, 1h, 30m, 15m, or 5m blitz per player).
+  - Start a new game against the currently loaded UCI engine with PGN tags, side selection, and standard time controls (2h, 1h, 30m, 15m, or 5m blitz per player), each with an optional Fischer increment (0, 1, 2, 3, 5, 10, 15, 30, or 60 seconds per move) added to the mover's clock after every move and advertised to the engine in the `go winc/binc` command.
   - Load full PGN game files (`Load PGN...`) with automatic move replay, check/mate validation, and live move history update.
   - Copy current FEN (`Ctrl+Shift+F`) or full PGN (`Ctrl+Shift+C`) directly to the clipboard.
   - Paste any FEN position directly from the clipboard using `Ctrl+V` or the `Games -> Paste FEN or screenshot` menu action.
@@ -252,16 +252,16 @@ Or run individual test suites directly:
 
 ### Test Coverage
 
-- **`RulesTest`**: Validates starting/midgame/endgame FEN parsing, invalid FEN detection, FEN round-trip generation, SAN move parsing with disambiguation/promotions/castling, PGN file/string parsing, and MainWindow FEN paste / PGN loading.
+- **`RulesTest`**: Validates starting/midgame/endgame FEN parsing, invalid FEN detection, FEN round-trip generation, SAN move parsing with disambiguation/promotions/castling, PGN file/string parsing, the computer-game dialog (time control and Fischer increment selection, `TimeControl` PGN tag formatting), and MainWindow FEN paste / PGN loading.
 - **`HeuristicEvalTest`**: Validates balanced opening evaluation, insufficient material, centipawn-to-display-percentage formulas, passed pawns, piece advantage, Fool's Mate, Scholar's Mate, pawn-shelter rewards for castled kings, check penalty for the side to move, and drawn single-minor endgames.
 - **`EvaluationBarTest`**: Validates evaluation bar property clamping, color customisation, signal emission, size constraints, and offscreen widget rendering.
 - **`UciParserTest`**: Validates parsing of UCI `info` lines (depth, seldepth, score cp/mate, nodes, NPS, time, MultiPV, PV), move conversion, and win percentage mappings.
-- **`UciEngineTest`**: Validates process lifecycle, mock UCI engine protocol exchange, MainWindow engine integration, and the eager remote-engine load (MainWindow configured with a gateway host connects and loads the engine at startup, so its UCI options are active immediately).
+- **`UciEngineTest`**: Validates process lifecycle, mock UCI engine protocol exchange, MainWindow engine integration, the timed search `go` command (including Fischer increments), and the eager remote-engine load (MainWindow configured with a gateway host connects and loads the engine at startup, so its UCI options are active immediately).
 - **`GatewayClientTest`**: Validates the `chessgateway/1` client against a fake gateway server (hello handshake, engine listing, engine selection, UCI command forwarding, UCI output events, protocol errors, and disconnection), including client authentication: a valid access key authenticates and allows listing engines, a missing or invalid key is reported and the connection is closed.
 - **`RemoteEngineDialogTest`**: Validates the remote engine dialog (initial state, access key field, Ok-button enablement, engine listing against a fake gateway — including an authentication-requiring gateway — and empty engine lists).
 - **`EngineOutputWidgetTest`**: Validates analysis summary formatting, MultiPV table updating, UCI log console, and engine controls.
 - **`AppConfigTest`**: Validates OS-standard configuration file path discovery, auto-creation of `chessGui.conf` at startup, persistence of window geometry/size/position, splitter sizes, remote engine settings, and chosen UCI engine loading.
-- **`GameControllerTest`**: Validates FEN/PGN loading, SAN/UCI move recording and move numbering, illegal-move rejection, side-to-move toggling, opening-book moves, a full computer game against a mock UCI engine (move previews, timed search reply), engine disconnection ending the game, and the eager remote-engine connection (loaded as soon as it is selected) for analyses and computer games.
+- **`GameControllerTest`**: Validates FEN/PGN loading, SAN/UCI move recording and move numbering, illegal-move rejection, side-to-move toggling, opening-book moves, a full computer game against a mock UCI engine (move previews, timed search reply, Fischer clock increment granted to the mover after each ply), engine disconnection ending the game, and the eager remote-engine connection (loaded as soon as it is selected) for analyses and computer games.
 - **`VisionTest`**: Validates invalid-image handling and ONNX model initialization. Set `CHESSGUI_SAMPLE_IMAGE` to an image path to run an optional end-to-end detector/classifier check.
 
 ---

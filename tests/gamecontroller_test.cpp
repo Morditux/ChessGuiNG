@@ -132,6 +132,7 @@ private slots:
     void testSetSideToMove();
     void testComputerGameBookMove();
     void testComputerGameWithMockEngine();
+    void testClockIncrementGranted();
     void testEngineDisconnectFinishesGame();
     void testRemoteEngineConfiguration();
     void testEagerAnalysisWithRemoteEngine();
@@ -149,6 +150,7 @@ private slots:
 
 void GameControllerTest::initTestCase() {
     qRegisterMetaType<std::optional<Rules::Move>>("std::optional<Rules::Move>");
+    qRegisterMetaType<Rules::Color>("Rules::Color");
 }
 
 void GameControllerTest::testInitialState() {
@@ -501,6 +503,41 @@ void GameControllerTest::testComputerGameWithMockEngine() {
     QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, WaitTimeout);
     QCOMPARE(finishedSpy.first().at(1).toString(), QStringLiteral("The engine disconnected."));
     QVERIFY(!controller.isComputerGameActive());
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testClockIncrementGranted() {
+    const QString scriptPath = writeMockEngineScript(QStringLiteral("mock_increment_engine.sh"));
+    GameController controller;
+    QSignalSpy incrementSpy(&controller, &GameController::clockIncrementGranted);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = false;
+    settings.incrementMilliseconds = 3000;
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+
+    // No increment is granted before a move has been played.
+    QCOMPARE(incrementSpy.count(), 0);
+
+    QVERIFY(controller.requestMove({6, 0}, {5, 0}));
+    QTRY_VERIFY_WITH_TIMEOUT(controller.uciMoves().size() == 2, WaitTimeout);
+
+    // The human mover is credited first, then the computer for its reply.
+    QVERIFY(incrementSpy.count() >= 1);
+    QCOMPARE(incrementSpy.first().at(0).value<Rules::Color>(), Rules::Color::White);
+    QCOMPARE(incrementSpy.first().at(1).toLongLong(), 3000LL);
+
+    QVERIFY(incrementSpy.count() >= 2);
+    QCOMPARE(incrementSpy.at(1).at(0).value<Rules::Color>(), Rules::Color::Black);
+    QCOMPARE(incrementSpy.at(1).at(1).toLongLong(), 3000LL);
+
+    QVERIFY(controller.pgnText().contains(QStringLiteral("[TimeControl \"300+3\"]")));
+
+    controller.stopEngine();
     QFile::remove(scriptPath);
 }
 

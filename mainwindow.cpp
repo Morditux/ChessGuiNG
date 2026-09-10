@@ -200,6 +200,13 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         computerClock->stop();
         humanClock->start();
     });
+    connect(gameController_, &GameController::clockIncrementGranted, this,
+            [this](Rules::Color color, qint64 milliseconds) {
+                PendulumWidget *clock = color == Rules::Color::White
+                                            ? whitePendulum_
+                                            : blackPendulum_;
+                clock->addMilliseconds(milliseconds);
+            });
     connect(gameController_, &GameController::gameFinished, this, [this](const QString &, const QString &message) {
         setActivityMessage(message);
     });

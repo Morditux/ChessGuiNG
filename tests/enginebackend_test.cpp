@@ -117,6 +117,11 @@ void EngineBackendTest::testTimedSearchAndBestMove() {
     QCOMPARE(bestMoveSpy.at(0).at(0).toString(), QStringLiteral("e7e5"));
     QCOMPARE(bestMoveSpy.at(0).at(1).toString(), QStringLiteral("g1f3"));
     QCOMPARE(backend.state(), EngineBackend::State::Ready);
+
+    // Without explicit increments the search still advertises zero increments.
+    backend.startTimedSearch(300000, 600000);
+    QCOMPARE(backend.commands().last(),
+             QStringLiteral("go wtime 300000 btime 600000 winc 0 binc 0"));
 }
 
 void EngineBackendTest::testPositionChangeRestartsAnalysis() {

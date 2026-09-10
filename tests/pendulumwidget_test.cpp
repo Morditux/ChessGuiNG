@@ -14,6 +14,7 @@ private slots:
     void testDefaultValues();
     void testSetAndReset();
     void testCountdown();
+    void testAddMilliseconds();
     void testColors();
     void testRendering();
 };
@@ -68,6 +69,43 @@ void PendulumWidgetTest::testCountdown() {
     QCOMPARE(pendulum.isRunning(), false);
     QCOMPARE(runningSpy.count(), 2);
     QCOMPARE(runningSpy.at(1).at(0).toBool(), false);
+}
+
+void PendulumWidgetTest::testAddMilliseconds() {
+    PendulumWidget pendulum;
+    QSignalSpy remainingSpy(&pendulum, &PendulumWidget::remainingMillisecondsChanged);
+
+    pendulum.setRemainingMilliseconds(60000);
+    remainingSpy.clear();
+
+    pendulum.addMilliseconds(0);
+    QCOMPARE(pendulum.remainingMilliseconds(), 60000LL);
+    QCOMPARE(remainingSpy.count(), 0);
+
+    pendulum.addMilliseconds(5000);
+    QCOMPARE(pendulum.remainingMilliseconds(), 65000LL);
+    QCOMPARE(pendulum.displayText(), QStringLiteral("01:05"));
+    QCOMPARE(remainingSpy.count(), 1);
+
+    // A negative increment never reduces the clock.
+    pendulum.addMilliseconds(-1000);
+    QCOMPARE(pendulum.remainingMilliseconds(), 65000LL);
+
+    // While running, the increment is added to the current remaining time and
+    // the countdown keeps running from there.
+    pendulum.start();
+    QTest::qWait(120);
+    const qint64 beforeIncrement = pendulum.remainingMilliseconds();
+    pendulum.addMilliseconds(3000);
+    QVERIFY(pendulum.remainingMilliseconds() > beforeIncrement);
+    QVERIFY(pendulum.remainingMilliseconds() <= beforeIncrement + 3000);
+    QVERIFY(pendulum.isRunning());
+    pendulum.stop();
+
+    // The reset baseline (the value passed to setRemainingMilliseconds) is not
+    // affected by increments.
+    pendulum.reset();
+    QCOMPARE(pendulum.remainingMilliseconds(), 60000LL);
 }
 
 void PendulumWidgetTest::testColors() {

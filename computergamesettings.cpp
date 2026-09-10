@@ -2,6 +2,8 @@
 
 #include "computergamesettings.h"
 
+#include <algorithm>
+
 namespace {
 
 QString pgnValue(QString value) {
@@ -16,6 +18,12 @@ QString pgnValue(QString value) {
 
 } // namespace
 
+QString ComputerGameSettings::pgnTimeControl() const {
+    const qint64 baseSeconds = std::max<qint64>(0, timeLimitMilliseconds) / 1000;
+    const qint64 incrementSeconds = std::max<qint64>(0, incrementMilliseconds) / 1000;
+    return QStringLiteral("%1+%2").arg(baseSeconds).arg(incrementSeconds);
+}
+
 QStringList ComputerGameSettings::pgnHeaders(const QString &result) const {
     return {
         QStringLiteral("[Event \"%1\"]").arg(pgnValue(event)),
@@ -26,7 +34,7 @@ QStringList ComputerGameSettings::pgnHeaders(const QString &result) const {
             pgnValue(enginePlaysWhite ? engineName : playerName)),
         QStringLiteral("[Black \"%1\"]").arg(
             pgnValue(enginePlaysWhite ? playerName : engineName)),
-        QStringLiteral("[TimeControl \"%1\"]").arg(pgnValue(timeControl)),
+        QStringLiteral("[TimeControl \"%1\"]").arg(pgnValue(pgnTimeControl())),
         QStringLiteral("[Result \"%1\"]").arg(pgnValue(result))
     };
 }

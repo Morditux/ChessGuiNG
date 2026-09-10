@@ -81,6 +81,7 @@ private slots:
     void testMockEngineProcess();
     void testMainWindowControlButtons();
     void testMainWindowComputerGame();
+    void testMainWindowComputerGameWithIncrement();
     void testMainWindowRemoteEngineEagerLoad();
     void testMainWindowGameAuditActionAvailability();
     void testMainWindowMultiGameAuditSavePreservesOtherGames();
@@ -452,7 +453,7 @@ void UciEngineTest::testMainWindowComputerGame() {
     QCOMPARE(window.moveListWidget()->model()->index(1, 1).data().toString(),
              QStringLiteral("a3"));
     QVERIFY(window.gameController()->pgnText().contains(
-        QStringLiteral("[TimeControl \"7200\"]")));
+        QStringLiteral("[TimeControl \"7200+0\"]")));
 
     // A refused history request may move keyboard focus, never the played marker.
     auto *moves = window.moveListWidget();
@@ -483,6 +484,104 @@ void UciEngineTest::testMainWindowComputerGame() {
         }
         QVERIFY(foundButton);
     }
+
+    window.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void UciEngineTest::testMainWindowComputerGameWithIncrement() {
+    const QString scriptPath =
+        QDir::current().filePath(QStringLiteral("mock_engine_increment.sh"));
+    QFile scriptFile(scriptPath);
+    QVERIFY(scriptFile.open(QIODevice::WriteOnly | QIODevice::Text));
+
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then\n"
+        "    echo \"id name MockIncrementEngine\"\n"
+        "    echo \"uciok\"\n"
+        "  elif [ \"$line\" = \"isready\" ]; then\n"
+        "    echo \"readyok\"\n"
+        "  elif [[ \"$line\" =~ ^go.* ]]; then\n"
+        "    echo \"info depth 8 score cp -20 pv e7e5 g1f3\"\n"
+        "    echo \"bestmove e7e5\"\n"
+        "  elif [ \"$line\" = \"stop\" ]; then\n"
+        "    echo \"bestmove e7e5\"\n"
+        "  elif [ \"$line\" = \"quit\" ]; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "done\n";
+
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser |
+                                      QFile::ReadGroup | QFile::ExeGroup |
+                                      QFile::ReadOther | QFile::ExeOther);
+
+    MainWindow window;
+    window.show();
+    QVERIFY(window.uciEngine()->startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Ready, 2000);
+
+    QSignalSpy rawSentSpy(window.uciEngine(), &UciEngine::rawLineSent);
+
+    QAction *playAction = nullptr;
+    for (QAction *action : window.findChildren<QAction *>()) {
+        if (action->text() == QStringLiteral("Play against computer")) {
+            playAction = action;
+            break;
+        }
+    }
+    QVERIFY(playAction != nullptr);
+
+    QTimer::singleShot(50, [] {
+        auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+        QVERIFY(dialog != nullptr);
+        auto *incrementCombo =
+            dialog->findChild<QComboBox *>(QStringLiteral("incrementCombo"));
+        QVERIFY(incrementCombo != nullptr);
+        int threeSecondsIndex = -1;
+        for (int index = 0; index < incrementCombo->count(); ++index) {
+            if (incrementCombo->itemData(index).toLongLong() == 3000LL) {
+                threeSecondsIndex = index;
+                break;
+            }
+        }
+        QVERIFY(threeSecondsIndex >= 0);
+        incrementCombo->setCurrentIndex(threeSecondsIndex);
+        auto *buttonBox = dialog->findChild<QDialogButtonBox *>();
+        QVERIFY(buttonBox != nullptr);
+        buttonBox->button(QDialogButtonBox::Ok)->click();
+    });
+    playAction->trigger();
+
+    const qint64 baseTime =
+        window.gameController()->currentComputerGameSettings().timeLimitMilliseconds;
+    QCOMPARE(baseTime, 7200000LL);
+    QVERIFY(window.whitePendulum()->isRunning());
+
+    // The white clock gains the increment as soon as the human has moved.
+    window.pieceMoved(QChar('P'), {6, 0}, {5, 0});
+    QTRY_VERIFY_WITH_TIMEOUT(window.whitePendulum()->remainingMilliseconds() > baseTime, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.gameController()->uciMoves().size() == 2, 3000);
+
+    // A second non-book move forces the engine's timed search, which must
+    // advertise the Fischer increment.
+    window.pieceMoved(QChar('P'), {6, 7}, {5, 7});
+    QTRY_VERIFY_WITH_TIMEOUT(window.gameController()->uciMoves().size() == 4, 5000);
+
+    bool foundIncrement = false;
+    for (const QList<QVariant> &arguments : rawSentSpy) {
+        const QString command = arguments.at(0).toString();
+        if (command.contains(QStringLiteral("winc 3000 binc 3000"))) {
+            foundIncrement = true;
+            break;
+        }
+    }
+    QVERIFY(foundIncrement);
+    QVERIFY(window.gameController()->pgnText().contains(QStringLiteral("[TimeControl \"7200+3\"]")));
 
     window.stopEngine();
     QFile::remove(scriptPath);

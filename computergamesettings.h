@@ -17,7 +17,11 @@ struct ComputerGameSettings {
     QString engineName;
     bool enginePlaysWhite = false;
     qint64 timeLimitMilliseconds = 300000;
-    QString timeControl = QStringLiteral("300");
+    // Fischer increment granted to a player after each move played.
+    qint64 incrementMilliseconds = 0;
+
+    // PGN TimeControl tag derived from the numeric fields, e.g. "300+3".
+    [[nodiscard]] QString pgnTimeControl() const;
 
     [[nodiscard]] QStringList pgnHeaders(const QString &result = QStringLiteral("*")) const;
 };

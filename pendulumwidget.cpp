@@ -67,6 +67,23 @@ void PendulumWidget::setRemainingMilliseconds(qint64 milliseconds) {
     }
 }
 
+void PendulumWidget::addMilliseconds(qint64 milliseconds) {
+    const qint64 delta = std::max<qint64>(0, milliseconds);
+    if (delta == 0) {
+        return;
+    }
+
+    const qint64 updated = currentRemainingMilliseconds() + delta;
+    remainingMilliseconds_ = updated;
+    if (running_) {
+        elapsedTimer_.restart();
+    }
+
+    emit remainingMillisecondsChanged(updated);
+    refreshDisplay();
+    updateAccessibilityText();
+}
+
 bool PendulumWidget::isRunning() const {
     return running_;
 }

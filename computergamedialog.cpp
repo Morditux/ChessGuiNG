@@ -19,7 +19,7 @@ ComputerGameDialog::ComputerGameDialog(const QString &engineName,
     setWindowTitle(tr("Play against computer"));
     setModal(true);
     setMinimumWidth(440);
-    resize(520, 420);
+    resize(520, 470);
 
     auto *mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(12, 12, 12, 12);
@@ -92,8 +92,25 @@ ComputerGameDialog::ComputerGameDialog(const QString &engineName,
     timeControlCombo_->setCurrentIndex(0);
     gameLayout->addRow(tr("Time control:"), timeControlCombo_);
 
+    incrementCombo_ = new QComboBox(gameGroup);
+    incrementCombo_->setObjectName(QStringLiteral("incrementCombo"));
+    incrementCombo_->addItem(tr("No increment"), QVariant::fromValue<qint64>(0));
+    incrementCombo_->addItem(tr("1 second"), QVariant::fromValue<qint64>(1000));
+    incrementCombo_->addItem(tr("2 seconds"), QVariant::fromValue<qint64>(2000));
+    incrementCombo_->addItem(tr("3 seconds"), QVariant::fromValue<qint64>(3000));
+    incrementCombo_->addItem(tr("5 seconds"), QVariant::fromValue<qint64>(5000));
+    incrementCombo_->addItem(tr("10 seconds"), QVariant::fromValue<qint64>(10000));
+    incrementCombo_->addItem(tr("15 seconds"), QVariant::fromValue<qint64>(15000));
+    incrementCombo_->addItem(tr("30 seconds"), QVariant::fromValue<qint64>(30000));
+    incrementCombo_->addItem(tr("60 seconds"), QVariant::fromValue<qint64>(60000));
+    incrementCombo_->setCurrentIndex(0);
+    incrementCombo_->setToolTip(
+        tr("Time added to a player's clock after every move played"));
+    gameLayout->addRow(tr("Increment:"), incrementCombo_);
+
     auto *timeDescription = new QLabel(
-        tr("Each player receives the selected amount of time. No increment is used."),
+        tr("Each player receives the base time, plus the selected increment "
+           "after every move."),
         gameGroup);
     timeDescription->setWordWrap(true);
     gameLayout->addRow(QString(), timeDescription);
@@ -119,7 +136,7 @@ ComputerGameSettings ComputerGameDialog::settings() const {
     result.playerName = playerNameEdit_->text();
     result.engineName = engineNameEdit_->text();
     result.timeLimitMilliseconds = timeControlCombo_->currentData().toLongLong();
-    result.timeControl = QString::number(result.timeLimitMilliseconds / 1000);
+    result.incrementMilliseconds = incrementCombo_->currentData().toLongLong();
 
     switch (colorCombo_->currentIndex()) {
     case 0:

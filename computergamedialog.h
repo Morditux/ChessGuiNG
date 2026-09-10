@@ -30,6 +30,7 @@ private:
     QLineEdit *engineNameEdit_ = nullptr;
     QComboBox *colorCombo_ = nullptr;
     QComboBox *timeControlCombo_ = nullptr;
+    QComboBox *incrementCombo_ = nullptr;
 };
 
 #endif // CHESSGUI_COMPUTERGAMEDIALOG_H
