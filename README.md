@@ -20,7 +20,8 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
 
 - **Complete Chess Rules Engine**
   - Clean, UI-independent C++20 rules implementation (`Rules`).
-  - Full FIDE rule support: legal move generation, check detection, checkmate, and stalemate.
+  - Full FIDE rule support: legal move generation, check detection, checkmate, stalemate, and draws by insufficient material.
+  - Draw detection for threefold repetition and the fifty-move rule, claimable from the `Games -> Declare draw` menu in free play and adjudicated automatically in computer games.
   - Special moves: kingside & queenside castling, *en passant* captures, and pawn promotions (including interactive underpromotions to Queen, Rook, Bishop, or Knight with visual icons and keyboard shortcuts).
 
 - **Real-Time Heuristic Position Evaluation**

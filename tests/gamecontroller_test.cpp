@@ -146,6 +146,7 @@ private slots:
     void testGameAuditMarksLostForcedMateAsBlunder();
     void testPromotionAndUnderpromotion();
     void testGoToStartAndGoToEnd();
+    void testDrawClaims();
 };
 
 void GameControllerTest::initTestCase() {
@@ -928,6 +929,48 @@ void GameControllerTest::testGoToStartAndGoToEnd() {
 
     // Go to end again should return false (already at end)
     QVERIFY(!controller.goToEnd());
+}
+
+void GameControllerTest::testDrawClaims() {
+    GameController controller;
+    QSignalSpy finishedSpy(&controller, &GameController::gameFinished);
+
+    // Fifty-move rule: one quiet move reaches 100 halfmoves.
+    QVERIFY(controller.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/N3K2R w - - 99 60")));
+    QVERIFY(!controller.canClaimDraw());
+    QVERIFY(controller.requestMove({7, 0}, {6, 2})); // Na1-c2
+    QVERIFY(controller.canClaimDraw());
+    controller.claimDraw();
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(finishedSpy.first().at(0).toString(), QStringLiteral("1/2-1/2"));
+    QVERIFY(finishedSpy.first().at(1).toString().contains(
+        QStringLiteral("fifty-move")));
+    QVERIFY(controller.pgnText().contains(
+        QStringLiteral("[Result \"1/2-1/2\"]")));
+    QVERIFY(!controller.canClaimDraw());
+
+    // Threefold repetition: return to the same position three times.
+    QVERIFY(controller.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/N3K1N1 w - - 0 1")));
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        QVERIFY(controller.requestMove({7, 0}, {6, 2})); // Nc2
+        QVERIFY(controller.requestMove({0, 4}, {0, 3})); // Kd8
+        QVERIFY(controller.requestMove({6, 2}, {7, 0})); // Na1
+        QVERIFY(controller.requestMove({0, 3}, {0, 4})); // Ke8
+    }
+    QVERIFY(controller.canClaimDraw());
+    controller.claimDraw();
+    QCOMPARE(finishedSpy.count(), 2);
+    QCOMPARE(finishedSpy.at(1).at(0).toString(), QStringLiteral("1/2-1/2"));
+    QVERIFY(finishedSpy.at(1).at(1).toString().contains(
+        QStringLiteral("threefold")));
+
+    // No claim is possible before a draw condition is reached.
+    controller.newGame();
+    QVERIFY(!controller.canClaimDraw());
+    controller.claimDraw();
+    QCOMPARE(finishedSpy.count(), 2);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

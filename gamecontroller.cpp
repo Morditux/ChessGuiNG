@@ -475,17 +475,7 @@ bool GameController::requestMove(Rules::Position from, Rules::Position to,
     }
 
     if (computerGameActive_) {
-        if (rules_.isGameOver()) {
-            const QString result = completedGameResult();
-            finishComputerGame(
-                result,
-                result == QStringLiteral("1/2-1/2")
-                    ? tr("Game drawn.")
-                    : tr("Game over: %1 wins.")
-                          .arg(result == QStringLiteral("1-0")
-                                   ? tr("White")
-                                   : tr("Black")));
-        } else {
+        if (!finishGameIfOver()) {
             startComputerTurn();
         }
     } else if (isEngineConnected()) {
@@ -550,16 +540,7 @@ void GameController::onEngineTimedMove(const QString &bestMove,
         return;
     }
 
-    if (rules_.isGameOver()) {
-        const QString result = completedGameResult();
-        finishComputerGame(
-            result,
-            result == QStringLiteral("1/2-1/2")
-                ? tr("Game drawn.")
-                : tr("Game over: %1 wins.")
-                      .arg(result == QStringLiteral("1-0")
-                               ? tr("White")
-                               : tr("Black")));
+    if (finishGameIfOver()) {
         return;
     }
 
@@ -728,10 +709,15 @@ QStringList GameController::pgnMoves() const {
 }
 
 QString GameController::pgnHeaderText() const {
-    if (!pgnHeaders_.isEmpty()) {
-        return pgnHeaders_.join(QChar('\n'));
+    if (pgnHeaders_.isEmpty()) {
+        return historyPrefix_;
     }
-    return historyPrefix_;
+
+    QString text = historyPrefix_;
+    if (!text.isEmpty()) {
+        text += QChar('\n');
+    }
+    return text + pgnHeaders_.join(QChar('\n'));
 }
 
 QString GameController::formattedCommentAt(int ply) const {
@@ -1020,16 +1006,7 @@ void GameController::startComputerTurn() {
             return;
         }
 
-        if (rules_.isGameOver()) {
-            const QString result = completedGameResult();
-            finishComputerGame(
-                result,
-                result == QStringLiteral("1/2-1/2")
-                    ? tr("Game drawn.")
-                    : tr("Game over: %1 wins.")
-                          .arg(result == QStringLiteral("1-0")
-                                   ? tr("White")
-                                   : tr("Black")));
+        if (finishGameIfOver()) {
             return;
         }
 
@@ -1370,19 +1347,84 @@ void GameController::updatePgnResult(const QString &result) {
             return;
         }
     }
+
+    // FEN-loaded and free-play games start without PGN headers; add a Result
+    // tag so the declared result is preserved when the game is exported.
+    pgnHeaders_.append(QStringLiteral("[Result \"%1\"]").arg(result));
 }
 
 QString GameController::completedGameResult() const {
     if (!rules_.isGameOver()) {
         return QStringLiteral("*");
     }
-    if (rules_.isStalemate(rules_.currentPlayer()) ||
-        rules_.isInsufficientMaterial()) {
-        return QStringLiteral("1/2-1/2");
+    if (rules_.isCheckmate(Rules::Color::White) ||
+        rules_.isCheckmate(Rules::Color::Black)) {
+        return rules_.currentPlayer() == Rules::Color::White
+                   ? QStringLiteral("0-1")
+                   : QStringLiteral("1-0");
     }
-    return rules_.currentPlayer() == Rules::Color::White
-               ? QStringLiteral("0-1")
-               : QStringLiteral("1-0");
+    return QStringLiteral("1/2-1/2");
+}
+
+bool GameController::finishGameIfOver() {
+    if (!rules_.isGameOver()) {
+        return false;
+    }
+
+    const QString result = completedGameResult();
+    finishComputerGame(result,
+                       result == QStringLiteral("1/2-1/2")
+                           ? drawReasonMessage()
+                           : tr("Game over: %1 wins.")
+                                 .arg(result == QStringLiteral("1-0")
+                                          ? tr("White")
+                                          : tr("Black")));
+    return true;
+}
+
+QString GameController::drawReasonMessage() const {
+    if (rules_.isStalemate(rules_.currentPlayer())) {
+        return tr("Draw by stalemate.");
+    }
+    if (rules_.isThreefoldRepetition()) {
+        return tr("Draw by threefold repetition.");
+    }
+    if (rules_.isFiftyMoveRule()) {
+        return tr("Draw by the fifty-move rule.");
+    }
+    if (rules_.isInsufficientMaterial()) {
+        return tr("Draw by insufficient material.");
+    }
+    return tr("Game drawn.");
+}
+
+bool GameController::canClaimDraw() const {
+    if (pgnResult_ != QStringLiteral("*") || computerGameActive_ ||
+        pendingComputerGameStart_ || auditActive_ ||
+        moveCursor_ != uciMoves_.size()) {
+        return false;
+    }
+
+    // A checkmate ends the game before a claimable draw can apply.
+    if (rules_.isCheckmate(Rules::Color::White) ||
+        rules_.isCheckmate(Rules::Color::Black)) {
+        return false;
+    }
+
+    return rules_.isThreefoldRepetition() || rules_.isFiftyMoveRule();
+}
+
+void GameController::claimDraw() {
+    if (!canClaimDraw()) {
+        return;
+    }
+
+    pgnResult_ = QStringLiteral("1/2-1/2");
+    const QString message = drawReasonMessage();
+    updatePgnResult(pgnResult_);
+    refreshMoveHistory();
+    emit statusMessage(message);
+    emit gameFinished(pgnResult_, message);
 }
 
 std::optional<Rules::Move> GameController::parseUciMove(const QString &moveText) {

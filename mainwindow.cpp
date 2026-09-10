@@ -175,6 +175,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             }
             engineOutputWidget_->setControlButtonsEnabled(false, false, true);
         }
+        updateNavigationActions();
     });
     connect(gameController_, &GameController::computerTurnBegan, this, [this] {
         PendulumWidget *computerClock =
@@ -209,6 +210,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             });
     connect(gameController_, &GameController::gameFinished, this, [this](const QString &, const QString &message) {
         setActivityMessage(message);
+        updateNavigationActions();
     });
     connect(gameController_, &GameController::computerMovePreviewChanged, this, [this](const std::optional<Rules::Move> &move) {
         board_->setComputerMovePreview(move);
@@ -367,6 +369,10 @@ QLabel *MainWindow::visionStatusLabel() const {
 
 QAction *MainWindow::clearAnnotationsAction() const {
     return clearAnnotationsAction_;
+}
+
+QAction *MainWindow::claimDrawAction() const {
+    return claimDrawAction_;
 }
 
 QAction *MainWindow::analyzeGameAction() const {
@@ -1433,6 +1439,10 @@ void MainWindow::goToEnd() {
     gameController_->goToEnd();
 }
 
+void MainWindow::claimDraw() {
+    gameController_->claimDraw();
+}
+
 void MainWindow::clearBoardAnnotations() {
     if (board_) {
         board_->clearUserAnnotations();
@@ -1453,6 +1463,9 @@ void MainWindow::updateNavigationActions() {
     }
     if (lastMoveAction_) {
         lastMoveAction_->setEnabled(canForward);
+    }
+    if (claimDrawAction_) {
+        claimDrawAction_->setEnabled(gameController_->canClaimDraw());
     }
 }
 
@@ -1809,6 +1822,14 @@ void MainWindow::setupUi() {
     addAction(clearAnnotationsAction_);
     connect(clearAnnotationsAction_, &QAction::triggered,
             this, &MainWindow::clearBoardAnnotations);
+
+    claimDrawAction_ = menuGames->addAction(tr("Declare draw"));
+    claimDrawAction_->setObjectName(QStringLiteral("claimDrawAction"));
+    claimDrawAction_->setToolTip(
+        tr("Claim a draw by threefold repetition or the fifty-move rule"));
+    claimDrawAction_->setStatusTip(claimDrawAction_->toolTip());
+    claimDrawAction_->setEnabled(false);
+    connect(claimDrawAction_, &QAction::triggered, this, &MainWindow::claimDraw);
 
     menubar->addMenu(menuGames);
 

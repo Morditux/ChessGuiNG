@@ -51,6 +51,9 @@ private slots:
     void testToFenRoundTrip();
     void testFenClocks();
     void testInsufficientMaterial();
+    void testThreefoldRepetition();
+    void testCastlingRightsBreakRepetition();
+    void testFiftyMoveRule();
     void testSanParsingAndExecution();
     void testSanPromotion();
     void testSanDisambiguation();
@@ -58,6 +61,7 @@ private slots:
     void testPgnLoadingWithComments();
     void testMainWindowPasteFen();
     void testMainWindowNewGame();
+    void testMainWindowClaimDrawAction();
     void testWhiteToPlayCheckBox();
     void testFlipBoardButton();
     void testMovePreviews();
@@ -240,6 +244,85 @@ void RulesTest::testInsufficientMaterial() {
     QVERIFY(!rules.isInsufficientMaterial());
 }
 
+void RulesTest::testThreefoldRepetition() {
+    Rules rules;
+
+    // Two white knights and the two kings are enough material for this test,
+    // but not enough for the insufficient-material rule to kick in.
+    QVERIFY(rules.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/N3K1N1 w - - 0 1")));
+
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Nc2")));
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Kd8")));
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Na1")));
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Ke8")));
+    QVERIFY(!rules.isThreefoldRepetition());
+
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Nc2")));
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Kd8")));
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Na1")));
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Ke8")));
+    QVERIFY(rules.isThreefoldRepetition());
+    QVERIFY(rules.isDraw());
+    QVERIFY(rules.isGameOver());
+}
+
+void RulesTest::testCastlingRightsBreakRepetition() {
+    Rules rules;
+
+    // The rook moves away and comes back, so the same piece placement is
+    // reached again but White has lost the kingside castling right.
+    QVERIFY(rules.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1")));
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        QVERIFY(rules.tryMoveSan(QStringLiteral("Rg1")));
+        QVERIFY(rules.tryMoveSan(QStringLiteral("Kd8")));
+        QVERIFY(rules.tryMoveSan(QStringLiteral("Rh1")));
+        QVERIFY(rules.tryMoveSan(QStringLiteral("Ke8")));
+    }
+
+    // The piece placement is back to the initial one, but the castling right
+    // is different, so the initial position has not been repeated.
+    QVERIFY(!rules.isThreefoldRepetition());
+}
+
+void RulesTest::testFiftyMoveRule() {
+    Rules rules;
+
+    QVERIFY(rules.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/N3K2R w - - 99 60")));
+    QVERIFY(!rules.isFiftyMoveRule());
+    QVERIFY(!rules.isDraw());
+    QVERIFY(!rules.isGameOver());
+
+    // A quiet knight move reaches 100 halfmoves without a pawn move or a
+    // capture: the fifty-move rule is available.
+    QVERIFY(rules.tryMoveSan(QStringLiteral("Nc2")));
+    QVERIFY(rules.isFiftyMoveRule());
+    QVERIFY(rules.isDraw());
+    QVERIFY(rules.isGameOver());
+
+    // A pawn move resets the counter, even when it started at 99.
+    Rules pawnRules;
+    QVERIFY(pawnRules.loadFen(
+        QStringLiteral("4k3/8/8/8/8/4P3/8/4K3 w - - 99 60")));
+    QVERIFY(pawnRules.tryMoveSan(QStringLiteral("e4")));
+    QVERIFY(!pawnRules.isFiftyMoveRule());
+    QVERIFY(!pawnRules.isDraw());
+
+    // Checkmate takes precedence over a simultaneously available fifty-move
+    // claim: the quiet mating move also brings the halfmove clock to 100.
+    Rules mateRules;
+    QVERIFY(mateRules.loadFen(
+        QStringLiteral("7k/8/6QK/8/8/8/8/8 w - - 99 60")));
+    QVERIFY(mateRules.tryMoveSan(QStringLiteral("Qg7#")));
+    QVERIFY(mateRules.isCheckmate(Rules::Color::Black));
+    QVERIFY(mateRules.isFiftyMoveRule());
+    QVERIFY(!mateRules.isDraw());
+    QVERIFY(mateRules.isGameOver());
+}
+
 void RulesTest::testSanParsingAndExecution() {
     Rules rules;
     // 1. e4
@@ -376,6 +459,26 @@ void RulesTest::testMainWindowNewGame() {
     QVERIFY(king.has_value());
     QCOMPARE(king->type, Rules::PieceType::King);
     QCOMPARE(king->color, Rules::Color::White);
+}
+
+void RulesTest::testMainWindowClaimDrawAction() {
+    MainWindow window;
+    QVERIFY(window.claimDrawAction() != nullptr);
+
+    // The action is disabled until a claimable draw is available.
+    QVERIFY(!window.claimDrawAction()->isEnabled());
+    QVERIFY(window.gameController()->loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/N3K2R w - - 99 60")));
+    QVERIFY(window.gameController()->requestMove({7, 0}, {6, 2}));
+    QVERIFY(window.gameController()->canClaimDraw());
+    QVERIFY(window.claimDrawAction()->isEnabled());
+
+    QSignalSpy finishedSpy(window.gameController(), &GameController::gameFinished);
+    window.claimDrawAction()->trigger();
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(finishedSpy.first().at(0).toString(), QStringLiteral("1/2-1/2"));
+    QVERIFY(!window.gameController()->canClaimDraw());
+    QVERIFY(!window.claimDrawAction()->isEnabled());
 }
 
 void RulesTest::testWhiteToPlayCheckBox() {

@@ -71,6 +71,9 @@ public:
     [[nodiscard]] bool isStalemate(Color color) const;
     [[nodiscard]] bool isGameOver() const;
     [[nodiscard]] bool isInsufficientMaterial() const;
+    [[nodiscard]] bool isThreefoldRepetition() const;
+    [[nodiscard]] bool isFiftyMoveRule() const;
+    [[nodiscard]] bool isDraw() const;
 
     [[nodiscard]] static bool isInside(Position position);
     [[nodiscard]] static QString toUci(Position from, Position to, PieceType promotion = PieceType::None);
@@ -98,8 +101,11 @@ private:
     std::optional<Move> lastMove_;
     int halfmoveClock_ = 0;
     int fullmoveNumber_ = 1;
+    std::vector<QString> repetitionHistory_;
 
     [[nodiscard]] static Color opposite(Color color);
+    [[nodiscard]] QString positionKey() const;
+    [[nodiscard]] bool enPassantCaptureAvailable() const;
     [[nodiscard]] static bool isPromotionPiece(PieceType type);
 
     [[nodiscard]] bool isPseudoLegalMove(const Move &move) const;

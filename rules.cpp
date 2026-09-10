@@ -42,6 +42,8 @@ void Rules::reset() {
     lastMove_.reset();
     halfmoveClock_ = 0;
     fullmoveNumber_ = 1;
+    repetitionHistory_.clear();
+    repetitionHistory_.push_back(positionKey());
 }
 
 std::optional<Rules::Piece> Rules::pieceAt(Position position) const {
@@ -104,6 +106,7 @@ bool Rules::tryMove(const Move &move) {
         ++fullmoveNumber_;
     }
     currentPlayer_ = opposite(currentPlayer_);
+    repetitionHistory_.push_back(positionKey());
     return true;
 }
 
@@ -159,9 +162,30 @@ bool Rules::isStalemate(Color color) const {
 }
 
 bool Rules::isGameOver() const {
-    return isCheckmate(Color::White) || isCheckmate(Color::Black) ||
-           isStalemate(Color::White) || isStalemate(Color::Black) ||
-           isInsufficientMaterial();
+    return isCheckmate(Color::White) || isCheckmate(Color::Black) || isDraw();
+}
+
+bool Rules::isThreefoldRepetition() const {
+    if (repetitionHistory_.size() < 3) {
+        return false;
+    }
+
+    const QString currentKey = positionKey();
+    return std::count(repetitionHistory_.begin(), repetitionHistory_.end(),
+                      currentKey) >= 3;
+}
+
+bool Rules::isFiftyMoveRule() const {
+    return halfmoveClock_ >= 100;
+}
+
+bool Rules::isDraw() const {
+    // A checkmate ends the game before any claimable draw can apply.
+    if (isCheckmate(Color::White) || isCheckmate(Color::Black)) {
+        return false;
+    }
+    return isStalemate(currentPlayer_) || isInsufficientMaterial() ||
+           isThreefoldRepetition() || isFiftyMoveRule();
 }
 
 bool Rules::isInsufficientMaterial() const {
@@ -207,6 +231,53 @@ bool Rules::isInsufficientMaterial() const {
         evenSquaredBishops + oddSquaredBishops == 2 &&
         (evenSquaredBishops == 2 || oddSquaredBishops == 2)) {
         return true; // Only bishops confined to same-colored squares.
+    }
+
+    return false;
+}
+
+QString Rules::positionKey() const {
+    QStringList fields = toFen().split(QChar(' '));
+    if (fields.size() < 4) {
+        return toFen();
+    }
+
+    // FIDE repetition compares the same legal moves: an en passant target is
+    // only part of the position when the capture is actually available.
+    if (!enPassantCaptureAvailable()) {
+        fields[3] = QStringLiteral("-");
+    }
+    return fields.mid(0, 4).join(QChar(' '));
+}
+
+bool Rules::enPassantCaptureAvailable() const {
+    if (!lastMove_.has_value()) {
+        return false;
+    }
+
+    const Move &last = *lastMove_;
+    const auto movedPiece = pieceAt(last.to);
+    if (!movedPiece.has_value() || movedPiece->type != PieceType::Pawn ||
+        std::abs(last.to.row - last.from.row) != 2) {
+        return false;
+    }
+
+    const int targetRow = (last.from.row + last.to.row) / 2;
+    const int pawnRow = last.to.row;
+    const Position target{targetRow, last.to.column};
+
+    for (const int columnOffset : {-1, 1}) {
+        const int column = last.to.column + columnOffset;
+        if (column < 0 || column > 7) {
+            continue;
+        }
+
+        const Position from{pawnRow, column};
+        const auto pawn = pieceAt(from);
+        if (pawn.has_value() && pawn->type == PieceType::Pawn &&
+            pawn->color == currentPlayer_ && isValidMove(from, target)) {
+            return true;
+        }
     }
 
     return false;
@@ -770,6 +841,8 @@ bool Rules::loadFen(const QString &fen) {
     lastMove_ = newLastMove;
     halfmoveClock_ = halfmove;
     fullmoveNumber_ = fullmove;
+    repetitionHistory_.clear();
+    repetitionHistory_.push_back(positionKey());
     return true;
 }
 

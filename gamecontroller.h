@@ -103,6 +103,12 @@ public:
     void setRecommendedMovePreviewEnabled(bool enabled);
     void updateEvaluation();
 
+    // Draw claims (threefold repetition / fifty-move rule). The controller
+    // adjudicates these draws automatically in computer games; this explicit
+    // path covers free play and positions loaded from FEN or PGN.
+    [[nodiscard]] bool canClaimDraw() const;
+    void claimDraw();
+
     // Fixed-depth (18), mainline-only engine audit. Results are committed as
     // one transaction so cancelling or losing the engine cannot leave a partial PGN.
     [[nodiscard]] bool canStartGameAudit() const;
@@ -185,7 +191,9 @@ private:
     void rebuildPgnHistory();
     void refreshMoveHistory();
     void updatePgnResult(const QString &result);
+    bool finishGameIfOver();
     [[nodiscard]] QString completedGameResult() const;
+    [[nodiscard]] QString drawReasonMessage() const;
     [[nodiscard]] QString buildPgnMovetext() const;
     [[nodiscard]] QString formattedCommentAt(int ply) const;
     [[nodiscard]] static std::optional<Rules::Move> parseUciMove(const QString &moveText);

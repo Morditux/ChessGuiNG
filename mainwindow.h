@@ -71,6 +71,7 @@ public:
     [[nodiscard]] QToolButton *flipBoardButton() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
+    [[nodiscard]] QAction *claimDrawAction() const;
     [[nodiscard]] QAction *analyzeGameAction() const;
     [[nodiscard]] QAction *firstMoveAction() const;
     [[nodiscard]] QAction *lastMoveAction() const;
@@ -118,6 +119,7 @@ public slots:
     void goToStart();
     void goToEnd();
     void clearBoardAnnotations();
+    void claimDraw();
     void toggleGameAudit();
 
 protected:
@@ -205,6 +207,7 @@ private:
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;
     QAction *clearAnnotationsAction_ = nullptr;
+    QAction *claimDrawAction_ = nullptr;
     QAction *analyzeGameAction_ = nullptr;
 
     QString loadedPgnContent_;
