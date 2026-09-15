@@ -77,6 +77,7 @@ private slots:
     void testMainWindowLoadPgnContent();
     void testMainWindowCopyFenAndPgn();
     void testMainWindowNavigationHomeAndEnd();
+    void testMainWindowMenuLayoutAndShortcuts();
     void testMainWindowAcceptsDroppedPgnFile();
     void testMainWindowRecognizesScreenshotWhenProvided();
     void testComputerGameDialogSettings();
@@ -834,6 +835,111 @@ void RulesTest::testMainWindowNavigationHomeAndEnd() {
     QCOMPARE(window.gameController()->moveCursor(), 4);
     QVERIFY(window.firstMoveAction()->isEnabled());
     QVERIFY(!window.lastMoveAction()->isEnabled());
+}
+
+void RulesTest::testMainWindowMenuLayoutAndShortcuts() {
+    MainWindow window;
+
+    // The crowded Games menu is split: navigation, board and clipboard actions
+    // each live in their own menu.
+    const auto menuTitles = [&window] {
+        QStringList titles;
+        const auto menus = window.findChildren<QMenu *>();
+        for (const QMenu *menu : menus) {
+            if (menu->menuAction() != nullptr &&
+                !menu->menuAction()->isSeparator()) {
+                titles << menu->title();
+            }
+        }
+        return titles;
+    }();
+    for (const auto &title : {QStringLiteral("File"), QStringLiteral("Games"),
+                              QStringLiteral("Navigation"),
+                              QStringLiteral("Board"), QStringLiteral("Edit"),
+                              QStringLiteral("Engine")}) {
+        QVERIFY2(menuTitles.contains(title), qPrintable(title));
+    }
+
+    const auto menuByTitle = [&window](const QString &title) -> QMenu * {
+        const auto menus = window.findChildren<QMenu *>();
+        for (QMenu *menu : menus) {
+            if (menu->menuAction() != nullptr && menu->title() == title) {
+                return menu;
+            }
+        }
+        return nullptr;
+    };
+
+    const auto actionInMenu = [](QMenu *menu, const QString &text) {
+        for (QAction *action : menu->actions()) {
+            if (action->text() == text) {
+                return action;
+            }
+        }
+        return static_cast<QAction *>(nullptr);
+    };
+
+    QMenu *gamesMenu = menuByTitle(QStringLiteral("Games"));
+    QMenu *navigationMenu = menuByTitle(QStringLiteral("Navigation"));
+    QMenu *boardMenu = menuByTitle(QStringLiteral("Board"));
+    QMenu *editMenu = menuByTitle(QStringLiteral("Edit"));
+    QVERIFY(gamesMenu != nullptr);
+    QVERIFY(navigationMenu != nullptr);
+    QVERIFY(boardMenu != nullptr);
+    QVERIFY(editMenu != nullptr);
+
+    // Games keeps only the actions that drive a game in progress.
+    QVERIFY(gamesMenu->actions().contains(window.takeBackAction()));
+    QVERIFY(gamesMenu->actions().contains(window.resignAction()));
+    QVERIFY(gamesMenu->actions().contains(window.offerDrawAction()));
+    QVERIFY(gamesMenu->actions().contains(window.claimDrawAction()));
+    // Navigation actions moved out of Games.
+    QVERIFY(!gamesMenu->actions().contains(window.firstMoveAction()));
+    QVERIFY(!gamesMenu->actions().contains(window.lastMoveAction()));
+    QVERIFY(navigationMenu->actions().contains(window.firstMoveAction()));
+    QVERIFY(navigationMenu->actions().contains(window.lastMoveAction()));
+
+    QCOMPARE(gamesMenu->actions().size(), 7);      // 3 separators + 4 actions
+    QCOMPARE(navigationMenu->actions().size(), 4); // no separators
+
+    // Every action of the new menus carries a keyboard shortcut.
+    const auto shortcutOf = [](QAction *action) {
+        return action->shortcut().toString(QKeySequence::PortableText);
+    };
+    QCOMPARE(shortcutOf(window.takeBackAction()), QStringLiteral("Ctrl+Z"));
+    QCOMPARE(shortcutOf(window.resignAction()), QStringLiteral("Ctrl+R"));
+    QCOMPARE(shortcutOf(window.offerDrawAction()), QStringLiteral("Ctrl+Shift+R"));
+    QCOMPARE(shortcutOf(window.claimDrawAction()), QStringLiteral("Ctrl+D"));
+    QCOMPARE(shortcutOf(window.firstMoveAction()), QStringLiteral("Home"));
+    QCOMPARE(shortcutOf(window.lastMoveAction()), QStringLiteral("End"));
+    QCOMPARE(shortcutOf(window.copyFenAction()), QStringLiteral("Ctrl+Shift+F"));
+    QCOMPARE(shortcutOf(window.copyPgnAction()), QStringLiteral("Ctrl+Shift+C"));
+    QVERIFY(editMenu->actions().contains(window.copyFenAction()));
+    QVERIFY(editMenu->actions().contains(window.copyPgnAction()));
+
+    QVERIFY(window.flipBoardAction() != nullptr);
+    QVERIFY(window.highlightLastMoveAction() != nullptr);
+    QVERIFY(boardMenu->actions().contains(window.flipBoardAction()));
+    QVERIFY(boardMenu->actions().contains(window.highlightLastMoveAction()));
+    QCOMPARE(shortcutOf(window.flipBoardAction()), QStringLiteral("Ctrl+F"));
+    QCOMPARE(shortcutOf(window.highlightLastMoveAction()),
+             QStringLiteral("Ctrl+Shift+H"));
+
+    // The flip action and the status-line button share one orientation.
+    QVERIFY(!window.chessBoard()->boardFlipped());
+    QVERIFY(!window.flipBoardAction()->isChecked());
+    window.flipBoardAction()->trigger();
+    QVERIFY(window.chessBoard()->boardFlipped());
+    QVERIFY(window.flipBoardButton()->isChecked());
+    window.flipBoardButton()->click();
+    QVERIFY(!window.chessBoard()->boardFlipped());
+    QVERIFY(!window.flipBoardAction()->isChecked());
+
+    // Everything the menus expose is still on the toolbar exactly once.
+    auto *toolBar = window.findChild<QToolBar *>(QStringLiteral("mainToolBar"));
+    QVERIFY(toolBar != nullptr);
+    QVERIFY(toolBar->actions().contains(window.takeBackAction()));
+    QVERIFY(toolBar->actions().contains(window.firstMoveAction()));
 }
 
 void RulesTest::testMainWindowAcceptsDroppedPgnFile() {

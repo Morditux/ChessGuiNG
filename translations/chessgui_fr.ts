@@ -1276,6 +1276,66 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
             <translation>Parties</translation>
         </message>
         <message>
+            <location filename="../mainwindow.cpp" line="2142" />
+            <source>Navigation</source>
+            <translation>Navigation</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2185" />
+            <source>Board</source>
+            <translation>Échiquier</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2248" />
+            <source>Edit</source>
+            <translation>Édition</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2054" />
+            <source>Ctrl+Shift+I</source>
+            <translation>Ctrl+Shift+I</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2089" />
+            <source>Ctrl+Shift+N</source>
+            <translation>Ctrl+Shift+N</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2109" />
+            <source>Ctrl+R</source>
+            <translation>Ctrl+R</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2119" />
+            <source>Ctrl+Shift+R</source>
+            <translation>Ctrl+Shift+R</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2130" />
+            <source>Ctrl+D</source>
+            <translation>Ctrl+D</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2191" />
+            <source>Ctrl+F</source>
+            <translation>Ctrl+F</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2216" />
+            <source>Ctrl+Shift+M</source>
+            <translation>Ctrl+Shift+M</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2227" />
+            <source>Ctrl+M</source>
+            <translation>Ctrl+M</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2238" />
+            <source>Ctrl+Shift+H</source>
+            <translation>Ctrl+Shift+H</translation>
+        </message>
+        <message>
             <location filename="../mainwindow.cpp" line="2023" />
             <source>New game</source>
             <translation>Nouvelle partie</translation>

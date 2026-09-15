@@ -124,6 +124,8 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             this, &MainWindow::setComputerMovePreviewEnabled);
     connect(showRecommendedMoveAction_, &QAction::toggled,
             this, &MainWindow::setRecommendedMovePreviewEnabled);
+    connect(highlightLastMoveAction_, &QAction::toggled,
+            this, &MainWindow::setLastMoveHighlightingEnabled);
 
     connect(gameController_, &GameController::positionChanged, this, [this] {
         board_->setRules(gameController_->rules());
@@ -399,6 +401,14 @@ QCheckBox *MainWindow::highlightLastMoveCheckBox() const {
 
 QToolButton *MainWindow::flipBoardButton() const {
     return flipBoardButton_;
+}
+
+QAction *MainWindow::flipBoardAction() const {
+    return flipBoardAction_;
+}
+
+QAction *MainWindow::highlightLastMoveAction() const {
+    return highlightLastMoveAction_;
 }
 
 QLabel *MainWindow::visionStatusLabel() const {
@@ -1840,6 +1850,10 @@ void MainWindow::setLastMoveHighlightingEnabled(bool enabled) {
         const QSignalBlocker blocker(highlightLastMoveCheckBox_);
         highlightLastMoveCheckBox_->setChecked(enabled);
     }
+    if (highlightLastMoveAction_ != nullptr) {
+        const QSignalBlocker blocker(highlightLastMoveAction_);
+        highlightLastMoveAction_->setChecked(enabled);
+    }
 
     board_->setLastMoveHighlightingEnabled(enabled);
 
@@ -2012,26 +2026,121 @@ void MainWindow::setupUi() {
         action->setStatusTip(description);
     };
 
-    // Menu File
+    // Menu File: creating, opening, saving and leaving a game.
     auto *menuFile = new QMenu(tr("File"), this);
+    newGameAction_ = menuFile->addAction(tr("New game"));
+    newGameAction_->setObjectName(QStringLiteral("newGameAction"));
+    configureToolAction(newGameAction_, QStringLiteral(":/icons/toolbar-new-game.svg"),
+                        tr("Start a new game from the initial position"));
+    newGameAction_->setShortcut(QKeySequence::New); // Ctrl+N
+    newGameAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(newGameAction_);
+    connect(newGameAction_, &QAction::triggered, this, &MainWindow::newGame);
+    menuFile->addSeparator();
+
+    loadPgnAction_ = menuFile->addAction(tr("Load PGN..."));
+    configureToolAction(loadPgnAction_, QStringLiteral(":/icons/toolbar-load-pgn.svg"),
+                        tr("Load a PGN game"));
+    loadPgnAction_->setShortcut(QKeySequence::Open); // Ctrl+O
+    loadPgnAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(loadPgnAction_);
+    connect(loadPgnAction_, &QAction::triggered, this, &MainWindow::loadPgn);
+
+    QAction *loadImageAction = menuFile->addAction(tr("Load screenshot..."));
+    loadImageAction->setObjectName(QStringLiteral("loadScreenshotAction"));
+    configureToolAction(loadImageAction,
+                        QStringLiteral(":/icons/toolbar-load-screenshot.svg"),
+                        tr("Load a chessboard screenshot"));
+    loadImageAction->setShortcut(QKeySequence(tr("Ctrl+Shift+I")));
+    loadImageAction->setShortcutContext(Qt::WindowShortcut);
+    addAction(loadImageAction);
+    connect(loadImageAction, &QAction::triggered, this, [this] {
+        loadImageFile();
+    });
+
+    savePgnAction_ = menuFile->addAction(tr("Save PGN..."));
+    configureToolAction(savePgnAction_, QStringLiteral(":/icons/toolbar-save-pgn.svg"),
+                        tr("Save the current game to a PGN file"));
+    savePgnAction_->setShortcut(QKeySequence::Save); // Ctrl+S
+    savePgnAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(savePgnAction_);
+    connect(savePgnAction_, &QAction::triggered, this, &MainWindow::savePgn);
+    menuFile->addSeparator();
+
     QAction *quitAction = menuFile->addAction(tr("Quit"));
+    quitAction->setObjectName(QStringLiteral("quitAction"));
     configureToolAction(quitAction, QStringLiteral(":/icons/toolbar-quit.svg"),
                         tr("Quit ChessGui"));
+    quitAction->setShortcut(QKeySequence::Quit); // Ctrl+Q
+    quitAction->setShortcutContext(Qt::WindowShortcut);
     // Closing goes through the window so that an unsaved game is not lost.
     connect(quitAction, &QAction::triggered, this, &MainWindow::close);
     menubar->addMenu(menuFile);
 
-    // Menu Games
+    // Menu Games: the actions that drive a game in progress. Navigation,
+    // board, clipboard and file actions have their own menus so that this one
+    // stays short.
     auto *menuGames = new QMenu(tr("Games"), this);
-    newGameAction_ = menuGames->addAction(tr("New game"));
-    newGameAction_->setObjectName(QStringLiteral("newGameAction"));
-    configureToolAction(newGameAction_, QStringLiteral(":/icons/toolbar-new-game.svg"),
-                        tr("Start a new game from the initial position"));
-    newGameAction_->setShortcut(QKeySequence::New);
-    connect(newGameAction_, &QAction::triggered, this, &MainWindow::newGame);
+    playAgainstComputerAction_ = menuGames->addAction(
+        tr("Play against computer"));
+    configureToolAction(playAgainstComputerAction_,
+                        QStringLiteral(":/icons/toolbar-play-computer.svg"),
+                        tr("Start a game against the computer"));
+    playAgainstComputerAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+N")));
+    playAgainstComputerAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(playAgainstComputerAction_);
+    connect(playAgainstComputerAction_, &QAction::triggered,
+            this, &MainWindow::playAgainstComputer);
     menuGames->addSeparator();
 
-    firstMoveAction_ = menuGames->addAction(tr("Go to start"));
+    takeBackAction_ = menuGames->addAction(tr("Take back move"));
+    takeBackAction_->setObjectName(QStringLiteral("takeBackAction"));
+    configureToolAction(takeBackAction_, QStringLiteral(":/icons/toolbar-take-back.svg"),
+                        tr("Take back the last move and play a different one"));
+    takeBackAction_->setShortcut(QKeySequence::Undo); // Ctrl+Z
+    takeBackAction_->setShortcutContext(Qt::WindowShortcut);
+    takeBackAction_->setEnabled(false);
+    addAction(takeBackAction_);
+    connect(takeBackAction_, &QAction::triggered, this, &MainWindow::takeBack);
+    menuGames->addSeparator();
+
+    resignAction_ = menuGames->addAction(tr("Resign"));
+    resignAction_->setObjectName(QStringLiteral("resignAction"));
+    resignAction_->setShortcut(QKeySequence(tr("Ctrl+R")));
+    resignAction_->setShortcutContext(Qt::WindowShortcut);
+    resignAction_->setToolTip(tr("Resign the game against the computer"));
+    resignAction_->setStatusTip(resignAction_->toolTip());
+    resignAction_->setEnabled(false);
+    addAction(resignAction_);
+    connect(resignAction_, &QAction::triggered, this, &MainWindow::resignGame);
+
+    offerDrawAction_ = menuGames->addAction(tr("Offer draw"));
+    offerDrawAction_->setObjectName(QStringLiteral("offerDrawAction"));
+    offerDrawAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+R")));
+    offerDrawAction_->setShortcutContext(Qt::WindowShortcut);
+    offerDrawAction_->setToolTip(
+        tr("Offer a draw: the engine decides, or the two players agree"));
+    offerDrawAction_->setStatusTip(offerDrawAction_->toolTip());
+    offerDrawAction_->setEnabled(false);
+    addAction(offerDrawAction_);
+    connect(offerDrawAction_, &QAction::triggered, this, &MainWindow::offerDraw);
+
+    claimDrawAction_ = menuGames->addAction(tr("Declare draw"));
+    claimDrawAction_->setObjectName(QStringLiteral("claimDrawAction"));
+    claimDrawAction_->setShortcut(QKeySequence(tr("Ctrl+D")));
+    claimDrawAction_->setShortcutContext(Qt::WindowShortcut);
+    claimDrawAction_->setToolTip(
+        tr("Claim a draw by threefold repetition or the fifty-move rule"));
+    claimDrawAction_->setStatusTip(claimDrawAction_->toolTip());
+    claimDrawAction_->setEnabled(false);
+    addAction(claimDrawAction_);
+    connect(claimDrawAction_, &QAction::triggered, this, &MainWindow::claimDraw);
+
+    menubar->addMenu(menuGames);
+
+    // Menu Navigation: moving through the recorded moves.
+    auto *menuNavigation = new QMenu(tr("Navigation"), this);
+    firstMoveAction_ = menuNavigation->addAction(tr("Go to start"));
     firstMoveAction_->setObjectName(QStringLiteral("firstMoveAction"));
     configureToolAction(firstMoveAction_, QStringLiteral(":/icons/toolbar-first-move.svg"),
                         tr("Go to the beginning of the game"));
@@ -2041,7 +2150,7 @@ void MainWindow::setupUi() {
     addAction(firstMoveAction_);
     connect(firstMoveAction_, &QAction::triggered, this, &MainWindow::goToStart);
 
-    stepBackAction_ = menuGames->addAction(tr("Step back"));
+    stepBackAction_ = menuNavigation->addAction(tr("Step back"));
     stepBackAction_->setObjectName(QStringLiteral("stepBackAction"));
     configureToolAction(stepBackAction_, QStringLiteral(":/icons/toolbar-step-back.svg"),
                         tr("Go back one move in the game"));
@@ -2051,7 +2160,7 @@ void MainWindow::setupUi() {
     addAction(stepBackAction_);
     connect(stepBackAction_, &QAction::triggered, this, &MainWindow::stepBack);
 
-    stepForwardAction_ = menuGames->addAction(tr("Step forward"));
+    stepForwardAction_ = menuNavigation->addAction(tr("Step forward"));
     stepForwardAction_->setObjectName(QStringLiteral("stepForwardAction"));
     configureToolAction(stepForwardAction_, QStringLiteral(":/icons/toolbar-step-forward.svg"),
                         tr("Go forward one move in the game"));
@@ -2061,7 +2170,7 @@ void MainWindow::setupUi() {
     addAction(stepForwardAction_);
     connect(stepForwardAction_, &QAction::triggered, this, &MainWindow::stepForward);
 
-    lastMoveAction_ = menuGames->addAction(tr("Go to end"));
+    lastMoveAction_ = menuNavigation->addAction(tr("Go to end"));
     lastMoveAction_->setObjectName(QStringLiteral("lastMoveAction"));
     configureToolAction(lastMoveAction_, QStringLiteral(":/icons/toolbar-last-move.svg"),
                         tr("Go to the end of the game"));
@@ -2070,96 +2179,25 @@ void MainWindow::setupUi() {
     lastMoveAction_->setEnabled(false);
     addAction(lastMoveAction_);
     connect(lastMoveAction_, &QAction::triggered, this, &MainWindow::goToEnd);
-    menuGames->addSeparator();
+    menubar->addMenu(menuNavigation);
 
-    takeBackAction_ = menuGames->addAction(tr("Take back move"));
-    takeBackAction_->setObjectName(QStringLiteral("takeBackAction"));
-    configureToolAction(takeBackAction_, QStringLiteral(":/icons/toolbar-take-back.svg"),
-                        tr("Take back the last move and play a different one"));
-    takeBackAction_->setShortcut(QKeySequence::Undo);
-    takeBackAction_->setShortcutContext(Qt::WindowShortcut);
-    takeBackAction_->setEnabled(false);
-    addAction(takeBackAction_);
-    connect(takeBackAction_, &QAction::triggered, this, &MainWindow::takeBack);
-    menuGames->addSeparator();
-
-    playAgainstComputerAction_ = menuGames->addAction(
-        tr("Play against computer"));
-    configureToolAction(playAgainstComputerAction_,
-                        QStringLiteral(":/icons/toolbar-play-computer.svg"),
-                        tr("Start a game against the computer"));
-    connect(playAgainstComputerAction_, &QAction::triggered,
-            this, &MainWindow::playAgainstComputer);
-    menuGames->addSeparator();
-
-    showComputerMoveAction_ = menuGames->addAction(
-        tr("Show computer's planned move"));
-    showComputerMoveAction_->setObjectName(QStringLiteral("showComputerMoveAction"));
-    showComputerMoveAction_->setCheckable(true);
-    showComputerMoveAction_->setToolTip(
-        tr("Draw the computer's next planned move as a dashed arrow"));
-    showComputerMoveAction_->setStatusTip(showComputerMoveAction_->toolTip());
-
-    showRecommendedMoveAction_ = menuGames->addAction(
-        tr("Show recommended move"));
-    showRecommendedMoveAction_->setObjectName(QStringLiteral("showRecommendedMoveAction"));
-    showRecommendedMoveAction_->setCheckable(true);
-    showRecommendedMoveAction_->setToolTip(
-        tr("Draw the engine's recommended move as a solid arrow"));
-    showRecommendedMoveAction_->setStatusTip(showRecommendedMoveAction_->toolTip());
-    menuGames->addSeparator();
-
-    loadPgnAction_ = menuGames->addAction(tr("Load PGN..."));
-    configureToolAction(loadPgnAction_, QStringLiteral(":/icons/toolbar-load-pgn.svg"),
-                        tr("Load a PGN game"));
-    loadPgnAction_->setShortcut(QKeySequence::Open);
-    connect(loadPgnAction_, &QAction::triggered, this, &MainWindow::loadPgn);
-
-    savePgnAction_ = menuGames->addAction(tr("Save PGN..."));
-    configureToolAction(savePgnAction_, QStringLiteral(":/icons/toolbar-save-pgn.svg"),
-                        tr("Save the current game to a PGN file"));
-    savePgnAction_->setShortcut(QKeySequence::Save);
-    savePgnAction_->setShortcutContext(Qt::WindowShortcut);
-    addAction(savePgnAction_);
-    connect(savePgnAction_, &QAction::triggered, this, &MainWindow::savePgn);
-
-    copyFenAction_ = menuGames->addAction(tr("Copy FEN"));
-    copyFenAction_->setObjectName(QStringLiteral("copyFenAction"));
-    configureToolAction(copyFenAction_, QStringLiteral(":/icons/toolbar-copy-fen.svg"),
-                        tr("Copy current board position as FEN to clipboard"));
-    copyFenAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+F")));
-    copyFenAction_->setShortcutContext(Qt::WindowShortcut);
-    addAction(copyFenAction_);
-    connect(copyFenAction_, &QAction::triggered, this, &MainWindow::copyFen);
-
-    copyPgnAction_ = menuGames->addAction(tr("Copy PGN"));
-    copyPgnAction_->setObjectName(QStringLiteral("copyPgnAction"));
-    configureToolAction(copyPgnAction_, QStringLiteral(":/icons/toolbar-copy-pgn.svg"),
-                        tr("Copy current game as PGN to clipboard"));
-    copyPgnAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+C")));
-    copyPgnAction_->setShortcutContext(Qt::WindowShortcut);
-    addAction(copyPgnAction_);
-    connect(copyPgnAction_, &QAction::triggered, this, &MainWindow::copyPgn);
-
-    QAction *loadImageAction = menuGames->addAction(tr("Load screenshot..."));
-    configureToolAction(loadImageAction,
-                        QStringLiteral(":/icons/toolbar-load-screenshot.svg"),
-                        tr("Load a chessboard screenshot"));
-    connect(loadImageAction, &QAction::triggered, this, [this] {
-        loadImageFile();
+    // Menu Board: orientation, annotations and move previews.
+    auto *menuBoard = new QMenu(tr("Board"), this);
+    flipBoardAction_ = menuBoard->addAction(tr("Flip board"));
+    flipBoardAction_->setObjectName(QStringLiteral("flipBoardAction"));
+    configureToolAction(flipBoardAction_, QStringLiteral(":/icons/flip-board.svg"),
+                        tr("Flip the board orientation"));
+    flipBoardAction_->setCheckable(true);
+    flipBoardAction_->setShortcut(QKeySequence(tr("Ctrl+F")));
+    flipBoardAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(flipBoardAction_);
+    connect(flipBoardAction_, &QAction::toggled, this, [this](bool flipped) {
+        if (board_ != nullptr) {
+            board_->setBoardFlipped(flipped);
+        }
     });
 
-    pasteFenAction_ = menuGames->addAction(tr("Paste FEN or screenshot"));
-    configureToolAction(pasteFenAction_, QStringLiteral(":/icons/toolbar-paste.svg"),
-                        tr("Paste a FEN position or screenshot"));
-    pasteFenAction_->setShortcut(QKeySequence::Paste); // Ctrl+V
-    pasteFenAction_->setShortcutContext(Qt::WindowShortcut);
-    addAction(pasteFenAction_);
-    connect(pasteFenAction_, &QAction::triggered,
-            this, &MainWindow::pasteFromClipboard);
-    menuGames->addSeparator();
-
-    clearAnnotationsAction_ = menuGames->addAction(tr("Clear board annotations"));
+    clearAnnotationsAction_ = menuBoard->addAction(tr("Clear board annotations"));
     clearAnnotationsAction_->setObjectName(QStringLiteral("clearAnnotationsAction"));
     clearAnnotationsAction_->setShortcut(QKeySequence(Qt::Key_Escape));
     clearAnnotationsAction_->setShortcutContext(Qt::WindowShortcut);
@@ -2169,31 +2207,74 @@ void MainWindow::setupUi() {
     addAction(clearAnnotationsAction_);
     connect(clearAnnotationsAction_, &QAction::triggered,
             this, &MainWindow::clearBoardAnnotations);
+    menuBoard->addSeparator();
 
-    claimDrawAction_ = menuGames->addAction(tr("Declare draw"));
-    claimDrawAction_->setObjectName(QStringLiteral("claimDrawAction"));
-    claimDrawAction_->setToolTip(
-        tr("Claim a draw by threefold repetition or the fifty-move rule"));
-    claimDrawAction_->setStatusTip(claimDrawAction_->toolTip());
-    claimDrawAction_->setEnabled(false);
-    connect(claimDrawAction_, &QAction::triggered, this, &MainWindow::claimDraw);
+    showComputerMoveAction_ = menuBoard->addAction(
+        tr("Show computer's planned move"));
+    showComputerMoveAction_->setObjectName(QStringLiteral("showComputerMoveAction"));
+    showComputerMoveAction_->setCheckable(true);
+    showComputerMoveAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+M")));
+    showComputerMoveAction_->setShortcutContext(Qt::WindowShortcut);
+    showComputerMoveAction_->setToolTip(
+        tr("Draw the computer's next planned move as a dashed arrow"));
+    showComputerMoveAction_->setStatusTip(showComputerMoveAction_->toolTip());
+    addAction(showComputerMoveAction_);
 
-    resignAction_ = menuGames->addAction(tr("Resign"));
-    resignAction_->setObjectName(QStringLiteral("resignAction"));
-    resignAction_->setToolTip(tr("Resign the game against the computer"));
-    resignAction_->setStatusTip(resignAction_->toolTip());
-    resignAction_->setEnabled(false);
-    connect(resignAction_, &QAction::triggered, this, &MainWindow::resignGame);
+    showRecommendedMoveAction_ = menuBoard->addAction(
+        tr("Show recommended move"));
+    showRecommendedMoveAction_->setObjectName(QStringLiteral("showRecommendedMoveAction"));
+    showRecommendedMoveAction_->setCheckable(true);
+    showRecommendedMoveAction_->setShortcut(QKeySequence(tr("Ctrl+M")));
+    showRecommendedMoveAction_->setShortcutContext(Qt::WindowShortcut);
+    showRecommendedMoveAction_->setToolTip(
+        tr("Draw the engine's recommended move as a solid arrow"));
+    showRecommendedMoveAction_->setStatusTip(showRecommendedMoveAction_->toolTip());
+    addAction(showRecommendedMoveAction_);
 
-    offerDrawAction_ = menuGames->addAction(tr("Offer draw"));
-    offerDrawAction_->setObjectName(QStringLiteral("offerDrawAction"));
-    offerDrawAction_->setToolTip(
-        tr("Offer a draw: the engine decides, or the two players agree"));
-    offerDrawAction_->setStatusTip(offerDrawAction_->toolTip());
-    offerDrawAction_->setEnabled(false);
-    connect(offerDrawAction_, &QAction::triggered, this, &MainWindow::offerDraw);
+    highlightLastMoveAction_ = menuBoard->addAction(tr("Highlight last move"));
+    highlightLastMoveAction_->setObjectName(QStringLiteral("highlightLastMoveAction"));
+    highlightLastMoveAction_->setCheckable(true);
+    highlightLastMoveAction_->setChecked(true);
+    highlightLastMoveAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+H")));
+    highlightLastMoveAction_->setShortcutContext(Qt::WindowShortcut);
+    highlightLastMoveAction_->setToolTip(
+        tr("Highlight the squares of the last played move"));
+    highlightLastMoveAction_->setStatusTip(highlightLastMoveAction_->toolTip());
+    addAction(highlightLastMoveAction_);
 
-    menubar->addMenu(menuGames);
+    menubar->addMenu(menuBoard);
+
+    // Menu Edit: clipboard actions.
+    auto *menuEdit = new QMenu(tr("Edit"), this);
+    copyFenAction_ = menuEdit->addAction(tr("Copy FEN"));
+    copyFenAction_->setObjectName(QStringLiteral("copyFenAction"));
+    configureToolAction(copyFenAction_, QStringLiteral(":/icons/toolbar-copy-fen.svg"),
+                        tr("Copy current board position as FEN to clipboard"));
+    copyFenAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+F")));
+    copyFenAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(copyFenAction_);
+    connect(copyFenAction_, &QAction::triggered, this, &MainWindow::copyFen);
+
+    copyPgnAction_ = menuEdit->addAction(tr("Copy PGN"));
+    copyPgnAction_->setObjectName(QStringLiteral("copyPgnAction"));
+    configureToolAction(copyPgnAction_, QStringLiteral(":/icons/toolbar-copy-pgn.svg"),
+                        tr("Copy current game as PGN to clipboard"));
+    copyPgnAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+C")));
+    copyPgnAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(copyPgnAction_);
+    connect(copyPgnAction_, &QAction::triggered, this, &MainWindow::copyPgn);
+    menuEdit->addSeparator();
+
+    pasteFenAction_ = menuEdit->addAction(tr("Paste FEN or screenshot"));
+    configureToolAction(pasteFenAction_, QStringLiteral(":/icons/toolbar-paste.svg"),
+                        tr("Paste a FEN position or screenshot"));
+    pasteFenAction_->setShortcut(QKeySequence::Paste); // Ctrl+V
+    pasteFenAction_->setShortcutContext(Qt::WindowShortcut);
+    addAction(pasteFenAction_);
+    connect(pasteFenAction_, &QAction::triggered,
+            this, &MainWindow::pasteFromClipboard);
+
+    menubar->addMenu(menuEdit);
 
     // Menu Engine
     auto *menuEngine = new QMenu(tr("Engine"), this);
@@ -2469,6 +2550,10 @@ void MainWindow::setupUi() {
             board_, &ChessBoard::setBoardFlipped);
     connect(board_, &ChessBoard::boardFlippedChanged,
             flipBoardButton_, &QToolButton::setChecked);
+    // The menu action and the status-line button are two views of the same
+    // orientation and stay in sync.
+    connect(board_, &ChessBoard::boardFlippedChanged,
+            flipBoardAction_, &QAction::setChecked);
     connect(board_, &ChessBoard::boardFlippedChanged, this, [this](bool) {
         applyBoardOrientation();
     });

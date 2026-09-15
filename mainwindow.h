@@ -75,6 +75,8 @@ public:
     [[nodiscard]] QCheckBox *showRecommendedMoveCheckBox() const;
     [[nodiscard]] QCheckBox *highlightLastMoveCheckBox() const;
     [[nodiscard]] QToolButton *flipBoardButton() const;
+    [[nodiscard]] QAction *flipBoardAction() const;
+    [[nodiscard]] QAction *highlightLastMoveAction() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
     [[nodiscard]] QAction *claimDrawAction() const;
@@ -258,6 +260,8 @@ private:
     QAction *playAgainstComputerAction_ = nullptr;
     QAction *showComputerMoveAction_ = nullptr;
     QAction *showRecommendedMoveAction_ = nullptr;
+    QAction *highlightLastMoveAction_ = nullptr;
+    QAction *flipBoardAction_ = nullptr;
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;
     QAction *clearAnnotationsAction_ = nullptr;
