@@ -21,6 +21,7 @@
 
 #include "chessboard.h"
 #include "computergamedialog.h"
+#include "evaluationbar.h"
 #include "gamecontroller.h"
 #include "mainwindow.h"
 #include "movelistwidget.h"
@@ -507,28 +508,39 @@ void RulesTest::testFlipBoardButton() {
     QVERIFY(!window.flipBoardButton()->isChecked());
     QVERIFY(window.whitePendulum() != nullptr);
     QVERIFY(window.blackPendulum() != nullptr);
+    QVERIFY(window.evaluationBar() != nullptr);
+    QVERIFY(!window.evaluationBar()->isFlipped());
 
-    auto *gameControlBar = window.findChild<QFrame *>(
-        QStringLiteral("gameControlBar"));
-    QVERIFY(gameControlBar != nullptr);
-    QVERIFY(gameControlBar->isVisible());
-    QVERIFY(gameControlBar->isAncestorOf(window.blackPendulum()));
-    QVERIFY(gameControlBar->isAncestorOf(window.whitePendulum()));
+    auto *blackStrip = window.findChild<QWidget *>(QStringLiteral("blackPlayerStrip"));
+    auto *whiteStrip = window.findChild<QWidget *>(QStringLiteral("whitePlayerStrip"));
+    QVERIFY(blackStrip != nullptr);
+    QVERIFY(whiteStrip != nullptr);
+    QVERIFY(blackStrip->isVisible());
+    QVERIFY(whiteStrip->isVisible());
+    QVERIFY(blackStrip->isAncestorOf(window.blackPendulum()));
+    QVERIFY(whiteStrip->isAncestorOf(window.whitePendulum()));
     QVERIFY(window.blackPendulum()->isVisible());
     QVERIFY(window.whitePendulum()->isVisible());
-    QVERIFY(gameControlBar->mapTo(&window,
-                                  QPoint(0, gameControlBar->height())).y() <=
-            window.chessBoard()->mapTo(&window, QPoint()).y());
+
+    // The strip above the board belongs to the camp displayed at the top.
+    const auto stripIsAboveBoard = [&window](QWidget *strip) {
+        return strip->mapTo(&window, QPoint(0, strip->height())).y() <=
+               window.chessBoard()->mapTo(&window, QPoint()).y();
+    };
+    QVERIFY(stripIsAboveBoard(blackStrip));
+    QVERIFY(!stripIsAboveBoard(whiteStrip));
     QVERIFY(window.visionStatusLabel()->toolTip() ==
             window.visionStatusLabel()->text());
 
-    const auto labels = gameControlBar->findChildren<QLabel *>();
-    QVERIFY(std::any_of(labels.cbegin(), labels.cend(), [](const QLabel *label) {
-        return label->text() == QStringLiteral("Black");
-    }));
-    QVERIFY(std::any_of(labels.cbegin(), labels.cend(), [](const QLabel *label) {
-        return label->text() == QStringLiteral("White");
-    }));
+    auto *blackName = blackStrip->findChild<QLabel *>(
+        QStringLiteral("playerNameLabel"));
+    auto *whiteName = whiteStrip->findChild<QLabel *>(
+        QStringLiteral("playerNameLabel"));
+    QVERIFY(blackName != nullptr);
+    QVERIFY(whiteName != nullptr);
+    // Without PGN headers the strips fall back to the colour names.
+    QCOMPARE(blackName->toolTip(), QStringLiteral("Black"));
+    QCOMPARE(whiteName->toolTip(), QStringLiteral("White"));
 
     window.flipBoardButton()->click();
     QVERIFY(window.chessBoard()->boardFlipped());
@@ -536,8 +548,14 @@ void RulesTest::testFlipBoardButton() {
     QCoreApplication::processEvents();
     QVERIFY(window.blackPendulum()->isVisible());
     QVERIFY(window.whitePendulum()->isVisible());
-    QVERIFY(gameControlBar->isAncestorOf(window.blackPendulum()));
-    QVERIFY(gameControlBar->isAncestorOf(window.whitePendulum()));
+
+    // Flipping the board swaps the strips: the white clock moves to the top.
+    QVERIFY(stripIsAboveBoard(whiteStrip));
+    QVERIFY(!stripIsAboveBoard(blackStrip));
+    QVERIFY(whiteStrip->isAncestorOf(window.whitePendulum()));
+    QVERIFY(blackStrip->isAncestorOf(window.blackPendulum()));
+    // The gauge follows the board so that it keeps reading like the board.
+    QVERIFY(window.evaluationBar()->isFlipped());
 
     window.flipBoardButton()->click();
     QVERIFY(!window.chessBoard()->boardFlipped());
@@ -545,6 +563,7 @@ void RulesTest::testFlipBoardButton() {
     QCoreApplication::processEvents();
     QVERIFY(window.blackPendulum()->isVisible());
     QVERIFY(window.whitePendulum()->isVisible());
+    QVERIFY(stripIsAboveBoard(blackStrip));
 }
 
 void RulesTest::testMovePreviews() {

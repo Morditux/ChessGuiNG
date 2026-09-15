@@ -21,6 +21,7 @@ class EvaluationBar;
 class GameController;
 class MoveListWidget;
 class PendulumWidget;
+class PlayerStrip;
 class QThread;
 class VisionWorker;
 class UciEngine;
@@ -28,6 +29,7 @@ class QAction;
 class QCheckBox;
 class QCloseEvent;
 class QEvent;
+class QHBoxLayout;
 class QKeyEvent;
 class QLabel;
 class QMimeData;
@@ -164,7 +166,16 @@ private:
                                  const QVector<PgnFile::GameSegment> &segments,
                                  int selectedGameIndex);
     void updateNavigationActions();
-    void setHistorySectionExpanded(int section, bool expanded);
+    void setHistorySectionExpanded(int section, bool expanded, bool persist = true);
+    // Collapses the PGN header box while it is empty and restores the stored
+    // preference once a game brings headers.
+    void updateGameInformationSection();
+    // Applies the board orientation to the player strips and to the evaluation
+    // gauge, which both read from the camp displayed at the bottom.
+    void applyBoardOrientation();
+    // Fills the strips from the controller: turn, names, material and clocks.
+    void refreshPlayerStrips();
+    [[nodiscard]] QString playerNameFor(Rules::Color color) const;
     void rememberExpandedHistorySizes();
     void setActivityMessage(const QString &message);
     [[nodiscard]] QString currentEngineName() const;
@@ -175,6 +186,8 @@ private:
 
     EvaluationBar *evaluationBar_ = nullptr;
     ChessBoard *board_ = nullptr;
+    PlayerStrip *whiteStrip_ = nullptr;
+    PlayerStrip *blackStrip_ = nullptr;
     PendulumWidget *whitePendulum_ = nullptr;
     PendulumWidget *blackPendulum_ = nullptr;
     MoveListWidget *moveListWidget_ = nullptr;
@@ -193,6 +206,11 @@ private:
     QCheckBox *highlightLastMoveCheckBox_ = nullptr;
     QToolButton *flipBoardButton_ = nullptr;
     QVBoxLayout *gaugeLayout_ = nullptr;
+    QVBoxLayout *boardPanelLayout_ = nullptr;
+    QHBoxLayout *activityBarLayout_ = nullptr;
+    // True once the user opened or closed the PGN header box themselves: the
+    // window then stops collapsing it while it is empty.
+    bool gameInformationTouched_ = false;
     QLabel *visionStatusLabel_ = nullptr;
     QNetworkAccessManager *networkManager_ = nullptr;
     QNetworkReply *remoteImageReply_ = nullptr;

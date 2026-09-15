@@ -20,6 +20,7 @@ private slots:
     void testVisibilityFlags();
     void testScoreText();
     void testRendering();
+    void testFlippedRendering();
 };
 
 void EvaluationBarTest::testDefaultValues() {
@@ -148,6 +149,35 @@ void EvaluationBarTest::testRendering() {
         bar.setScoreText(QString());
         bar.render(&pixmap);
     }
+}
+
+void EvaluationBarTest::testFlippedRendering() {
+    EvaluationBar bar;
+    bar.resize(bar.sizeHint().width(), 200);
+    bar.setValue(75.0);
+    QVERIFY(!bar.isFlipped());
+
+    // Upright the bottom of the bar is White's side, so White's majority sits
+    // below the boundary and the top of the bar is the smaller black section.
+    QPixmap upright(bar.size());
+    bar.render(&upright);
+    QCOMPARE(upright.toImage().pixelColor(bar.width() / 2, 20), bar.blackColor());
+
+    // Flipped, the camp at the bottom of the board is White, so the white
+    // section moves to the top and keeps the same size.
+    bar.setFlipped(true);
+    QVERIFY(bar.isFlipped());
+    QPixmap flipped(bar.size());
+    bar.render(&flipped);
+    QCOMPARE(flipped.toImage().pixelColor(bar.width() / 2, 20), bar.whiteColor());
+    QVERIFY(upright.toImage() != flipped.toImage());
+
+    // The score pill follows the section that holds the centre in both cases.
+    bar.setShowEvaluationText(true);
+    bar.setScoreText(QStringLiteral("+1.35"));
+    bar.render(&flipped);
+    bar.setValue(25.0);
+    bar.render(&flipped);
 }
 
 QTEST_MAIN(EvaluationBarTest)

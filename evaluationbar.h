@@ -19,6 +19,7 @@ class EvaluationBar : public QWidget {
     Q_PROPERTY(bool showCenterLine READ showCenterLine WRITE setShowCenterLine)
     Q_PROPERTY(bool showEvaluationText READ showEvaluationText WRITE setShowEvaluationText)
     Q_PROPERTY(QString scoreText READ scoreText WRITE setScoreText)
+    Q_PROPERTY(bool flipped READ isFlipped WRITE setFlipped)
 
 public:
     explicit EvaluationBar(QWidget *parent = nullptr);
@@ -47,6 +48,11 @@ public:
     [[nodiscard]] QString scoreText() const;
     void setScoreText(const QString &scoreText);
 
+    // Follows the board orientation: when flipped, the white section is drawn
+    // at the top so that the bar keeps reading like the board next to it.
+    [[nodiscard]] bool isFlipped() const;
+    void setFlipped(bool flipped);
+
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
 
@@ -69,6 +75,7 @@ private:
     bool showCenterLine_ = true;
     bool showEvaluationText_ = false;
     QString scoreText_;
+    bool flipped_ = false;
 
     void updateToolTip();
 };

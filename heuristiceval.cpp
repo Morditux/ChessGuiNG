@@ -171,19 +171,6 @@ constexpr int relativeSquare(Rules::Color color, int row, int column) {
     return rank * 8 + column;
 }
 
-constexpr int pieceValue(Rules::PieceType type) {
-    switch (type) {
-    case Rules::PieceType::Pawn:   return PawnValue;
-    case Rules::PieceType::Knight: return KnightValue;
-    case Rules::PieceType::Bishop: return BishopValue;
-    case Rules::PieceType::Rook:   return RookValue;
-    case Rules::PieceType::Queen:  return QueenValue;
-    case Rules::PieceType::King:
-    case Rules::PieceType::None:   return 0;
-    }
-    return 0;
-}
-
 constexpr const std::array<int, 64> *pieceSquareTable(Rules::PieceType type) {
     switch (type) {
     case Rules::PieceType::Pawn:   return &PawnPST;
@@ -456,7 +443,7 @@ int evaluateMaterialAndPlacement(const BoardAnalysis &analysis) {
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         const int sign = signFor(piece.color);
-        score += sign * pieceValue(piece.type);
+        score += sign * HeuristicEval::pieceValue(piece.type);
 
         const int square = relativeSquare(piece.color, piece.row, piece.column);
         if (piece.type == Rules::PieceType::King) {
@@ -613,6 +600,19 @@ bool isInsufficientMaterial(const BoardAnalysis &analysis) {
 }
 
 } // namespace
+
+int HeuristicEval::pieceValue(Rules::PieceType type) {
+    switch (type) {
+    case Rules::PieceType::Pawn:   return PawnValue;
+    case Rules::PieceType::Knight: return KnightValue;
+    case Rules::PieceType::Bishop: return BishopValue;
+    case Rules::PieceType::Rook:   return RookValue;
+    case Rules::PieceType::Queen:  return QueenValue;
+    case Rules::PieceType::King:
+    case Rules::PieceType::None:   return 0;
+    }
+    return 0;
+}
 
 int HeuristicEval::evaluateCentipawns(const Rules &rules) {
     // Only the side to move can legally be checkmated or stalemated.

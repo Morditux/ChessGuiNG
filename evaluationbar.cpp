@@ -116,6 +116,18 @@ void EvaluationBar::setScoreText(const QString &scoreText) {
     update();
 }
 
+bool EvaluationBar::isFlipped() const {
+    return flipped_;
+}
+
+void EvaluationBar::setFlipped(bool flipped) {
+    if (flipped_ == flipped) {
+        return;
+    }
+    flipped_ = flipped;
+    update();
+}
+
 QSize EvaluationBar::sizeHint() const {
     // Wide enough to hold a score such as "+1.35" at the default font size.
     return {38, 400};
@@ -157,22 +169,27 @@ void EvaluationBar::paintEvent(QPaintEvent *event) {
     painter.setClipPath(clipPath);
 
     // Value represents White's evaluation from 0 (all black) to 100 (all white).
-    // In standard chess layout, Black is at the top and White is at the bottom.
-    const qreal blackRatio = (100.0 - value_) / 100.0;
-    const qreal blackHeight = barHeight * blackRatio;
+    // The bottom of the bar belongs to the camp displayed at the bottom of the
+    // board: Black upright, White when the board is flipped.
+    const qreal whiteRatio = value_ / 100.0;
+    const qreal whiteHeight = barHeight * whiteRatio;
+    const qreal blackHeight = barHeight - whiteHeight;
+    const qreal topHeight = flipped_ ? whiteHeight : blackHeight;
+    const QColor topColor = flipped_ ? whiteColor_ : blackColor_;
+    const QColor bottomColor = flipped_ ? blackColor_ : whiteColor_;
 
-    // Top: Black section
-    if (blackHeight > 0.0) {
-        const QRectF blackRect(barRect.left(), barRect.top(), barRect.width(), blackHeight);
-        painter.fillRect(blackRect, blackColor_);
+    if (topHeight > 0.0) {
+        painter.fillRect(QRectF(barRect.left(), barRect.top(), barRect.width(),
+                                topHeight),
+                         topColor);
     }
 
-    // Bottom: White section
-    const qreal whiteHeight = barHeight - blackHeight;
-    if (whiteHeight > 0.0) {
-        const QRectF whiteRect(barRect.left(), barRect.top() + blackHeight, barRect.width(), whiteHeight);
-        painter.fillRect(whiteRect, whiteColor_);
+    if (topHeight < barHeight) {
+        const QRectF bottomRect(barRect.left(), barRect.top() + topHeight,
+                                barRect.width(), barHeight - topHeight);
+        painter.fillRect(bottomRect, bottomColor);
     }
+    const qreal boundaryOffset = topHeight;
 
     // Center indicator line (50% mark)
     if (showCenterLine_) {
@@ -185,8 +202,8 @@ void EvaluationBar::paintEvent(QPaintEvent *event) {
 
     // Boundary between the two sections: without it the white section can
     // vanish into a light window background.
-    if (blackHeight > 0.0 && whiteHeight > 0.0) {
-        const qreal boundaryY = barRect.top() + blackHeight;
+    if (topHeight > 0.0 && topHeight < barHeight) {
+        const qreal boundaryY = barRect.top() + boundaryOffset;
         painter.setPen(QPen(borderColor_, 1.0));
         painter.drawLine(QPointF(barRect.left(), boundaryY),
                          QPointF(barRect.right(), boundaryY));

@@ -25,6 +25,11 @@ public:
 
     // Converts a centipawn score to a display percentage in [0.0, 100.0].
     [[nodiscard]] static double centipawnsToPercentage(double cp);
+
+    // Classical piece value in centipawns, shared with the UI so that the
+    // material balance it displays cannot drift from the evaluation. Kings
+    // and empty squares are worth nothing.
+    [[nodiscard]] static int pieceValue(Rules::PieceType type);
 };
 
 #endif // CHESSGUI_HEURISTIC_EVAL_H

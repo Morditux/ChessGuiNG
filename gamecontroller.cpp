@@ -729,6 +729,29 @@ QString GameController::pgnHeaderText() const {
     return text + pgnHeaders_.join(QChar('\n'));
 }
 
+int GameController::materialBalance(Rules::Color color) const {
+    int white = 0;
+    int black = 0;
+
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const std::optional<Rules::Piece> piece = rules_.pieceAt({row, column});
+            if (!piece.has_value()) {
+                continue;
+            }
+
+            const int value = HeuristicEval::pieceValue(piece->type);
+            if (piece->color == Rules::Color::White) {
+                white += value;
+            } else {
+                black += value;
+            }
+        }
+    }
+
+    return color == Rules::Color::White ? white - black : black - white;
+}
+
 QString GameController::formattedCommentAt(int ply) const {
     if (ply < 0 || ply >= plyAnnotations_.size()) {
         return QString();

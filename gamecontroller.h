@@ -124,6 +124,10 @@ public:
     [[nodiscard]] QStringList pgnMoves() const;
     [[nodiscard]] QString pgnHeaderText() const;
     [[nodiscard]] QString pgnText() const;
+    // Material difference in centipawns from the given colour's point of view,
+    // positive when that colour has more material on the board; kings are
+    // ignored. Used by the UI to report each player's material balance.
+    [[nodiscard]] int materialBalance(Rules::Color color) const;
     [[nodiscard]] bool isComputerGameActive() const;
     [[nodiscard]] bool isComputerGamePending() const;
     [[nodiscard]] bool isComputerMovePreviewEnabled() const;

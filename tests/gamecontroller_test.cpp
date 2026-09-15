@@ -124,6 +124,7 @@ private slots:
     void testInitialState();
     void testLoadFen();
     void testEvaluationScore();
+    void testMaterialBalance();
     void testNewGame();
     void testLoadPgn();
     void testRequestMove();
@@ -994,6 +995,24 @@ void GameControllerTest::testDrawClaims() {
     QVERIFY(!controller.canClaimDraw());
     controller.claimDraw();
     QCOMPARE(finishedSpy.count(), 2);
+}
+
+void GameControllerTest::testMaterialBalance() {
+    GameController controller;
+
+    // The initial position is balanced.
+    QCOMPARE(controller.materialBalance(Rules::Color::White), 0);
+    QCOMPARE(controller.materialBalance(Rules::Color::Black), 0);
+
+    // 1. e4 e5 2. Nf3 Nc6 3. Nxe5, leaving White a pawn up.
+    QVERIFY(controller.requestMove({6, 4}, {4, 4}));
+    QVERIFY(controller.requestMove({1, 4}, {3, 4}));
+    QVERIFY(controller.requestMove({7, 6}, {5, 5}));
+    QVERIFY(controller.requestMove({0, 1}, {2, 2}));
+    QVERIFY(controller.requestMove({5, 5}, {3, 4}));
+
+    QCOMPARE(controller.materialBalance(Rules::Color::White), 100);
+    QCOMPARE(controller.materialBalance(Rules::Color::Black), -100);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

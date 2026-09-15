@@ -174,6 +174,8 @@ add_library(chessui OBJECT
         movelistwidget.h
         pendulumwidget.cpp
         pendulumwidget.h
+        playerstrip.cpp
+        playerstrip.h
 )
 target_sources(chessui PRIVATE ${chessui_resources})
 target_include_directories(chessui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -346,6 +348,12 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(PendulumWidgetTest PRIVATE chessui chesscore Qt6::Test)
     add_test(NAME PendulumWidgetTest COMMAND PendulumWidgetTest)
+
+    qt_add_executable(PlayerStripTest
+            tests/playerstrip_test.cpp
+    )
+    target_link_libraries(PlayerStripTest PRIVATE chessui chesscore Qt6::Test)
+    add_test(NAME PlayerStripTest COMMAND PlayerStripTest)
 
     qt_add_executable(MoveListWidgetTest
             tests/movelistwidget_test.cpp

@@ -132,6 +132,11 @@ void AppConfigTest::testHistorySections() {
     MainWindow restored(nullptr, path);
     restored.show();
     QVERIFY(QTest::qWaitForWindowExposed(&restored));
+    // The PGN header box stays collapsed while it has nothing to show; the
+    // stored preference is applied as soon as a game brings headers.
+    QVERIFY(!restored.pgnHeaderTextEdit()->isVisible());
+    QVERIFY(restored.loadPgnContent(QStringLiteral(
+        "[White \"Ada\"]\n[Black \"Grace\"]\n\n1. e4 e5 *")));
     QVERIFY(restored.pgnHeaderTextEdit()->isVisible());
     QVERIFY(restored.messageLogTextEdit()->isVisible());
 }

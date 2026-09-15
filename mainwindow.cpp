@@ -13,6 +13,7 @@
 #include "gatewayclient.h"
 #include "movelistwidget.h"
 #include "pendulumwidget.h"
+#include "playerstrip.h"
 #include "pgnfile.h"
 #include "pgnselectdialog.h"
 #include "promotiondialog.h"
@@ -128,6 +129,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
         updateNavigationActions();
         refreshAuditUi();
+        refreshPlayerStrips();
     });
     connect(gameController_, &GameController::annotationsChanged, this, [this] {
         board_->setUserArrows(gameController_->arrowsAtCursor());
@@ -146,6 +148,8 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         }
         moveListWidget_->setAuditAnnotations(annotations);
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
+        refreshPlayerStrips();
+        updateGameInformationSection();
     });
     connect(moveListWidget_, &MoveListWidget::moveSelected, this, [this](int plyIndex) {
         gameController_->goToMove(plyIndex);
@@ -231,6 +235,8 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
 
     loadConfiguration(configFilePath);
     refreshEngineStateUi();
+    refreshPlayerStrips();
+    updateGameInformationSection();
 
     connect(uciEngine(), &UciEngine::stateChanged,
             this, [this](UciEngine::State) {
@@ -538,7 +544,7 @@ void MainWindow::rememberExpandedHistorySizes() {
     config_.setRightSplitterExpandedSizes(expandedSizes);
 }
 
-void MainWindow::setHistorySectionExpanded(int section, bool expanded) {
+void MainWindow::setHistorySectionExpanded(int section, bool expanded, bool persist) {
     rememberExpandedHistorySizes();
     auto sizes = rightSplitter_->sizes();
     const int previousSize = sizes.at(section);
@@ -552,8 +558,34 @@ void MainWindow::setHistorySectionExpanded(int section, bool expanded) {
                               : button->sizeHint().height();
     sizes[1] = qMax(1, sizes.at(1) + previousSize - sizes.at(section));
     rightSplitter_->setSizes(sizes);
+
+    if (!persist) {
+        // The window changed the section on its own; the stored preference
+        // must survive so it can be restored once there is content again.
+        return;
+    }
+
     config_.setGameInformationExpanded(gameInformationButton_->isChecked());
     config_.setMessageLogExpanded(messageLogButton_->isChecked());
+}
+
+void MainWindow::updateGameInformationSection() {
+    if (gameInformationTouched_ || !gameInformationButton_ || !rightSplitter_) {
+        return;
+    }
+
+    // An empty "Game information" box shows nothing while costing a quarter of
+    // the window height: keep it collapsed until the PGN carries headers, then
+    // restore the preference the user saved.
+    const bool hasHeaders = !gameController_->pgnHeaderText().trimmed().isEmpty();
+    const bool expanded = hasHeaders && config_.gameInformationExpanded();
+    if (gameInformationButton_->isChecked() == expanded) {
+        return;
+    }
+
+    const QSignalBlocker blocker(gameInformationButton_);
+    gameInformationButton_->setChecked(expanded);
+    setHistorySectionExpanded(0, expanded, false);
 }
 
 void MainWindow::saveConfiguration() {
@@ -962,6 +994,58 @@ void MainWindow::syncEvaluationBarGeometry() {
 
     gaugeLayout_->setContentsMargins(
         0, squares.top(), 0, qMax(0, board_->height() - squares.bottom() - 1));
+}
+
+void MainWindow::applyBoardOrientation() {
+    if (!board_) {
+        return;
+    }
+
+    // The strip shown above the board always belongs to the camp displayed on
+    // that edge, so flipping the board swaps the two strips and their clocks.
+    // Both strips span the full board width, which keeps their clocks aligned.
+    if (boardPanelLayout_ && whiteStrip_ && blackStrip_) {
+        QWidget *top = board_->boardFlipped() ? whiteStrip_ : blackStrip_;
+        QWidget *bottom = board_->boardFlipped() ? blackStrip_ : whiteStrip_;
+
+        boardPanelLayout_->removeWidget(top);
+        boardPanelLayout_->removeWidget(bottom);
+        boardPanelLayout_->insertWidget(0, top);
+        boardPanelLayout_->addWidget(bottom);
+    }
+
+    // The gauge reads like the board next to it: its bottom section is the
+    // camp displayed at the bottom of the board.
+    if (evaluationBar_) {
+        evaluationBar_->setFlipped(board_->boardFlipped());
+    }
+}
+
+QString MainWindow::playerNameFor(Rules::Color color) const {
+    const QString tag = color == Rules::Color::White ? QStringLiteral("White")
+                                                     : QStringLiteral("Black");
+    // An empty tag falls back to the colour of the strip.
+    return PgnFile::tagValue(gameController_->pgnHeaderText(), tag);
+}
+
+void MainWindow::refreshPlayerStrips() {
+    if (!whiteStrip_ || !blackStrip_) {
+        return;
+    }
+
+    const Rules::Color toMove = gameController_->rules().currentPlayer();
+    whiteStrip_->setActive(toMove == Rules::Color::White);
+    blackStrip_->setActive(toMove == Rules::Color::Black);
+
+    // Shown in whole pawns, so that a bishop for a knight does not read as a
+    // fraction of a pawn. Only the leading side carries the value.
+    const int balance =
+        qRound(gameController_->materialBalance(Rules::Color::White) / 100.0);
+    whiteStrip_->setMaterialDifference(balance);
+    blackStrip_->setMaterialDifference(-balance);
+
+    whiteStrip_->setPlayerName(playerNameFor(Rules::Color::White));
+    blackStrip_->setPlayerName(playerNameFor(Rules::Color::Black));
 }
 
 void MainWindow::onVisionResult(const VisionResult &result) {
@@ -1984,6 +2068,22 @@ void MainWindow::setupUi() {
     layout->addWidget(menubar, 0, 0);
     layout->addWidget(toolBar, 1, 0);
 
+    // Window-wide status line: activity messages and engine feedback stay
+    // readable instead of being elided between the two clocks.
+    auto *activityBar = new QFrame(this);
+    activityBar->setObjectName(QStringLiteral("activityStatusBar"));
+    activityBar->setFrameShape(QFrame::StyledPanel);
+    auto *activityLayout = new QHBoxLayout(activityBar);
+    activityLayout->setContentsMargins(6, 2, 6, 2);
+    activityLayout->setSpacing(6);
+    activityBarLayout_ = activityLayout;
+    visionStatusLabel_ = new QLabel(activityBar);
+    visionStatusLabel_->setObjectName(QStringLiteral("activityStatusLabel"));
+    visionStatusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    visionStatusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    activityLayout->addWidget(visionStatusLabel_, 1);
+    layout->addWidget(activityBar, 3, 0);
+
     // Main vertical splitter: splits top area (board + move history) and bottom area (engine output)
     mainSplitter_ = new QSplitter(Qt::Vertical, this);
     layout->addWidget(mainSplitter_, 2, 0);
@@ -2029,10 +2129,15 @@ void MainWindow::setupUi() {
     boardRowLayout->addWidget(gaugeColumn);
     boardRowLayout->addWidget(board_, 1);
 
-    blackPendulum_ = new PendulumWidget(PendulumWidget::PieceColor::Black,
-                                        boardPanel);
-    whitePendulum_ = new PendulumWidget(PendulumWidget::PieceColor::White,
-                                        boardPanel);
+    // One strip per player, shown above and below the board. The strips swap
+    // with the board orientation so that a clock always belongs to the side
+    // displayed on that edge.
+    blackStrip_ = new PlayerStrip(PendulumWidget::PieceColor::Black, boardPanel);
+    blackStrip_->setObjectName(QStringLiteral("blackPlayerStrip"));
+    whiteStrip_ = new PlayerStrip(PendulumWidget::PieceColor::White, boardPanel);
+    whiteStrip_->setObjectName(QStringLiteral("whitePlayerStrip"));
+    blackPendulum_ = blackStrip_->clock();
+    whitePendulum_ = whiteStrip_->clock();
 
     connect(whitePendulum_, &PendulumWidget::remainingMillisecondsChanged,
             this, [this](qint64 remaining) {
@@ -2051,42 +2156,9 @@ void MainWindow::setupUi() {
                 }
             });
 
-    auto *gameControlBar = new QFrame(boardPanel);
-    gameControlBar->setObjectName(QStringLiteral("gameControlBar"));
-    gameControlBar->setFrameShape(QFrame::StyledPanel);
-    gameControlBar->setFrameShadow(QFrame::Raised);
-    gameControlBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    auto *gameControlLayout = new QHBoxLayout(gameControlBar);
-    gameControlLayout->setContentsMargins(4, 2, 4, 2);
-    gameControlLayout->setSpacing(6);
-
-    const auto addClock = [gameControlBar, gameControlLayout](
-                              const QString &label,
-                              PendulumWidget *pendulum,
-                              const QString &objectName) {
-        auto *clockContainer = new QWidget(gameControlBar);
-        clockContainer->setObjectName(objectName);
-        auto *clockLayout = new QHBoxLayout(clockContainer);
-        clockLayout->setContentsMargins(0, 0, 0, 0);
-        clockLayout->setSpacing(3);
-        auto *clockLabel = new QLabel(label, clockContainer);
-        clockLabel->setBuddy(pendulum);
-        clockLayout->addWidget(clockLabel);
-        clockLayout->addWidget(pendulum);
-        gameControlLayout->addWidget(clockContainer);
-    };
-
-    addClock(tr("Black"), blackPendulum_, QStringLiteral("blackClockControl"));
-    addClock(tr("White"), whitePendulum_, QStringLiteral("whiteClockControl"));
-
-    visionStatusLabel_ = new QLabel(gameControlBar);
-    visionStatusLabel_->setObjectName(QStringLiteral("activityStatusLabel"));
-    visionStatusLabel_->setWordWrap(false);
-    visionStatusLabel_->setMinimumWidth(0);
-    visionStatusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    gameControlLayout->addWidget(visionStatusLabel_, 1);
-
-    flipBoardButton_ = new QToolButton(gameControlBar);
+    // The tools that act on the board live in the window status line, so both
+    // player strips keep the same width and their clocks stay aligned.
+    flipBoardButton_ = new QToolButton(this);
     flipBoardButton_->setText(tr("Flip board"));
     flipBoardButton_->setIcon(QIcon(QStringLiteral(":/icons/flip-board.svg")));
     flipBoardButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -2096,9 +2168,9 @@ void MainWindow::setupUi() {
     flipBoardButton_->setAccessibleName(tr("Flip board orientation"));
     flipBoardButton_->setAccessibleDescription(
         tr("Display the chessboard from the opposite side"));
-    gameControlLayout->addWidget(flipBoardButton_);
+    activityBarLayout_->addWidget(flipBoardButton_);
 
-    auto *positionToolsButton = new QToolButton(gameControlBar);
+    auto *positionToolsButton = new QToolButton(this);
     positionToolsButton->setObjectName(QStringLiteral("positionToolsButton"));
     positionToolsButton->setText(tr("Position tools"));
     positionToolsButton->setIcon(
@@ -2118,7 +2190,7 @@ void MainWindow::setupUi() {
     positionToolsMenu->setAccessibleDescription(
         tr("Position and move preview settings"));
     positionToolsButton->setMenu(positionToolsMenu);
-    gameControlLayout->addWidget(positionToolsButton);
+    activityBarLayout_->addWidget(positionToolsButton);
 
     whiteToPlayCheckBox_ = new QCheckBox(tr("White to play"), positionToolsMenu);
     whiteToPlayCheckBox_->setChecked(true);
@@ -2168,9 +2240,13 @@ void MainWindow::setupUi() {
             board_, &ChessBoard::setBoardFlipped);
     connect(board_, &ChessBoard::boardFlippedChanged,
             flipBoardButton_, &QToolButton::setChecked);
+    connect(board_, &ChessBoard::boardFlippedChanged, this, [this](bool) {
+        applyBoardOrientation();
+    });
 
-    boardPanelLayout->addWidget(gameControlBar);
+    boardPanelLayout_ = boardPanelLayout;
     boardPanelLayout->addWidget(boardRow, 1);
+    applyBoardOrientation();
 
     boardLayout->addWidget(boardPanel, 1);
 
@@ -2234,6 +2310,7 @@ void MainWindow::setupUi() {
     addHistorySection(tr("Log"), QStringLiteral("messageLogButton"),
                       messageLogButton_, messageLog_);
     connect(gameInformationButton_, &QToolButton::toggled, this, [this](bool expanded) {
+        gameInformationTouched_ = true;
         setHistorySectionExpanded(0, expanded);
     });
     connect(messageLogButton_, &QToolButton::toggled, this, [this](bool expanded) {
