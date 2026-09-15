@@ -15,6 +15,7 @@
 #include "gamecontroller.h"
 #include "gatewayclient.h"
 #include "uciengine.h"
+#include "uciparser.h"
 
 namespace {
 
@@ -124,6 +125,8 @@ private slots:
     void testInitialState();
     void testLoadFen();
     void testEvaluationScore();
+    void testEvaluationCurve();
+    void testEngineRefinesCurve();
     void testMaterialBalance();
     void testNewGame();
     void testLoadPgn();
@@ -1013,6 +1016,52 @@ void GameControllerTest::testMaterialBalance() {
 
     QCOMPARE(controller.materialBalance(Rules::Color::White), 100);
     QCOMPARE(controller.materialBalance(Rules::Color::Black), -100);
+}
+
+void GameControllerTest::testEvaluationCurve() {
+    GameController controller;
+    QSignalSpy curveSpy(&controller, &GameController::evaluationCurveChanged);
+
+    // The curve always describes the starting position.
+    QCOMPARE(controller.evaluationCurve().size(), 1);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4}));
+    QCOMPARE(controller.evaluationCurve().size(), 2);
+    QVERIFY(controller.requestMove({1, 4}, {3, 4}));
+    QCOMPARE(controller.evaluationCurve().size(), 3);
+    QVERIFY(curveSpy.count() >= 2);
+
+    for (const double value : controller.evaluationCurve()) {
+        QVERIFY(value >= 0.0 && value <= 100.0);
+    }
+
+    // Playing from the middle discards the abandoned line with its points.
+    QVERIFY(controller.goToMove(1));
+    QVERIFY(controller.requestMove({0, 1}, {2, 2}));
+    QCOMPARE(controller.evaluationCurve().size(), 3);
+
+    // Loading a game rebuilds the whole curve for the replayed moves.
+    QVERIFY(controller.loadPgn(QStringLiteral("1. e4 e5 2. Nf3 Nc6 3. Bb5 *")));
+    QCOMPARE(controller.evaluationCurve().size(), 6);
+}
+
+void GameControllerTest::testEngineRefinesCurve() {
+    const QString scriptPath =
+        writeMockEngineScript(QStringLiteral("mock_curve_engine.sh"));
+    GameController controller;
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+    QVERIFY(controller.requestMove({6, 4}, {4, 4}));
+    QCOMPARE(controller.evaluationCurve().size(), 2);
+
+    // The mock engine reports 20 centipawns for the side to move, which is
+    // Black here: the point for the current ply becomes the engine score.
+    QSignalSpy curveSpy(&controller, &GameController::evaluationCurveChanged);
+    controller.startAnalysis();
+    QTRY_VERIFY_WITH_TIMEOUT(curveSpy.count() >= 1, 2000);
+    QCOMPARE(controller.evaluationCurve().last(),
+             UciParser::scoreToWinningPercentage(-20.0));
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

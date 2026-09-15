@@ -128,6 +128,12 @@ public:
     // positive when that colour has more material on the board; kings are
     // ignored. Used by the UI to report each player's material balance.
     [[nodiscard]] int materialBalance(Rules::Color color) const;
+
+    // White's display percentage (0-100) after each ply of the game, index 0
+    // being the starting position: the same unit as evaluationChanged, so the
+    // curve and the evaluation bar cannot disagree. Computed with the
+    // heuristic evaluator and refined ply by ply while a game audit runs.
+    [[nodiscard]] QVector<double> evaluationCurve() const;
     [[nodiscard]] bool isComputerGameActive() const;
     [[nodiscard]] bool isComputerGamePending() const;
     [[nodiscard]] bool isComputerMovePreviewEnabled() const;
@@ -160,6 +166,8 @@ signals:
     // "-M3"), so the UI can show a number next to the bar. Emitted from the
     // heuristic evaluator when no engine reports a score.
     void evaluationScoreChanged(const QString &scoreText);
+    // Emitted whenever the whole-game curve gains or loses a point.
+    void evaluationCurveChanged();
     void statusMessage(const QString &message);
     void computerTurnBegan();
     void humanTurnBegan();
@@ -177,6 +185,12 @@ signals:
 
 private:
     void sendPositionToEngine();
+    // Recomputes the whole-game curve with the heuristic evaluator. Used when
+    // the game changes as a whole, while a single move only appends a point.
+    void rebuildEvaluationCurve();
+    // Colour to move at the given ply of the current game, which decides the
+    // point of view of an engine score reported for that position.
+    [[nodiscard]] Rules::Color sideToMoveAtPly(int ply) const;
     void ensureRemoteEngine();
     void handleEngineStateChanged();
     void startEngineAnalysis();
@@ -257,6 +271,8 @@ private:
     QStringList auditBestMoves_;
     std::optional<EngineAnalysisLine> auditLatestLine_;
     QVector<AuditFinding> auditFindings_;
+    // One display percentage for White per ply, starting position included.
+    QVector<double> evaluationCurve_;
 };
 
 #endif // CHESSGUI_GAMECONTROLLER_H

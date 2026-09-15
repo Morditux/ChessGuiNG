@@ -9,6 +9,7 @@
 #include "engineconfigurationdialog.h"
 #include "engineoutputwidget.h"
 #include "evaluationbar.h"
+#include "evaluationgraph.h"
 #include "gamecontroller.h"
 #include "gatewayclient.h"
 #include "movelistwidget.h"
@@ -127,6 +128,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             gameController_->rules().currentPlayer() == Rules::Color::White);
         moveListWidget_->setCurrentMove(gameController_->moveCursor());
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
+        evaluationGraph_->setCurrentPly(gameController_->moveCursor());
         updateNavigationActions();
         refreshAuditUi();
         refreshPlayerStrips();
@@ -141,15 +143,19 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         pgnHeaderTextEdit_->setPlainText(gameController_->pgnHeaderText());
         moveListWidget_->setPgn(gameController_->pgnMoves(),
                                 gameController_->moveCursor());
-        QVector<AuditAnnotation> annotations;
-        annotations.reserve(gameController_->uciMoves().size() + 1);
-        for (int ply = 0; ply <= gameController_->uciMoves().size(); ++ply) {
-            annotations.append(gameController_->auditAt(ply));
-        }
+        QVector<AuditAnnotation> annotations = auditAnnotationsByPly();
         moveListWidget_->setAuditAnnotations(annotations);
+        evaluationGraph_->setAuditAnnotations(annotations);
+        evaluationGraph_->setCurrentPly(gameController_->moveCursor());
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
         refreshPlayerStrips();
         updateGameInformationSection();
+    });
+    connect(gameController_, &GameController::evaluationCurveChanged, this, [this] {
+        evaluationGraph_->setEvaluations(gameController_->evaluationCurve());
+    });
+    connect(evaluationGraph_, &EvaluationGraph::plySelected, this, [this](int ply) {
+        gameController_->goToMove(ply);
     });
     connect(moveListWidget_, &MoveListWidget::moveSelected, this, [this](int plyIndex) {
         gameController_->goToMove(plyIndex);
@@ -236,6 +242,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
     loadConfiguration(configFilePath);
     refreshEngineStateUi();
     refreshPlayerStrips();
+    refreshEvaluationGraph();
     updateGameInformationSection();
 
     connect(uciEngine(), &UciEngine::stateChanged,
@@ -1021,6 +1028,38 @@ void MainWindow::applyBoardOrientation() {
     }
 }
 
+void MainWindow::refreshEvaluationGraph() {
+    if (!evaluationGraph_) {
+        return;
+    }
+
+    evaluationGraph_->setEvaluations(gameController_->evaluationCurve());
+    evaluationGraph_->setCurrentPly(gameController_->moveCursor());
+    evaluationGraph_->setAuditAnnotations(auditAnnotationsByPly());
+}
+
+void MainWindow::updateEvaluationGraphVisibility() {
+    if (!evaluationGraph_ || !moveListWidget_ || !movesSection_) {
+        return;
+    }
+
+    // The curve must never take room from the move list: on a short panel it
+    // is hidden rather than leaving the list without a single visible move.
+    const int needed = evaluationGraph_->sizeHint().height() +
+                       moveListWidget_->fontMetrics().height() * 4;
+    evaluationGraph_->setVisible(movesSection_->height() >= needed);
+}
+
+QVector<AuditAnnotation> MainWindow::auditAnnotationsByPly() const {
+    QVector<AuditAnnotation> annotations;
+    const int plies = gameController_->uciMoves().size();
+    annotations.reserve(plies + 1);
+    for (int ply = 0; ply <= plies; ++ply) {
+        annotations.append(gameController_->auditAt(ply));
+    }
+    return annotations;
+}
+
 QString MainWindow::playerNameFor(Rules::Color color) const {
     const QString tag = color == Rules::Color::White ? QStringLiteral("White")
                                                      : QStringLiteral("Black");
@@ -1105,6 +1144,10 @@ void MainWindow::onVisionResult(const VisionResult &result) {
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     if (watched == board_ && event->type() == QEvent::Resize) {
         syncEvaluationBarGeometry();
+    }
+
+    if (watched == movesSection_ && event->type() == QEvent::Resize) {
+        updateEvaluationGraphVisibility();
     }
 
     if (event->type() == QEvent::DragEnter ||
@@ -2303,8 +2346,12 @@ void MainWindow::setupUi() {
     currentMoveLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     navigation->addWidget(currentMoveLabel_, 1);
     movesLayout->addLayout(navigation);
+    evaluationGraph_ = new EvaluationGraph(movesSection);
+    movesLayout->addWidget(evaluationGraph_);
     moveListWidget_ = new MoveListWidget(movesSection);
     movesLayout->addWidget(moveListWidget_, 1);
+    movesSection_ = movesSection;
+    movesSection->installEventFilter(this);
     rightSplitter_->addWidget(movesSection);
 
     addHistorySection(tr("Log"), QStringLiteral("messageLogButton"),

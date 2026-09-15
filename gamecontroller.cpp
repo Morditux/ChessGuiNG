@@ -25,6 +25,7 @@ GameController::GameController(QObject *parent)
     , engine_(new UciEngine(this))
     , gateway_(new ChessGatewayClient(this)) {
     plyAnnotations_.resize(1);
+    rebuildEvaluationCurve();
     connect(engine_, &EngineBackend::stateChanged,
             this, [this](EngineBackend::State) { handleEngineStateChanged(); });
     connect(engine_, &EngineBackend::analysisUpdated,
@@ -195,6 +196,7 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
     whiteToMove_ = (rules_.currentPlayer() == Rules::Color::White);
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
+    rebuildEvaluationCurve();
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -230,6 +232,7 @@ void GameController::newGame() {
     whiteToMove_ = true;
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
+    rebuildEvaluationCurve();
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -293,6 +296,7 @@ bool GameController::loadPgn(const QString &pgnContent) {
         if (audit.isValid()) auditFindings_.append({audit.severity, ply, audit.centipawnLoss,
                                                     audit.bestMove, audit.forcedMate});
     }
+    rebuildEvaluationCurve();
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -752,6 +756,44 @@ int GameController::materialBalance(Rules::Color color) const {
     return color == Rules::Color::White ? white - black : black - white;
 }
 
+QVector<double> GameController::evaluationCurve() const {
+    return evaluationCurve_;
+}
+
+Rules::Color GameController::sideToMoveAtPly(int ply) const {
+    bool initialWhite = true;
+    if (!initialFen_.isEmpty()) {
+        const QStringList fields = initialFen_.split(QChar(' '), Qt::SkipEmptyParts);
+        if (fields.size() >= 2) {
+            initialWhite = fields.at(1) != QStringLiteral("b");
+        }
+    }
+
+    const bool white = initialWhite == (ply % 2 == 0);
+    return white ? Rules::Color::White : Rules::Color::Black;
+}
+
+void GameController::rebuildEvaluationCurve() {
+    evaluationCurve_.clear();
+    evaluationCurve_.reserve(uciMoves_.size() + 1);
+
+    Rules replay;
+    if (initialFen_.isEmpty() || !replay.loadFen(initialFen_)) {
+        replay.reset();
+    }
+
+    evaluationCurve_.append(HeuristicEval::evaluateDisplayPercentage(replay));
+    for (const QString &uci : std::as_const(uciMoves_)) {
+        const auto move = parseUciMove(uci);
+        if (!move.has_value() || !replay.tryMove(*move)) {
+            break;
+        }
+        evaluationCurve_.append(HeuristicEval::evaluateDisplayPercentage(replay));
+    }
+
+    emit evaluationCurveChanged();
+}
+
 QString GameController::formattedCommentAt(int ply) const {
     if (ply < 0 || ply >= plyAnnotations_.size()) {
         return QString();
@@ -1162,6 +1204,17 @@ void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
         emit evaluationChanged(winPct);
         emit evaluationScoreChanged(
             UciParser::formatScore(whiteScoreCp, mateForWhite));
+
+        // Outside the audit the engine is analysing the position at the
+        // cursor, so the curve takes the engine score for that ply: wherever
+        // the engine has looked, the curve and the evaluation bar agree.
+        // During an audit the lines belong to another position.
+        if (!auditActive_ && moveCursor_ >= 0 &&
+            moveCursor_ < evaluationCurve_.size() &&
+            evaluationCurve_.at(moveCursor_) != winPct) {
+            evaluationCurve_[moveCursor_] = winPct;
+            emit evaluationCurveChanged();
+        }
     }
 }
 
@@ -1177,6 +1230,23 @@ void GameController::onAuditBestMove(const QString &bestMove, const QString &pon
     auditScores_[auditPosition_] = {auditLatestLine_->scoreCp, auditLatestLine_->mateIn};
     const QStringList pv = auditLatestLine_->pv.split(QChar(' '), Qt::SkipEmptyParts);
     auditBestMoves_[auditPosition_] = pv.isEmpty() ? bestMove : pv.first();
+
+    // The curve sharpens as the audit walks the main line: the engine score
+    // replaces the heuristic one for the position just analysed.
+    if (auditPosition_ < evaluationCurve_.size() &&
+        (auditLatestLine_->scoreCp.has_value() || auditLatestLine_->mateIn.has_value())) {
+        const bool whiteToMoveHere =
+            sideToMoveAtPly(auditPosition_) == Rules::Color::White;
+        const double centipawns = auditLatestLine_->scoreCp.value_or(0.0);
+        std::optional<int> mateForWhite = auditLatestLine_->mateIn;
+        if (mateForWhite.has_value() && !whiteToMoveHere) {
+            mateForWhite = -(*mateForWhite);
+        }
+        evaluationCurve_[auditPosition_] = UciParser::scoreToWinningPercentage(
+            whiteToMoveHere ? centipawns : -centipawns, mateForWhite);
+        emit evaluationCurveChanged();
+    }
+
     ++auditPosition_;
     emit auditProgressChanged(auditPosition_, auditScores_.size());
     emit statusMessage(tr("Analyzing game: %1 of %2 positions.").arg(auditPosition_).arg(auditScores_.size()));
@@ -1282,6 +1352,9 @@ bool GameController::recordMove(const Rules::Move &move) {
         if (plyAnnotations_.size() > moveCursor_ + 1) {
             plyAnnotations_.resize(moveCursor_ + 1);
         }
+        if (evaluationCurve_.size() > moveCursor_ + 1) {
+            evaluationCurve_.resize(moveCursor_ + 1);
+        }
         rebuildPgnHistory();
     }
 
@@ -1289,6 +1362,11 @@ bool GameController::recordMove(const Rules::Move &move) {
     plyAnnotations_.append(PlyAnnotations{});
     appendPgnMove(san, movingColor);
     ++moveCursor_;
+
+    // The game only grows by one ply here, so the curve is appended rather
+    // than rebuilt.
+    evaluationCurve_.append(HeuristicEval::evaluateDisplayPercentage(rules_));
+    emit evaluationCurveChanged();
 
     refreshMoveHistory();
     updateEvaluation();

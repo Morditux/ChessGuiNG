@@ -11,6 +11,7 @@
 #include <QWidget>
 
 #include "appconfig.h"
+#include "pgnannotations.h"
 #include "pgnfile.h"
 #include "rules.h"
 
@@ -18,6 +19,7 @@ class ChessBoard;
 class ChessGatewayClient;
 class EngineOutputWidget;
 class EvaluationBar;
+class EvaluationGraph;
 class GameController;
 class MoveListWidget;
 class PendulumWidget;
@@ -175,6 +177,12 @@ private:
     void applyBoardOrientation();
     // Fills the strips from the controller: turn, names, material and clocks.
     void refreshPlayerStrips();
+    // Fills the whole-game curve, its cursor and the audit markers.
+    void refreshEvaluationGraph();
+    // Hides the curve when the move panel is too short to keep both usable.
+    void updateEvaluationGraphVisibility();
+    // One annotation per ply, shared by the move list and the graph.
+    [[nodiscard]] QVector<AuditAnnotation> auditAnnotationsByPly() const;
     [[nodiscard]] QString playerNameFor(Rules::Color color) const;
     void rememberExpandedHistorySizes();
     void setActivityMessage(const QString &message);
@@ -185,12 +193,14 @@ private:
     QString uciEnginePath_;
 
     EvaluationBar *evaluationBar_ = nullptr;
+    EvaluationGraph *evaluationGraph_ = nullptr;
     ChessBoard *board_ = nullptr;
     PlayerStrip *whiteStrip_ = nullptr;
     PlayerStrip *blackStrip_ = nullptr;
     PendulumWidget *whitePendulum_ = nullptr;
     PendulumWidget *blackPendulum_ = nullptr;
     MoveListWidget *moveListWidget_ = nullptr;
+    QWidget *movesSection_ = nullptr;
     QTextEdit *pgnHeaderTextEdit_ = nullptr;
     QTextEdit *messageLog_ = nullptr;
     QToolButton *gameInformationButton_ = nullptr;

@@ -170,6 +170,8 @@ add_library(chessui OBJECT
         engineoutputwidget.h
         evaluationbar.cpp
         evaluationbar.h
+        evaluationgraph.cpp
+        evaluationgraph.h
         movelistwidget.cpp
         movelistwidget.h
         pendulumwidget.cpp
@@ -354,6 +356,12 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(PlayerStripTest PRIVATE chessui chesscore Qt6::Test)
     add_test(NAME PlayerStripTest COMMAND PlayerStripTest)
+
+    qt_add_executable(EvaluationGraphTest
+            tests/evaluationgraph_test.cpp
+    )
+    target_link_libraries(EvaluationGraphTest PRIVATE chessui chesscore Qt6::Test)
+    add_test(NAME EvaluationGraphTest COMMAND EvaluationGraphTest)
 
     qt_add_executable(MoveListWidgetTest
             tests/movelistwidget_test.cpp
