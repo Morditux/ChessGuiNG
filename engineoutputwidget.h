@@ -14,6 +14,7 @@ class QFrame;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
+class QSpinBox;
 class QStackedWidget;
 class QTableWidget;
 class QToolButton;
@@ -47,6 +48,13 @@ public:
     [[nodiscard]] QPushButton *pauseButton() const;
     [[nodiscard]] QPushButton *stopButton() const;
 
+    // Analysis limits chosen in the header: a depth of 0 means no depth limit,
+    // MultiPV is the number of principal variations the engine reports.
+    [[nodiscard]] QSpinBox *depthLimitSpin() const;
+    [[nodiscard]] QSpinBox *multiPvSpin() const;
+    [[nodiscard]] int depthLimit() const;
+    [[nodiscard]] int multiPv() const;
+
     [[nodiscard]] bool analysisSectionVisible() const;
     [[nodiscard]] bool logSectionVisible() const;
     [[nodiscard]] bool detailsVisible() const;
@@ -71,6 +79,8 @@ public slots:
     void setTime(qint64 timeMs);
     void setBestMove(const QString &bestMove);
     void setControlButtonsEnabled(bool startEnabled, bool pauseEnabled, bool stopEnabled);
+    void setDepthLimit(int depth);
+    void setMultiPv(int multiPv);
 
     void updateAnalysisLine(const EngineAnalysisLine &line);
     void setAnalysisLines(const QList<EngineAnalysisLine> &lines);
@@ -88,6 +98,9 @@ signals:
     void startClicked();
     void pauseClicked();
     void stopClicked();
+    // Emitted when the depth limit or the MultiPV count changes, so that the
+    // caller can apply them to the controller and persist them.
+    void analysisSettingsChanged(int depth, int multiPv);
     void analysisSectionToggled(bool visible);
     void logSectionToggled(bool visible);
     void detailsToggled(bool visible);
@@ -132,6 +145,8 @@ private:
     QPushButton *startButton_ = nullptr;
     QPushButton *pauseButton_ = nullptr;
     QPushButton *stopButton_ = nullptr;
+    QSpinBox *depthLimitSpin_ = nullptr;
+    QSpinBox *multiPvSpin_ = nullptr;
 
     QToolButton *analysisToggleButton_ = nullptr;
     QToolButton *logToggleButton_ = nullptr;

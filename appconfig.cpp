@@ -171,6 +171,12 @@ bool AppConfig::load() {
                                  ? EngineDetailsPage::UciLog
                                  : EngineDetailsPage::Variations;
     }
+    analysisDepth_ = qBound(0, settings.value(QStringLiteral("analysisDepth"),
+                                              analysisDepth_).toInt(), 99);
+    analysisMultiPv_ = qBound(1, settings.value(QStringLiteral("analysisMultiPv"),
+                                                analysisMultiPv_).toInt(), 8);
+    auditDepth_ = qBound(1, settings.value(QStringLiteral("auditDepth"),
+                                           auditDepth_).toInt(), 99);
     settings.endGroup();
 
     return settings.status() == QSettings::NoError;
@@ -243,6 +249,9 @@ bool AppConfig::save() const {
                       engineDetailsVisible_ && engineDetailsPage_ == EngineDetailsPage::Variations);
     settings.setValue(QStringLiteral("logSection"),
                       engineDetailsVisible_ && engineDetailsPage_ == EngineDetailsPage::UciLog);
+    settings.setValue(QStringLiteral("analysisDepth"), analysisDepth_);
+    settings.setValue(QStringLiteral("analysisMultiPv"), analysisMultiPv_);
+    settings.setValue(QStringLiteral("auditDepth"), auditDepth_);
     settings.endGroup();
 
     settings.sync();
@@ -480,6 +489,30 @@ void AppConfig::setEngineDetailsPage(EngineDetailsPage page) {
                                engineDetailsPage_ == EngineDetailsPage::UciLog;
 }
 
+int AppConfig::analysisDepth() const {
+    return analysisDepth_;
+}
+
+void AppConfig::setAnalysisDepth(int depth) {
+    analysisDepth_ = qBound(0, depth, 99);
+}
+
+int AppConfig::analysisMultiPv() const {
+    return analysisMultiPv_;
+}
+
+void AppConfig::setAnalysisMultiPv(int multiPv) {
+    analysisMultiPv_ = qBound(1, multiPv, 8);
+}
+
+int AppConfig::auditDepth() const {
+    return auditDepth_;
+}
+
+void AppConfig::setAuditDepth(int depth) {
+    auditDepth_ = qBound(1, depth, 99);
+}
+
 void AppConfig::resetToDefaults() {
     uciEnginePath_.clear();
     uciEngineOptions_.clear();
@@ -505,4 +538,7 @@ void AppConfig::resetToDefaults() {
     engineLogSectionVisible_ = false;
     engineDetailsVisible_ = false;
     engineDetailsPage_ = EngineDetailsPage::Variations;
+    analysisDepth_ = 0;
+    analysisMultiPv_ = 1;
+    auditDepth_ = 18;
 }

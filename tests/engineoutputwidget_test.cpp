@@ -9,6 +9,7 @@
 #include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QTableWidget>
 #include <QToolBar>
@@ -33,6 +34,7 @@ private slots:
     void testSignalEmission();
     void testControlButtons();
     void testControlButtonSignals();
+    void testAnalysisLimitControls();
     void testSectionCollapse();
     void testSectionCollapseKeepsData();
     void testDetailsNavigationAndPrimaryVariation();
@@ -335,6 +337,44 @@ void EngineOutputWidgetTest::testControlButtonSignals() {
     QCOMPARE(stopSpy.count(), 1);
 }
 
+void EngineOutputWidgetTest::testAnalysisLimitControls() {
+    EngineOutputWidget widget;
+    QVERIFY(widget.depthLimitSpin() != nullptr);
+    QVERIFY(widget.multiPvSpin() != nullptr);
+    QCOMPARE(widget.depthLimit(), 0);
+    QCOMPARE(widget.multiPv(), 1);
+    // A depth of zero reads as "Unlimited" instead of a bare number.
+    QVERIFY(!widget.depthLimitSpin()->specialValueText().isEmpty());
+
+    QSignalSpy settingsSpy(&widget, &EngineOutputWidget::analysisSettingsChanged);
+
+    widget.depthLimitSpin()->setValue(15);
+    QCOMPARE(widget.depthLimit(), 15);
+    QCOMPARE(settingsSpy.count(), 1);
+    QCOMPARE(settingsSpy.last().at(0).toInt(), 15);
+    QCOMPARE(settingsSpy.last().at(1).toInt(), 1);
+
+    widget.multiPvSpin()->setValue(4);
+    QCOMPARE(widget.multiPv(), 4);
+    QCOMPARE(settingsSpy.count(), 2);
+    QCOMPARE(settingsSpy.last().at(0).toInt(), 15);
+    QCOMPARE(settingsSpy.last().at(1).toInt(), 4);
+
+    // The programmatic setters restore a stored value without announcing it
+    // again: the caller applies it to the controller itself.
+    widget.setDepthLimit(22);
+    widget.setMultiPv(2);
+    QCOMPARE(widget.depthLimit(), 22);
+    QCOMPARE(widget.multiPv(), 2);
+    QCOMPARE(settingsSpy.count(), 2);
+
+    // Values outside the supported range are clamped.
+    widget.setDepthLimit(1000);
+    widget.setMultiPv(0);
+    QCOMPARE(widget.depthLimit(), 99);
+    QCOMPARE(widget.multiPv(), 1);
+}
+
 void EngineOutputWidgetTest::testSectionCollapse() {
     EngineOutputWidget widget;
     QSignalSpy analysisSpy(&widget, &EngineOutputWidget::analysisSectionToggled);
@@ -470,7 +510,7 @@ void EngineOutputWidgetTest::testMainWindowLayout() {
             QVERIFY(!action->icon().isNull());
         }
     }
-    QCOMPARE(toolActionCount, 18);
+    QCOMPARE(toolActionCount, 19);
 
     // Verify main splitter contains top pane and bottom engine output widget
     auto splitters = window.findChildren<QSplitter *>();

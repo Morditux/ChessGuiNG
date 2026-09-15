@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(ChessGui
-        VERSION 1.0.6
+        VERSION 1.0.7
         LANGUAGES CXX
 )
 
@@ -108,6 +108,8 @@ add_library(chesscore OBJECT
         computergamesettings.cpp
         computergamesettings.h
         craftyhashkeys.h
+        auditreports.cpp
+        auditreports.h
         enginebackend.cpp
         enginebackend.h
         gamecontroller.cpp
@@ -185,6 +187,8 @@ target_link_libraries(chessui PUBLIC Qt6::Widgets Qt6::Svg chesscore)
 
 # chessapp: main window and dialogs.
 add_library(chessapp OBJECT
+        analysisreportdialog.cpp
+        analysisreportdialog.h
         computergamedialog.cpp
         computergamedialog.h
         engineconfigurationdialog.cpp
@@ -233,15 +237,20 @@ qt_add_resources(ChessGui "ChessGui_app_resources"
 # string goes through tr(). Translations are optional: when a translations/
 # directory with .ts files exists and Qt Linguist tools are available, the
 # .qm files are compiled and embedded into the executable.
-if (TARGET Qt6::LinguistTools AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/translations")
+# The LinguistTools component provides Qt6::lupdate and Qt6::lrelease; there is
+# no Qt6::LinguistTools target, so the tools are tested individually.
+if (TARGET Qt6::lupdate AND TARGET Qt6::lrelease AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/translations")
     file(GLOB CHESSGUI_TRANSLATIONS "${CMAKE_CURRENT_SOURCE_DIR}/translations/*.ts")
     if (CHESSGUI_TRANSLATIONS)
         qt_add_translations(ChessGui
                 TS_FILES ${CHESSGUI_TRANSLATIONS}
+                RESOURCE_PREFIX "/translations"
                 SOURCES
                 main.cpp
                 appconfig.cpp appconfig.h
+                auditreports.cpp auditreports.h
                 book.cpp book.h
+                analysisreportdialog.cpp analysisreportdialog.h
                 computergamedialog.cpp computergamedialog.h
                 computergamesettings.cpp computergamesettings.h
                 engineconfigurationdialog.cpp engineconfigurationdialog.h
@@ -465,4 +474,10 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(PromotionDialogTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
     add_test(NAME PromotionDialogTest COMMAND PromotionDialogTest)
+
+    qt_add_executable(AnalysisReportDialogTest
+            tests/analysisreportdialog_test.cpp
+    )
+    target_link_libraries(AnalysisReportDialogTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
+    add_test(NAME AnalysisReportDialogTest COMMAND AnalysisReportDialogTest)
 endif()

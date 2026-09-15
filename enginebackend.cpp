@@ -106,6 +106,8 @@ void EngineBackend::startAnalysis(int depth, int multiPv) {
         return;
     }
 
+    applyPendingOptions();
+
     if (!positionCommand_.isEmpty()) {
         sendUciCommand(positionCommand_);
     }
@@ -158,6 +160,8 @@ void EngineBackend::startTimedSearch(qint64 whiteTimeMilliseconds,
         return;
     }
 
+    applyPendingOptions();
+
     if (!positionCommand_.isEmpty()) {
         sendUciCommand(positionCommand_);
     }
@@ -184,11 +188,41 @@ void EngineBackend::setOption(const QString &name, const QVariant &value) {
         return;
     }
 
+    // A UCI engine may block its command loop inside setoption until the
+    // running search has finished (Stockfish waits for the search to end
+    // before it reads the next command). A setoption sent during a search
+    // would therefore be followed by a "stop" the engine never reads: the
+    // protocol deadlocks and the engine can no longer be controlled. The
+    // option is queued instead and applied once the engine is idle.
+    if (state_ == State::Analyzing || state_ == State::Stopping) {
+        pendingOptions_.append({name, value});
+        return;
+    }
+
+    // The engine is idle: what was queued during a search can be sent now, so
+    // that the value requested last is also the one left in the engine.
+    applyPendingOptions();
+    transmitOption(name, value);
+}
+
+void EngineBackend::transmitOption(const QString &name, const QVariant &value) {
     QString command = QStringLiteral("setoption name %1").arg(name);
     if (value.isValid()) {
         command += QStringLiteral(" value %1").arg(value.toString());
     }
     sendUciCommand(command);
+}
+
+void EngineBackend::applyPendingOptions() {
+    if (pendingOptions_.isEmpty()) {
+        return;
+    }
+
+    const QList<QPair<QString, QVariant>> pending = pendingOptions_;
+    pendingOptions_.clear();
+    for (const auto &option : pending) {
+        transmitOption(option.first, option.second);
+    }
 }
 
 void EngineBackend::sendRawCommand(const QString &command) {
@@ -237,6 +271,7 @@ void EngineBackend::handleLine(const QString &line) {
         if (!pendingGoCommand_.isEmpty()) {
             const QString pendingGoCommand = std::exchange(pendingGoCommand_, QString());
             pendingRestart_ = false;
+            applyPendingOptions();
             if (!positionCommand_.isEmpty()) {
                 sendUciCommand(positionCommand_);
             }
@@ -246,6 +281,7 @@ void EngineBackend::handleLine(const QString &line) {
             setState(State::Analyzing);
         } else if (pendingRestart_) {
             pendingRestart_ = false;
+            applyPendingOptions();
             if (!positionCommand_.isEmpty()) {
                 sendUciCommand(positionCommand_);
             }
@@ -275,6 +311,7 @@ void EngineBackend::resetEngineSession() {
 
 void EngineBackend::clearSearchState() {
     pendingGoCommand_.clear();
+    pendingOptions_.clear();
     pendingRestart_ = false;
     activeSearchType_ = SearchType::None;
     pendingSearchType_ = SearchType::None;

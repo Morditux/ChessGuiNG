@@ -30,6 +30,7 @@
 #include <QFile>
 #include <QDir>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 
@@ -80,6 +81,8 @@ private slots:
     void testMainWindowEngineIntegration();
     void testMockEngineProcess();
     void testMainWindowControlButtons();
+    void testMainWindowMultiPvChangeWhileAnalyzing();
+    void testMainWindowStopButtonCancelsGameAudit();
     void testMainWindowComputerGame();
     void testMainWindowComputerGameWithIncrement();
     void testMainWindowRemoteEngineEagerLoad();
@@ -360,6 +363,146 @@ void UciEngineTest::testMainWindowControlButtons() {
     QVERIFY(!outputWidget->pauseButton()->isEnabled());
     QVERIFY(!outputWidget->stopButton()->isEnabled());
 
+    QFile::remove(scriptPath);
+}
+
+void UciEngineTest::testMainWindowMultiPvChangeWhileAnalyzing() {
+    const QString scriptPath =
+        QDir::current().filePath(QStringLiteral("mock_engine_multipv.sh"));
+    QFile scriptFile(scriptPath);
+    QVERIFY(scriptFile.open(QIODevice::WriteOnly | QIODevice::Text));
+
+    // This mock behaves like Stockfish: it blocks its command loop inside
+    // setoption until the running search has finished. A setoption sent during
+    // a search is therefore never followed by the stop that would have ended
+    // it, and the marker below proves that the protocol deadlocked.
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "searching=0\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then\n"
+        "    echo \"id name MockMultiPvEngine\"\n"
+        "    echo \"option name MultiPV type spin default 1 min 1 max 8\"\n"
+        "    echo \"uciok\"\n"
+        "  elif [ \"$line\" = \"isready\" ]; then\n"
+        "    echo \"readyok\"\n"
+        "  elif [[ \"$line\" == setoption* ]]; then\n"
+        "    if [ \"$searching\" -eq 1 ]; then\n"
+        "      echo \"info string MOCK_SETOPTION_DURING_SEARCH\"\n"
+        "      sleep 30\n"
+        "      exit 1\n"
+        "    fi\n"
+        "  elif [[ \"$line\" == go* ]]; then\n"
+        "    searching=1\n"
+        "    echo \"info depth 12 score cp 30 pv d2d4\"\n"
+        "  elif [ \"$line\" = \"stop\" ]; then\n"
+        "    searching=0\n"
+        "    echo \"bestmove d2d4\"\n"
+        "  elif [ \"$line\" = \"quit\" ]; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "done\n";
+
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser |
+                                      QFile::ReadGroup | QFile::ExeGroup |
+                                      QFile::ReadOther | QFile::ExeOther);
+
+    MainWindow window;
+    auto *outputWidget = window.engineOutputWidget();
+    QVERIFY(outputWidget != nullptr);
+
+    QVERIFY(window.uciEngine()->startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Ready, 2000);
+
+    outputWidget->startButton()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Analyzing, 2000);
+    QVERIFY(outputWidget->stopButton()->isEnabled());
+
+    // Changing the number of principal variations while the engine searches
+    // restarts the analysis; the controls must stay usable afterwards.
+    outputWidget->multiPvSpin()->setValue(3);
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Analyzing, 3000);
+    QVERIFY(outputWidget->stopButton()->isEnabled());
+    QVERIFY(outputWidget->pauseButton()->isEnabled());
+    QVERIFY(!outputWidget->startButton()->isEnabled());
+
+    // The option must have been sent only after the best move that answered
+    // the stop, never while the search was still running.
+    const QString log = outputWidget->uciLog();
+    QVERIFY(!log.contains(QStringLiteral("MOCK_SETOPTION_DURING_SEARCH")));
+    const int bestMoveIndex = log.indexOf(QStringLiteral("bestmove d2d4"));
+    const int optionIndex =
+        log.indexOf(QStringLiteral(">> setoption name MultiPV value 3"));
+    QVERIFY(bestMoveIndex >= 0);
+    QVERIFY(optionIndex > bestMoveIndex);
+
+    // Stop must still stop the restarted search.
+    outputWidget->stopButton()->click();
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Ready, 2000);
+    QVERIFY(outputWidget->startButton()->isEnabled());
+
+    window.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void UciEngineTest::testMainWindowStopButtonCancelsGameAudit() {
+    const QString scriptPath =
+        QDir::current().filePath(QStringLiteral("mock_engine_audit_stop.sh"));
+    QFile scriptFile(scriptPath);
+    QVERIFY(scriptFile.open(QIODevice::WriteOnly | QIODevice::Text));
+
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then\n"
+        "    echo \"id name MockAuditStopEngine\"\n"
+        "    echo \"uciok\"\n"
+        "  elif [ \"$line\" = \"isready\" ]; then\n"
+        "    echo \"readyok\"\n"
+        "  elif [[ \"$line\" =~ ^go ]]; then\n"
+        "    echo \"info depth 10 score cp 20 pv d2d4\"\n"
+        "    echo \"bestmove d2d4\"\n"
+        "  elif [ \"$line\" = \"stop\" ]; then\n"
+        "    echo \"bestmove d2d4\"\n"
+        "  elif [ \"$line\" = \"quit\" ]; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "done\n";
+
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser |
+                                      QFile::ReadGroup | QFile::ExeGroup |
+                                      QFile::ReadOther | QFile::ExeOther);
+
+    MainWindow window;
+    QVERIFY(window.uciEngine()->startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Ready, 2000);
+    QVERIFY(window.loadPgnContent(QStringLiteral("1. e4 e5 2. Nf3 Nc6 3. Bb5 *")));
+    window.setGameAuditDepth(10);
+
+    QVERIFY(window.gameController()->startGameAudit());
+    QVERIFY(window.gameController()->isGameAuditActive());
+
+    // The engine panel controls the game analysis while it runs: Stop cancels
+    // the whole run instead of letting it restart on the next position.
+    QVERIFY(window.engineOutputWidget()->stopButton()->isEnabled());
+    window.engineOutputWidget()->stopButton()->click();
+    QVERIFY(!window.gameController()->isGameAuditActive());
+    QVERIFY(!window.gameController()->auditReport().valid);
+
+    QTest::qWait(300);
+    QVERIFY(!window.gameController()->isGameAuditActive());
+    QVERIFY(!window.gameController()->auditReport().valid);
+    // The board is back on the position the user was reviewing.
+    QCOMPARE(window.gameController()->moveCursor(),
+             window.gameController()->uciMoves().size());
+
+    window.stopEngine();
     QFile::remove(scriptPath);
 }
 

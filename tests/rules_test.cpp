@@ -8,13 +8,17 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QFile>
 #include <QFrame>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
+#include <QMimeData>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QToolBar>
 #include <QTemporaryDir>
+#include <QUrl>
 #include <QWidgetAction>
 
 #include <algorithm>
@@ -73,6 +77,7 @@ private slots:
     void testMainWindowLoadPgnContent();
     void testMainWindowCopyFenAndPgn();
     void testMainWindowNavigationHomeAndEnd();
+    void testMainWindowAcceptsDroppedPgnFile();
     void testMainWindowRecognizesScreenshotWhenProvided();
     void testComputerGameDialogSettings();
 };
@@ -831,6 +836,43 @@ void RulesTest::testMainWindowNavigationHomeAndEnd() {
     QVERIFY(!window.lastMoveAction()->isEnabled());
 }
 
+void RulesTest::testMainWindowAcceptsDroppedPgnFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString pgnPath = dir.filePath(QStringLiteral("dropped.pgn"));
+    QFile file(pgnPath);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    file.write("1. e4 e5 2. Nf3 Nc6 3. Bb5 *\n");
+    file.close();
+
+    MainWindow window;
+
+    // A platform drag session cannot be simulated with sendEvent, so the drop
+    // entry point is exercised directly with the payload a file manager sends.
+    QMimeData pgnDrop;
+    pgnDrop.setUrls({QUrl::fromLocalFile(pgnPath)});
+    QVERIFY(window.hasSupportedDrop(&pgnDrop));
+    QVERIFY(window.handleMimeData(&pgnDrop));
+
+    // The dropped game is loaded exactly like the "Load PGN..." action.
+    QCOMPARE(window.gameController()->uciMoves().size(), 5);
+    QCOMPARE(window.gameController()->uciMoves().last(), QStringLiteral("f1b5"));
+    QCOMPARE(window.gameController()->moveCursor(), 5);
+    QVERIFY(moveListText(window).contains(QStringLiteral("Bb5")));
+
+    // A file that is neither an image nor a PGN is not a supported drop.
+    const QString textPath = dir.filePath(QStringLiteral("notes.txt"));
+    QFile textFile(textPath);
+    QVERIFY(textFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    textFile.write("not a game\n");
+    textFile.close();
+
+    QMimeData textDrop;
+    textDrop.setUrls({QUrl::fromLocalFile(textPath)});
+    QVERIFY(!window.hasSupportedDrop(&textDrop));
+    QVERIFY(!window.handleMimeData(&textDrop));
+}
+
 void RulesTest::testMainWindowRecognizesScreenshotWhenProvided() {
     const QString path = qEnvironmentVariable("CHESSGUI_SAMPLE_IMAGE");
     if (path.isEmpty()) {
@@ -869,12 +911,14 @@ void RulesTest::testComputerGameDialogSettings() {
 
     auto *timeControl = dialog.findChild<QComboBox *>(QStringLiteral("timeControlCombo"));
     QVERIFY(timeControl != nullptr);
-    QCOMPARE(timeControl->count(), 5);
+    QCOMPARE(timeControl->count(), 6);
     QCOMPARE(timeControl->itemData(0).toLongLong(), 7200000LL);
     QCOMPARE(timeControl->itemData(1).toLongLong(), 3600000LL);
     QCOMPARE(timeControl->itemData(2).toLongLong(), 1800000LL);
     QCOMPARE(timeControl->itemData(3).toLongLong(), 900000LL);
     QCOMPARE(timeControl->itemData(4).toLongLong(), 300000LL);
+    // The custom entry is the only one without a real base time.
+    QCOMPARE(timeControl->itemData(5).toLongLong(), -1LL);
 
     auto *increment = dialog.findChild<QComboBox *>(QStringLiteral("incrementCombo"));
     QVERIFY(increment != nullptr);
@@ -897,6 +941,34 @@ void RulesTest::testComputerGameDialogSettings() {
         QVERIFY(incremented.pgnHeaders().at(6).contains(QStringLiteral("7200+3")));
         break;
     }
+
+    // The custom entry replaces both the preset base time and the increment
+    // list with free values.
+    auto *customMinutes = dialog.findChild<QSpinBox *>(QStringLiteral("customMinutesSpin"));
+    QVERIFY(customMinutes != nullptr);
+    auto *customIncrement = dialog.findChild<QSpinBox *>(QStringLiteral("customIncrementSpin"));
+    QVERIFY(customIncrement != nullptr);
+    QVERIFY(!customMinutes->isEnabled());
+    QVERIFY(!customIncrement->isEnabled());
+
+    timeControl->setCurrentIndex(5);
+    QVERIFY(customMinutes->isEnabled());
+    QVERIFY(customIncrement->isEnabled());
+    QVERIFY(!increment->isEnabled());
+
+    customMinutes->setValue(42);
+    customIncrement->setValue(7);
+    const ComputerGameSettings custom = dialog.settings();
+    QCOMPARE(custom.timeLimitMilliseconds, 42LL * 60000);
+    QCOMPARE(custom.incrementMilliseconds, 7000LL);
+    QCOMPARE(custom.pgnTimeControl(), QStringLiteral("2520+7"));
+
+    // Leaving the custom entry restores the preset controls.
+    timeControl->setCurrentIndex(4);
+    QVERIFY(!customMinutes->isEnabled());
+    QVERIFY(!customIncrement->isEnabled());
+    QVERIFY(increment->isEnabled());
+    QCOMPARE(dialog.settings().timeLimitMilliseconds, 300000LL);
 }
 
 QTEST_MAIN(RulesTest)

@@ -95,9 +95,11 @@ QMap<QString, QString> UciOptionsDialog::optionValues() const {
         switch (option.type) {
             case UciOption::Type::Check: {
                 const auto *checkBox = qobject_cast<const QCheckBox *>(widget);
+                // UCI boolean option values are protocol tokens: they must
+                // reach the engine as "true"/"false" whatever the UI language.
                 result[option.name] = checkBox->isChecked()
-                                           ? tr("true")
-                                           : tr("false");
+                                           ? QStringLiteral("true")
+                                           : QStringLiteral("false");
                 break;
             }
             case UciOption::Type::Spin: {
@@ -140,8 +142,8 @@ void UciOptionsDialog::addOption(const UciOption &option) {
     switch (option.type) {
         case UciOption::Type::Check: {
             auto *checkBox = new QCheckBox(this);
-            checkBox->setChecked(savedValue.compare(tr("true"), Qt::CaseInsensitive) == 0 ||
-                                 savedValue == tr("1"));
+            checkBox->setChecked(savedValue.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0 ||
+                                 savedValue == QStringLiteral("1"));
             widget = checkBox;
             break;
         }

@@ -3,6 +3,7 @@
 //
 
 #include "mainwindow.h"
+#include "analysisreportdialog.h"
 #include "chessboard.h"
 #include "computergamedialog.h"
 #include "computergamesettings.h"
@@ -89,6 +90,12 @@ private:
     QToolButton *header_ = nullptr;
     bool expanded_ = false;
 };
+
+// A dropped file is a game when it has the PGN suffix.
+bool isPgnPath(const QString &path) {
+    return QFileInfo(path).suffix().compare(QLatin1String("pgn"),
+                                            Qt::CaseInsensitive) == 0;
+}
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
@@ -174,6 +181,18 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         refreshAuditUi();
         updateNavigationActions();
     });
+    connect(gameController_, &GameController::auditProgressChanged, this,
+            [this](int completedPositions, int totalPositions) {
+                if (analysisReportDialog_) {
+                    analysisReportDialog_->setProgress(completedPositions,
+                                                       totalPositions);
+                }
+            });
+    connect(gameController_, &GameController::auditReportChanged, this, [this] {
+        if (analysisReportDialog_) {
+            analysisReportDialog_->setReport(gameController_->auditReport());
+        }
+    });
     connect(gameController_, &GameController::computerGameStateChanged, this, [this](bool active) {
         whitePendulum_->stop();
         blackPendulum_->stop();
@@ -257,6 +276,8 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
     connect(engineOutputWidget_, &EngineOutputWidget::startClicked, this, &MainWindow::startEngineAnalysis);
     connect(engineOutputWidget_, &EngineOutputWidget::pauseClicked, this, &MainWindow::pauseEngineAnalysis);
     connect(engineOutputWidget_, &EngineOutputWidget::stopClicked, this, &MainWindow::stopEngineAnalysis);
+    connect(engineOutputWidget_, &EngineOutputWidget::analysisSettingsChanged,
+            this, &MainWindow::setAnalysisSettings);
 
     connect(uciEngine(), &UciEngine::engineLoaded, this, &MainWindow::onEngineLoaded);
     connect(gatewayClient(), &ChessGatewayClient::engineLoaded,
@@ -392,8 +413,24 @@ QAction *MainWindow::claimDrawAction() const {
     return claimDrawAction_;
 }
 
+QAction *MainWindow::takeBackAction() const {
+    return takeBackAction_;
+}
+
+QAction *MainWindow::resignAction() const {
+    return resignAction_;
+}
+
+QAction *MainWindow::offerDrawAction() const {
+    return offerDrawAction_;
+}
+
 QAction *MainWindow::analyzeGameAction() const {
     return analyzeGameAction_;
+}
+
+QAction *MainWindow::analysisReportAction() const {
+    return analysisReportAction_;
 }
 
 QAction *MainWindow::firstMoveAction() const {
@@ -485,6 +522,13 @@ void MainWindow::loadConfiguration(const QString &configFilePath) {
                               : EngineOutputWidget::DetailsPage::Variations;
         engineOutputWidget_->setDetailsPage(page);
         engineOutputWidget_->setDetailsVisible(config_.engineDetailsVisible());
+        // The analysis limits are shared by the header controls and the
+        // controller, so both are restored from the same stored values.
+        engineOutputWidget_->setDepthLimit(config_.analysisDepth());
+        engineOutputWidget_->setMultiPv(config_.analysisMultiPv());
+        gameController_->setAnalysisSettings(config_.analysisDepth(),
+                                             config_.analysisMultiPv());
+        gameController_->setGameAuditDepth(config_.auditDepth());
     }
 
     if (mainSplitter_ && !config_.mainSplitterSizes().isEmpty()) {
@@ -774,7 +818,7 @@ QUrl MainWindow::remoteImageUrlFromMimeData(const QMimeData *mime) {
 
     if (mime->hasHtml()) {
         static const QRegularExpression imageSource(
-            tr("<img[^>]+src\\s*=\\s*['\\\"]([^'\\\"]+)"),
+            QStringLiteral("<img[^>]+src\\s*=\\s*['\\\"]([^'\\\"]+)"),
             QRegularExpression::CaseInsensitiveOption);
         const QRegularExpressionMatch match = imageSource.match(mime->html());
         if (match.hasMatch()) {
@@ -836,6 +880,22 @@ bool MainWindow::hasSupportedImage(const QMimeData *mime) const {
     return !remoteImageUrlFromMimeData(mime).isEmpty();
 }
 
+bool MainWindow::hasSupportedDrop(const QMimeData *mime) const {
+    if (hasSupportedImage(mime)) {
+        return true;
+    }
+
+    if (mime != nullptr && mime->hasUrls()) {
+        for (const QUrl &url : mime->urls()) {
+            if (url.isLocalFile() && isPgnPath(url.toLocalFile())) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 bool MainWindow::handleMimeData(const QMimeData *mime) {
     if (mime == nullptr) {
         return false;
@@ -849,9 +909,19 @@ bool MainWindow::handleMimeData(const QMimeData *mime) {
 
     if (mime->hasUrls()) {
         for (const QUrl &url : mime->urls()) {
-            if (url.isLocalFile() && isSupportedImagePath(url.toLocalFile())) {
-                loadImageFile(url.toLocalFile());
-                return true;
+            if (url.isLocalFile()) {
+                const QString localPath = url.toLocalFile();
+                if (isSupportedImagePath(localPath)) {
+                    loadImageFile(localPath);
+                    return true;
+                }
+
+                // A dropped game replaces the current one exactly like the
+                // "Load PGN..." action does.
+                if (isPgnPath(localPath)) {
+                    return loadPgnFile(localPath);
+                }
+                continue;
             }
 
             if (isRemoteImageUrl(url)) {
@@ -908,7 +978,7 @@ void MainWindow::loadRemoteImage(const QUrl &url) {
 
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader,
-                      tr("ChessGui/1.0"));
+                      QStringLiteral("ChessGui/1.0"));
 
     setActivityMessage(tr("Downloading image…"));
     remoteImageReply_ = networkManager_->get(request);
@@ -1103,9 +1173,10 @@ void MainWindow::onVisionResult(const VisionResult &result) {
 
     QStringList fenFields = recognized.fen.split(QChar(' '), Qt::SkipEmptyParts);
     if (fenFields.size() >= 2) {
+        // The FEN side-to-move field is a protocol token, not a UI string.
         fenFields[1] = whiteToPlayCheckBox_->isChecked()
-                           ? tr("w")
-                           : tr("b");
+                           ? QStringLiteral("w")
+                           : QStringLiteral("b");
     }
     const QString fen = fenFields.join(QChar(' '));
 
@@ -1153,7 +1224,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     if (event->type() == QEvent::DragEnter ||
         event->type() == QEvent::DragMove) {
         auto *dragEvent = static_cast<QDropEvent *>(event);
-        if (hasSupportedImage(dragEvent->mimeData())) {
+        if (hasSupportedDrop(dragEvent->mimeData())) {
             dragEvent->acceptProposedAction();
         } else {
             dragEvent->ignore();
@@ -1163,7 +1234,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
 
     if (event->type() == QEvent::Drop) {
         auto *dropEvent = static_cast<QDropEvent *>(event);
-        if (!hasSupportedImage(dropEvent->mimeData())) {
+        if (!hasSupportedDrop(dropEvent->mimeData())) {
             dropEvent->ignore();
             return true;
         }
@@ -1578,6 +1649,47 @@ void MainWindow::toggleGameAudit() {
         setActivityMessage(tr("Game analysis is unavailable. Load a completed game and connect an engine."));
     }
 }
+
+void MainWindow::showAnalysisReport() {
+    if (analysisReportDialog_ == nullptr) {
+        auto *dialog = new AnalysisReportDialog(this);
+        connect(dialog, &AnalysisReportDialog::runRequested,
+                this, &MainWindow::toggleGameAudit);
+        connect(dialog, &AnalysisReportDialog::cancelRequested,
+                this, &MainWindow::toggleGameAudit);
+        connect(dialog, &AnalysisReportDialog::depthChanged,
+                this, &MainWindow::setGameAuditDepth);
+        connect(dialog, &AnalysisReportDialog::plyActivated, this, [this](int ply) {
+            if (ply == gameController_->moveCursor()) {
+                return;
+            }
+            if (!gameController_->goToMove(ply)) {
+                setActivityMessage(
+                    tr("That move cannot be shown while a game is in progress."));
+            }
+        });
+        analysisReportDialog_ = dialog;
+    }
+
+    analysisReportDialog_->setDepth(gameController_->gameAuditDepth());
+    analysisReportDialog_->setReport(gameController_->auditReport());
+    refreshAuditUi();
+    analysisReportDialog_->show();
+    analysisReportDialog_->raise();
+    analysisReportDialog_->activateWindow();
+}
+
+void MainWindow::setGameAuditDepth(int depth) {
+    gameController_->setGameAuditDepth(depth);
+
+    config_.setAuditDepth(gameController_->gameAuditDepth());
+    config_.save();
+
+    if (analysisReportDialog_) {
+        analysisReportDialog_->setDepth(gameController_->gameAuditDepth());
+    }
+    refreshAuditUi();
+}
 void MainWindow::startEngineAnalysis() {
     gameController_->startAnalysis();
 }
@@ -1627,6 +1739,26 @@ void MainWindow::claimDraw() {
     gameController_->claimDraw();
 }
 
+void MainWindow::takeBack() {
+    gameController_->takeBack();
+}
+
+void MainWindow::resignGame() {
+    gameController_->resign();
+}
+
+void MainWindow::offerDraw() {
+    gameController_->offerDraw();
+}
+
+void MainWindow::setAnalysisSettings(int depth, int multiPv) {
+    gameController_->setAnalysisSettings(depth, multiPv);
+
+    config_.setAnalysisDepth(gameController_->analysisDepth());
+    config_.setAnalysisMultiPv(gameController_->analysisMultiPv());
+    config_.save();
+}
+
 void MainWindow::clearBoardAnnotations() {
     if (board_) {
         board_->clearUserAnnotations();
@@ -1650,6 +1782,15 @@ void MainWindow::updateNavigationActions() {
     }
     if (claimDrawAction_) {
         claimDrawAction_->setEnabled(gameController_->canClaimDraw());
+    }
+    if (takeBackAction_) {
+        takeBackAction_->setEnabled(gameController_->canTakeBack());
+    }
+    if (resignAction_) {
+        resignAction_->setEnabled(gameController_->canResign());
+    }
+    if (offerDrawAction_) {
+        offerDrawAction_->setEnabled(gameController_->canOfferDraw());
     }
 }
 
@@ -1740,8 +1881,11 @@ void MainWindow::refreshEngineStateUi() {
     const bool analyzing = gameController_->isEngineAnalyzing();
 
     if (toggleAnalysisAction_) {
-        const bool analysisAvailable = connected ||
-                                       gameController_->hasRemoteEngine();
+        // The game analysis owns the engine while it runs; its own controls
+        // stop it.
+        const bool analysisAvailable =
+            (connected || gameController_->hasRemoteEngine()) &&
+            !gameController_->isGameAuditActive();
         toggleAnalysisAction_->setEnabled(analysisAvailable);
         toggleAnalysisAction_->setText(analyzing
                                            ? tr("Stop Analysis")
@@ -1812,10 +1956,17 @@ void MainWindow::refreshAuditUi() {
     analyzeGameAction_->setEnabled(active || gameController_->canStartGameAudit());
     analyzeGameAction_->setText(active ? tr("Cancel Game Analysis") : tr("Analyze Game"));
     const QString description = active
-        ? tr("Cancel the fixed-depth game analysis")
-        : tr("Analyze the main line at depth 18 and mark inaccuracies, mistakes and blunders");
+        ? tr("Cancel the running game analysis")
+        : tr("Analyze the main line at depth %1 and mark inaccuracies, mistakes and blunders")
+              .arg(gameController_->gameAuditDepth());
     analyzeGameAction_->setToolTip(description);
     analyzeGameAction_->setStatusTip(description);
+
+    if (analysisReportDialog_) {
+        analysisReportDialog_->setAnalysisRunning(active);
+        analysisReportDialog_->setAnalysisAvailable(active ||
+                                                    gameController_->canStartGameAudit());
+    }
 }
 
 void MainWindow::setActivityMessage(const QString &message) {
@@ -1921,6 +2072,17 @@ void MainWindow::setupUi() {
     connect(lastMoveAction_, &QAction::triggered, this, &MainWindow::goToEnd);
     menuGames->addSeparator();
 
+    takeBackAction_ = menuGames->addAction(tr("Take back move"));
+    takeBackAction_->setObjectName(QStringLiteral("takeBackAction"));
+    configureToolAction(takeBackAction_, QStringLiteral(":/icons/toolbar-take-back.svg"),
+                        tr("Take back the last move and play a different one"));
+    takeBackAction_->setShortcut(QKeySequence::Undo);
+    takeBackAction_->setShortcutContext(Qt::WindowShortcut);
+    takeBackAction_->setEnabled(false);
+    addAction(takeBackAction_);
+    connect(takeBackAction_, &QAction::triggered, this, &MainWindow::takeBack);
+    menuGames->addSeparator();
+
     playAgainstComputerAction_ = menuGames->addAction(
         tr("Play against computer"));
     configureToolAction(playAgainstComputerAction_,
@@ -2016,6 +2178,21 @@ void MainWindow::setupUi() {
     claimDrawAction_->setEnabled(false);
     connect(claimDrawAction_, &QAction::triggered, this, &MainWindow::claimDraw);
 
+    resignAction_ = menuGames->addAction(tr("Resign"));
+    resignAction_->setObjectName(QStringLiteral("resignAction"));
+    resignAction_->setToolTip(tr("Resign the game against the computer"));
+    resignAction_->setStatusTip(resignAction_->toolTip());
+    resignAction_->setEnabled(false);
+    connect(resignAction_, &QAction::triggered, this, &MainWindow::resignGame);
+
+    offerDrawAction_ = menuGames->addAction(tr("Offer draw"));
+    offerDrawAction_->setObjectName(QStringLiteral("offerDrawAction"));
+    offerDrawAction_->setToolTip(
+        tr("Offer a draw: the engine decides, or the two players agree"));
+    offerDrawAction_->setStatusTip(offerDrawAction_->toolTip());
+    offerDrawAction_->setEnabled(false);
+    connect(offerDrawAction_, &QAction::triggered, this, &MainWindow::offerDraw);
+
     menubar->addMenu(menuGames);
 
     // Menu Engine
@@ -2061,9 +2238,17 @@ void MainWindow::setupUi() {
     analyzeGameAction_->setObjectName(QStringLiteral("analyzeGameAction"));
     configureToolAction(analyzeGameAction_,
                         QStringLiteral(":/icons/toolbar-analysis.svg"),
-                        tr("Analyze the main line at depth 18"));
+                        tr("Analyze the main line and mark the mistakes it contains"));
     analyzeGameAction_->setEnabled(false);
     connect(analyzeGameAction_, &QAction::triggered, this, &MainWindow::toggleGameAudit);
+
+    analysisReportAction_ = menuEngine->addAction(tr("Analysis Report..."));
+    analysisReportAction_->setObjectName(QStringLiteral("analysisReportAction"));
+    analysisReportAction_->setToolTip(
+        tr("Show the accuracy and the flagged moves of the game analysis"));
+    analysisReportAction_->setStatusTip(analysisReportAction_->toolTip());
+    connect(analysisReportAction_, &QAction::triggered,
+            this, &MainWindow::showAnalysisReport);
 
     stopEngineAction_ = menuEngine->addAction(tr("Disconnect Engine"));
     configureToolAction(stopEngineAction_,
@@ -2087,6 +2272,7 @@ void MainWindow::setupUi() {
     toolBar->addAction(stepBackAction_);
     toolBar->addAction(stepForwardAction_);
     toolBar->addAction(lastMoveAction_);
+    toolBar->addAction(takeBackAction_);
     toolBar->addAction(playAgainstComputerAction_);
     toolBar->addSeparator();
     toolBar->addAction(loadPgnAction_);

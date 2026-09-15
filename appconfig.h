@@ -110,6 +110,18 @@ public:
     [[nodiscard]] EngineDetailsPage engineDetailsPage() const;
     void setEngineDetailsPage(EngineDetailsPage page);
 
+    // Analysis limits applied to the next engine analysis: a depth of 0 means
+    // no depth limit, and MultiPV is the number of principal variations.
+    [[nodiscard]] int analysisDepth() const;
+    void setAnalysisDepth(int depth);
+
+    [[nodiscard]] int analysisMultiPv() const;
+    void setAnalysisMultiPv(int multiPv);
+
+    // Search depth used by the whole-game audit that feeds the analysis report.
+    [[nodiscard]] int auditDepth() const;
+    void setAuditDepth(int depth);
+
     void resetToDefaults();
 
 private:
@@ -138,6 +150,9 @@ private:
     bool engineLogSectionVisible_ = false;
     bool engineDetailsVisible_ = false;
     EngineDetailsPage engineDetailsPage_ = EngineDetailsPage::Variations;
+    int analysisDepth_ = 0;
+    int analysisMultiPv_ = 1;
+    int auditDepth_ = 18;
 };
 
 #endif // CHESSGUI_APPCONFIG_H

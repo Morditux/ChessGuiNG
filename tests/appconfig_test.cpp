@@ -42,6 +42,7 @@ private slots:
     void testLoadAndSaveEngineSectionVisibility();
     void testLegacyEngineSectionMigration();
     void testLoadAndSaveRemoteEngineSettings();
+    void testLoadAndSaveAnalysisSettings();
     void testResetToDefaults();
     void testLoadNonExistentFileReturnsFalse();
     void testMainWindowAutoCreatesConfigFile();
@@ -756,6 +757,41 @@ void AppConfigTest::testCorruptedConfigFileFallback() {
     QCOMPARE(config.mainSplitterSizes(), (QList<int>{420, 180}));
     QCOMPARE(config.topSplitterSizes(), (QList<int>{600, 200}));
     QCOMPARE(config.rightSplitterSizes(), (QList<int>{140, 320, 120}));
+}
+
+void AppConfigTest::testLoadAndSaveAnalysisSettings() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString confPath = tempDir.filePath(QStringLiteral("analysis.conf"));
+
+    AppConfig config(confPath);
+    QCOMPARE(config.analysisDepth(), 0);
+    QCOMPARE(config.analysisMultiPv(), 1);
+    QCOMPARE(config.auditDepth(), 18);
+    config.setAnalysisDepth(14);
+    config.setAnalysisMultiPv(4);
+    config.setAuditDepth(22);
+    QVERIFY(config.save());
+
+    AppConfig reloaded(confPath);
+    QVERIFY(reloaded.load());
+    QCOMPARE(reloaded.analysisDepth(), 14);
+    QCOMPARE(reloaded.analysisMultiPv(), 4);
+    QCOMPARE(reloaded.auditDepth(), 22);
+
+    // The limits are clamped to what the engine panel supports.
+    reloaded.setAnalysisDepth(-3);
+    reloaded.setAnalysisMultiPv(42);
+    reloaded.setAuditDepth(0);
+    QCOMPARE(reloaded.analysisDepth(), 0);
+    QCOMPARE(reloaded.analysisMultiPv(), 8);
+    QCOMPARE(reloaded.auditDepth(), 1);
+
+    reloaded.resetToDefaults();
+    QCOMPARE(reloaded.analysisDepth(), 0);
+    QCOMPARE(reloaded.analysisMultiPv(), 1);
+    QCOMPARE(reloaded.auditDepth(), 18);
 }
 
 QTEST_MAIN(AppConfigTest)

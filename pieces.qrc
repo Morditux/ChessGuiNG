@@ -32,5 +32,6 @@
         <file alias="toolbar-quit.svg">assets/icons/toolbar-quit.svg</file>
         <file alias="toolbar-step-back.svg">assets/icons/toolbar-step-back.svg</file>
         <file alias="toolbar-step-forward.svg">assets/icons/toolbar-step-forward.svg</file>
+        <file alias="toolbar-take-back.svg">assets/icons/toolbar-take-back.svg</file>
     </qresource>
 </RCC>

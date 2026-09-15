@@ -11,6 +11,7 @@
 
 class QComboBox;
 class QLineEdit;
+class QSpinBox;
 
 class ComputerGameDialog : public QDialog {
     Q_OBJECT
@@ -21,7 +22,16 @@ public:
 
     [[nodiscard]] ComputerGameSettings settings() const;
 
+    [[nodiscard]] QComboBox *timeControlCombo() const;
+    [[nodiscard]] QComboBox *incrementCombo() const;
+    [[nodiscard]] QSpinBox *customMinutesSpin() const;
+    [[nodiscard]] QSpinBox *customIncrementSpin() const;
+
 private:
+    // Enables the free base time and increment fields only while the custom
+    // time control is selected.
+    void updateCustomTimeEnabled();
+
     QLineEdit *eventEdit_ = nullptr;
     QLineEdit *siteEdit_ = nullptr;
     QLineEdit *dateEdit_ = nullptr;
@@ -31,6 +41,8 @@ private:
     QComboBox *colorCombo_ = nullptr;
     QComboBox *timeControlCombo_ = nullptr;
     QComboBox *incrementCombo_ = nullptr;
+    QSpinBox *customMinutesSpin_ = nullptr;
+    QSpinBox *customIncrementSpin_ = nullptr;
 };
 
 #endif // CHESSGUI_COMPUTERGAMEDIALOG_H

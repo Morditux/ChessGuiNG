@@ -14,6 +14,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTableWidget>
@@ -82,6 +83,22 @@ QPushButton *EngineOutputWidget::pauseButton() const {
 
 QPushButton *EngineOutputWidget::stopButton() const {
     return stopButton_;
+}
+
+QSpinBox *EngineOutputWidget::depthLimitSpin() const {
+    return depthLimitSpin_;
+}
+
+QSpinBox *EngineOutputWidget::multiPvSpin() const {
+    return multiPvSpin_;
+}
+
+int EngineOutputWidget::depthLimit() const {
+    return depthLimitSpin_ != nullptr ? depthLimitSpin_->value() : 0;
+}
+
+int EngineOutputWidget::multiPv() const {
+    return multiPvSpin_ != nullptr ? multiPvSpin_->value() : 1;
 }
 
 bool EngineOutputWidget::analysisSectionVisible() const {
@@ -204,6 +221,24 @@ void EngineOutputWidget::setControlButtonsEnabled(bool startEnabled, bool pauseE
     if (stopButton_) {
         stopButton_->setEnabled(stopEnabled);
     }
+}
+
+void EngineOutputWidget::setDepthLimit(int depth) {
+    if (depthLimitSpin_ == nullptr) {
+        return;
+    }
+    // The caller applies the same limit to the controller, so the blocked
+    // signal only avoids announcing the value twice.
+    const QSignalBlocker blocker(depthLimitSpin_);
+    depthLimitSpin_->setValue(qBound(0, depth, 99));
+}
+
+void EngineOutputWidget::setMultiPv(int multiPv) {
+    if (multiPvSpin_ == nullptr) {
+        return;
+    }
+    const QSignalBlocker blocker(multiPvSpin_);
+    multiPvSpin_->setValue(qBound(1, multiPv, 8));
 }
 
 void EngineOutputWidget::updateAnalysisLine(const EngineAnalysisLine &line) {
@@ -471,6 +506,47 @@ void EngineOutputWidget::setupUi() {
     controlLayout->addWidget(pauseButton_);
     controlLayout->addWidget(stopButton_);
 
+    // Analysis limits live on their own compact row so that the summary row
+    // keeps the high-value information visible at the smallest window size.
+    auto *depthCaption = new QLabel(tr("Depth:"), headerFrame_);
+    depthLimitSpin_ = new QSpinBox(headerFrame_);
+    depthLimitSpin_->setObjectName(QStringLiteral("depthLimitSpin"));
+    depthLimitSpin_->setRange(0, 99);
+    depthLimitSpin_->setValue(0);
+    depthLimitSpin_->setKeyboardTracking(false);
+    depthLimitSpin_->setSpecialValueText(tr("Unlimited"));
+    depthLimitSpin_->setMaximumWidth(110);
+    depthLimitSpin_->setToolTip(
+        tr("Maximum search depth; Unlimited searches until it is stopped"));
+    depthLimitSpin_->setAccessibleName(tr("Analysis depth limit"));
+
+    auto *multiPvCaption = new QLabel(tr("MultiPV:"), headerFrame_);
+    multiPvSpin_ = new QSpinBox(headerFrame_);
+    multiPvSpin_->setObjectName(QStringLiteral("multiPvSpin"));
+    multiPvSpin_->setRange(1, 8);
+    multiPvSpin_->setValue(1);
+    multiPvSpin_->setKeyboardTracking(false);
+    multiPvSpin_->setMaximumWidth(70);
+    multiPvSpin_->setToolTip(tr("Number of principal variations the engine reports"));
+    multiPvSpin_->setAccessibleName(tr("Number of principal variations"));
+
+    auto *settingsLayout = new QHBoxLayout();
+    settingsLayout->setContentsMargins(0, 0, 0, 0);
+    settingsLayout->setSpacing(4);
+    settingsLayout->addWidget(depthCaption);
+    settingsLayout->addWidget(depthLimitSpin_);
+    settingsLayout->addWidget(multiPvCaption);
+    settingsLayout->addWidget(multiPvSpin_);
+    settingsLayout->addStretch();
+
+    const auto announceAnalysisSettings = [this] {
+        emit analysisSettingsChanged(depthLimit(), multiPv());
+    };
+    connect(depthLimitSpin_, &QSpinBox::valueChanged, this,
+            [announceAnalysisSettings](int) { announceAnalysisSettings(); });
+    connect(multiPvSpin_, &QSpinBox::valueChanged, this,
+            [announceAnalysisSettings](int) { announceAnalysisSettings(); });
+
     headerLayout->addWidget(nameLabel_, 0, 0);
     headerLayout->addWidget(statusLabel_, 0, 1);
     headerLayout->addWidget(scoreLabel_, 0, 2);
@@ -478,6 +554,7 @@ void EngineOutputWidget::setupUi() {
     headerLayout->addWidget(bestMoveLabel_, 0, 4);
     headerLayout->addLayout(controlLayout, 0, 5);
     headerLayout->addWidget(primaryPvLabel_, 1, 0, 1, 5);
+    headerLayout->addLayout(settingsLayout, 2, 0, 1, 6);
     headerLayout->setColumnStretch(0, 1);
     headerLayout->setColumnStretch(1, 1);
     headerLayout->setColumnStretch(4, 1);

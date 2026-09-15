@@ -115,6 +115,37 @@ QString writeMateAuditEngineScript(const QString &fileName) {
     return scriptPath;
 }
 
+// Engine used by the analysis-report test: it answers the configured depth and
+// reports one score per main-line position, so that the report's accuracy and
+// centipawn losses are deterministic.
+QString writeReportAuditEngineScript(const QString &fileName) {
+    const QString scriptPath = QDir::current().filePath(fileName);
+    QFile scriptFile(scriptPath);
+    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) return {};
+    const QByteArray script =
+        "#!/bin/bash\n"
+        "moves=0\n"
+        "while read line; do\n"
+        "  if [ \"$line\" = \"uci\" ]; then echo \"id name ReportAuditEngine\"; echo \"uciok\";\n"
+        "  elif [ \"$line\" = \"isready\" ]; then echo \"readyok\";\n"
+        "  elif [[ \"$line\" == position* ]]; then\n"
+        "    moves=0; if [[ \"$line\" == *\" moves \"* ]]; then rest=${line#* moves }; for m in $rest; do moves=$((moves + 1)); done; fi;\n"
+        "  elif [[ \"$line\" =~ ^go\\ depth\\ ([0-9]+) ]]; then\n"
+        "    depth=${BASH_REMATCH[1]};\n"
+        "    if [ \"$moves\" -eq 0 ]; then echo \"info depth $depth score cp 20 pv d2d4\"; echo \"bestmove d2d4\";\n"
+        "    elif [ \"$moves\" -eq 1 ]; then echo \"info depth $depth score cp 280 pv e7e5\"; echo \"bestmove e7e5\";\n"
+        "    else echo \"info depth $depth score cp -280 pv g1f3\"; echo \"bestmove g1f3\"; fi;\n"
+        "  elif [ \"$line\" = \"stop\" ]; then echo \"bestmove 0000\";\n"
+        "  elif [ \"$line\" = \"quit\" ]; then exit 0; fi\n"
+        "done\n";
+    scriptFile.write(script);
+    scriptFile.close();
+    QFile::setPermissions(scriptPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                      QFile::ReadUser | QFile::ExeUser | QFile::ReadGroup |
+                                      QFile::ExeGroup | QFile::ReadOther | QFile::ExeOther);
+    return scriptPath;
+}
+
 } // namespace
 
 class GameControllerTest : public QObject {
@@ -148,11 +179,20 @@ private slots:
     void testAnnotationsTruncatedOnBranching();
     void testPgnTextWithAnnotationsRoundTrip();
     void testGameAuditExportsAndReloadsMarkers();
+    void testGameAuditDepthAndReport();
+    void testGameAuditFollowsTheBoard();
+    void testStoppingCancelsTheGameAudit();
     void testGameAuditCanBeCancelledWithoutPartialResults();
     void testGameAuditMarksLostForcedMateAsBlunder();
     void testPromotionAndUnderpromotion();
     void testGoToStartAndGoToEnd();
     void testDrawClaims();
+    void testTakeBackInFreePlay();
+    void testTakeBackAfterFreePlayCheckmate();
+    void testTakeBackInComputerGame();
+    void testResignAgainstEngine();
+    void testDrawOffers();
+    void testAnalysisSettings();
 };
 
 void GameControllerTest::initTestCase() {
@@ -1062,6 +1102,380 @@ void GameControllerTest::testEngineRefinesCurve() {
     QTRY_VERIFY_WITH_TIMEOUT(curveSpy.count() >= 1, 2000);
     QCOMPARE(controller.evaluationCurve().last(),
              UciParser::scoreToWinningPercentage(-20.0));
+}
+
+void GameControllerTest::testTakeBackInFreePlay() {
+    GameController controller;
+    QSignalSpy statusSpy(&controller, &GameController::statusMessage);
+    QSignalSpy historySpy(&controller, &GameController::historyChanged);
+
+    QVERIFY(!controller.canTakeBack());
+    QVERIFY(!controller.takeBack());
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    QVERIFY(controller.requestMove({6, 3}, {4, 3})); // d2d4
+    QVERIFY(controller.canTakeBack());
+    QCOMPARE(controller.uciMoves().size(), 3);
+
+    const int historyBefore = historySpy.count();
+    QVERIFY(controller.takeBack());
+    QCOMPARE(controller.uciMoves().size(), 2);
+    QCOMPARE(controller.moveCursor(), 2);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 e5")));
+    QVERIFY(!controller.pgnText().contains(QStringLiteral("d4")));
+    QVERIFY(historySpy.count() > historyBefore);
+    QCOMPARE(statusSpy.count(), 1);
+
+    // The evaluation curve follows the shortened history.
+    QCOMPARE(controller.evaluationCurve().size(), 3);
+
+    // A review position must be left before another move can be taken back.
+    QVERIFY(controller.stepBack());
+    QVERIFY(!controller.canTakeBack());
+    QVERIFY(!controller.takeBack());
+    QCOMPARE(controller.uciMoves().size(), 2);
+    QVERIFY(controller.goToEnd());
+    QVERIFY(controller.canTakeBack());
+
+    // Taking back every remaining move returns to the initial position.
+    QVERIFY(controller.takeBack());
+    QVERIFY(controller.takeBack());
+    QVERIFY(controller.uciMoves().isEmpty());
+    QCOMPARE(controller.moveCursor(), 0);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QCOMPARE(controller.evaluationCurve().size(), 1);
+    QVERIFY(!controller.canTakeBack());
+}
+
+void GameControllerTest::testTakeBackAfterFreePlayCheckmate() {
+    GameController controller;
+
+    // Ra8 is mate. A free game is not resumed by a result, so the mating move
+    // can be taken back to try another continuation.
+    QVERIFY(controller.loadFen(QStringLiteral("6k1/5ppp/8/8/8/8/8/R6K w - - 0 1")));
+    QVERIFY(controller.requestMove({7, 0}, {0, 0}));
+    QVERIFY(controller.rules().isCheckmate(Rules::Color::Black));
+
+    QVERIFY(controller.canTakeBack());
+    QVERIFY(controller.takeBack());
+    QVERIFY(controller.uciMoves().isEmpty());
+    QVERIFY(!controller.rules().isCheckmate(Rules::Color::Black));
+    QVERIFY(controller.rules().pieceAt({7, 0}).has_value());
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+}
+
+void GameControllerTest::testTakeBackInComputerGame() {
+    const QString scriptPath =
+        writeMockEngineScript(QStringLiteral("mock_takeback_engine.sh"));
+    GameController controller;
+    QSignalSpy humanTurnSpy(&controller, &GameController::humanTurnBegan);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = false;
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+    QVERIFY(!controller.canTakeBack());
+
+    // The engine answers the human's move, either from the book or from its
+    // timed search; wait until it is the human's turn again.
+    QVERIFY(controller.requestMove({6, 0}, {5, 0})); // a2a3
+    QTRY_VERIFY_WITH_TIMEOUT(controller.rules().currentPlayer() == Rules::Color::White &&
+                                 controller.uciMoves().size() == 2,
+                             WaitTimeout);
+    QVERIFY(controller.canTakeBack());
+
+    const int humanTurnsBefore = humanTurnSpy.count();
+    QVERIFY(controller.takeBack());
+    QCOMPARE(controller.uciMoves().size(), 0);
+    QCOMPARE(controller.moveCursor(), 0);
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::White);
+    QVERIFY(controller.isComputerGameActive());
+    QVERIFY(humanTurnSpy.count() > humanTurnsBefore);
+    // Nothing is left to take back, and the engine is not asked to move again.
+    QVERIFY(!controller.canTakeBack());
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testResignAgainstEngine() {
+    const QString scriptPath =
+        writeMockEngineScript(QStringLiteral("mock_resign_engine.sh"));
+    GameController controller;
+    QSignalSpy finishedSpy(&controller, &GameController::gameFinished);
+
+    // Resigning is only available in a game against the engine.
+    QVERIFY(!controller.canResign());
+    controller.resign();
+    QCOMPARE(finishedSpy.count(), 0);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = false;
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+    QVERIFY(controller.canResign());
+
+    controller.resign();
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(finishedSpy.first().at(0).toString(), QStringLiteral("0-1"));
+    QVERIFY(finishedSpy.first().at(1).toString().contains(QStringLiteral("resigned")));
+    QVERIFY(!controller.isComputerGameActive());
+    QVERIFY(!controller.canResign());
+    QVERIFY(controller.pgnText().contains(QStringLiteral("[Result \"0-1\"]")));
+    // A finished game against the engine is not resumed by a take-back.
+    QVERIFY(!controller.canTakeBack());
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testDrawOffers() {
+    // Free play: the two players share the board, so the offer is the agreement.
+    GameController freePlay;
+    QSignalSpy freeFinished(&freePlay, &GameController::gameFinished);
+    QVERIFY(!freePlay.canOfferDraw());
+    freePlay.offerDraw();
+    QCOMPARE(freeFinished.count(), 0);
+
+    QVERIFY(freePlay.requestMove({6, 4}, {4, 4}));
+    QVERIFY(freePlay.requestMove({1, 4}, {3, 4}));
+    QVERIFY(freePlay.canOfferDraw());
+    freePlay.offerDraw();
+    QCOMPARE(freeFinished.count(), 1);
+    QCOMPARE(freeFinished.first().at(0).toString(), QStringLiteral("1/2-1/2"));
+    QVERIFY(freePlay.pgnText().contains(QStringLiteral("[Result \"1/2-1/2\"]")));
+    QVERIFY(!freePlay.canOfferDraw());
+
+    // Against the engine: a balanced position is accepted.
+    const QString scriptPath =
+        writeMockEngineScript(QStringLiteral("mock_draw_engine.sh"));
+    GameController controller;
+    QSignalSpy finishedSpy(&controller, &GameController::gameFinished);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    ComputerGameSettings settings;
+    settings.enginePlaysWhite = false;
+    controller.startComputerGame(settings);
+    QVERIFY(controller.isComputerGameActive());
+    QVERIFY(controller.canOfferDraw());
+
+    controller.offerDraw();
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(finishedSpy.first().at(0).toString(), QStringLiteral("1/2-1/2"));
+    QVERIFY(finishedSpy.first().at(1).toString().contains(QStringLiteral("accepted")));
+    QVERIFY(!controller.canOfferDraw());
+    QVERIFY(!controller.isComputerGameActive());
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testAnalysisSettings() {
+    const QString scriptPath =
+        writeMockEngineScript(QStringLiteral("mock_analysis_settings.sh"));
+    GameController controller;
+
+    QCOMPARE(controller.analysisDepth(), 0);
+    QCOMPARE(controller.analysisMultiPv(), 1);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    QSignalSpy sentSpy(controller.engine(), &EngineBackend::rawLineSent);
+    const auto wasSent = [&sentSpy](const QString &command) {
+        for (const QList<QVariant> &arguments : sentSpy) {
+            if (arguments.at(0).toString() == command) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    controller.setAnalysisSettings(12, 3);
+    QCOMPARE(controller.analysisDepth(), 12);
+    QCOMPARE(controller.analysisMultiPv(), 3);
+
+    controller.startAnalysis();
+    QTRY_VERIFY_WITH_TIMEOUT(wasSent(QStringLiteral("go depth 12")), WaitTimeout);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        wasSent(QStringLiteral("setoption name MultiPV value 3")), WaitTimeout);
+
+    // Out-of-range values are clamped to the supported limits.
+    controller.setAnalysisSettings(-5, 99);
+    QCOMPARE(controller.analysisDepth(), 0);
+    QCOMPARE(controller.analysisMultiPv(), 8);
+
+    controller.stopAnalysis();
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testGameAuditDepthAndReport() {
+    const QString scriptPath =
+        writeReportAuditEngineScript(QStringLiteral("mock_report_audit_engine.sh"));
+    GameController controller;
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    // The depth is configurable and clamped to a usable range.
+    QCOMPARE(controller.gameAuditDepth(), 18);
+    controller.setGameAuditDepth(12);
+    QCOMPARE(controller.gameAuditDepth(), 12);
+    controller.setGameAuditDepth(0);
+    QCOMPARE(controller.gameAuditDepth(), 1);
+    controller.setGameAuditDepth(12);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+
+    QVERIFY(!controller.auditReport().valid);
+    QSignalSpy reportSpy(&controller, &GameController::auditReportChanged);
+    QVERIFY(controller.canStartGameAudit());
+    QVERIFY(controller.startGameAudit());
+    QTRY_VERIFY_WITH_TIMEOUT(controller.auditReport().valid, WaitTimeout);
+
+    const AuditReport &report = controller.auditReport();
+    QCOMPARE(report.depth, 12);
+    QCOMPARE(report.plies, 2);
+    QCOMPARE(report.analysedPositions, 3);
+    QCOMPARE(report.sanByPly.size(), 3);
+    QCOMPARE(report.sanByPly.at(1), QStringLiteral("e4"));
+    QCOMPARE(report.sanByPly.at(2), QStringLiteral("e5"));
+    QVERIFY(reportSpy.count() >= 1);
+
+    // White loses 300 centipawns with e4, Black answers with the best move.
+    QCOMPARE(report.findings.size(), 1);
+    const AuditFinding &finding = report.findings.first();
+    QVERIFY(finding.severity == AuditSeverity::Blunder);
+    QCOMPARE(finding.ply, 1);
+    QCOMPARE(finding.centipawnLoss, 300);
+    QCOMPARE(finding.bestMove, QStringLiteral("d2d4"));
+    QCOMPARE(finding.bestMoveSan, QStringLiteral("d4"));
+
+    QCOMPARE(report.white.blunders, 1);
+    QCOMPARE(report.white.inaccuracies, 0);
+    QCOMPARE(report.white.mistakes, 0);
+    QCOMPARE(report.white.scoredMoves, 1);
+    QCOMPARE(report.white.averageCentipawnLoss, 300.0);
+    QVERIFY(report.white.accuracy > 25.0);
+    QVERIFY(report.white.accuracy < 35.0);
+
+    QCOMPARE(report.black.blunders, 0);
+    QCOMPARE(report.black.scoredMoves, 1);
+    QCOMPARE(report.black.averageCentipawnLoss, 0.0);
+    QVERIFY(report.black.accuracy > 99.0);
+
+    QCOMPARE(report.centipawnLossByPly.size(), 3);
+    QCOMPARE(report.centipawnLossByPly.at(1), 300);
+    QCOMPARE(report.centipawnLossByPly.at(2), 0);
+
+    // Playing on makes the report describe a game that no longer exists.
+    QVERIFY(controller.requestMove({6, 2}, {4, 2})); // c2c4
+    QVERIFY(!controller.auditReport().valid);
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testGameAuditFollowsTheBoard() {
+    const QString scriptPath =
+        writeReportAuditEngineScript(QStringLiteral("mock_follow_audit_engine.sh"));
+    GameController controller;
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    QVERIFY(controller.requestMove({6, 3}, {4, 3})); // d2d4
+    QCOMPARE(controller.moveCursor(), 3);
+
+    // The audit walks the main line: the board must visit every analysed
+    // position so that the reviewer can follow the analysis.
+    QVector<int> visited;
+    const auto connection = connect(&controller, &GameController::positionChanged,
+                                    [&controller, &visited] {
+                                        visited.append(controller.moveCursor());
+                                    });
+
+    QVERIFY(controller.canStepBack());
+    QVERIFY(controller.startGameAudit());
+    QVERIFY(controller.isGameAuditActive());
+    // The analysis owns the board: navigation is refused while it runs.
+    QVERIFY(!controller.canStepBack());
+    QVERIFY(!controller.canStepForward());
+
+    QTRY_VERIFY_WITH_TIMEOUT(controller.auditReport().valid, WaitTimeout);
+    disconnect(connection);
+
+    QVERIFY(visited.size() >= 4);
+    QVERIFY(visited.mid(0, 4) == (QVector<int>{0, 1, 2, 3}));
+
+    // The user's position is given back at the end.
+    QCOMPARE(controller.moveCursor(), 3);
+    QVERIFY(controller.canStepBack());
+    QVERIFY(!controller.canStepForward());
+
+    // The engine was left on the position the user is looking at: after
+    // 1. e4 e5 2. d4 it is Black to move.
+    QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testStoppingCancelsTheGameAudit() {
+    const QString scriptPath =
+        writeReportAuditEngineScript(QStringLiteral("mock_stop_audit_engine.sh"));
+    GameController controller;
+    QSignalSpy completedSpy(&controller, &GameController::auditCompleted);
+
+    QVERIFY(controller.startEngine(scriptPath));
+    QTRY_COMPARE_WITH_TIMEOUT(controller.engine()->state(), UciEngine::State::Ready, 2000);
+
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e2e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e7e5
+    QVERIFY(controller.requestMove({6, 3}, {4, 3})); // d2d4
+    const int savedCursor = controller.moveCursor();
+
+    QVERIFY(controller.startGameAudit());
+    QVERIFY(controller.isGameAuditActive());
+
+    // Stopping the engine during the analysis cancels the whole run: it must
+    // not walk on to the next position and restart the search.
+    controller.stopAnalysis();
+    QVERIFY(!controller.isGameAuditActive());
+    QCOMPARE(completedSpy.count(), 1);
+    QCOMPARE(completedSpy.first().at(0).toBool(), false);
+    QVERIFY(!controller.auditReport().valid);
+
+    // Let the engine answer the stop and the pending timers run: the audit
+    // must stay cancelled.
+    QTest::qWait(300);
+    QVERIFY(!controller.isGameAuditActive());
+    QVERIFY(!controller.auditReport().valid);
+    QCOMPARE(controller.moveCursor(), savedCursor);
+    QCOMPARE(completedSpy.count(), 1);
+
+    // A new analysis can be started afterwards.
+    QTRY_VERIFY_WITH_TIMEOUT(controller.engine()->state() == UciEngine::State::Ready,
+                             WaitTimeout);
+    QVERIFY(controller.startGameAudit());
+    QTRY_VERIFY_WITH_TIMEOUT(controller.auditReport().valid, WaitTimeout);
+
+    controller.stopEngine();
+    QFile::remove(scriptPath);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

@@ -14,6 +14,7 @@
 
 #include <optional>
 
+#include "auditreports.h"
 #include "book.h"
 #include "computergamesettings.h"
 #include "enginebackend.h"
@@ -29,13 +30,9 @@ class GameController : public QObject {
     Q_OBJECT
 
 public:
-    struct AuditFinding {
-        AuditSeverity severity = AuditSeverity::None;
-        int ply = 0;
-        int centipawnLoss = 0;
-        QString bestMove;
-        bool forcedMate = false;
-    };
+    // The finding type lives in auditreports.h so that the report dialog can
+    // use it without depending on the controller.
+    using AuditFinding = ::AuditFinding;
 
     explicit GameController(QObject *parent = nullptr);
 
@@ -87,6 +84,13 @@ public:
     [[nodiscard]] bool canStepForward() const;
     [[nodiscard]] int moveCursor() const;
 
+    // Removes played moves from the recorded history: one ply in free play,
+    // and either the human's move (while the engine is to move) or the human's
+    // move together with the engine's reply in a computer game. The engine
+    // search in progress is stopped.
+    [[nodiscard]] bool canTakeBack() const;
+    bool takeBack();
+
     // Computer game
     void startComputerGame(const ComputerGameSettings &settings);
     void cancelComputerGame();
@@ -103,19 +107,44 @@ public:
     void setRecommendedMovePreviewEnabled(bool enabled);
     void updateEvaluation();
 
+    // Applies the limits used by the next analysis: a depth of 0 searches
+    // without a depth limit and MultiPV is the number of principal variations.
+    // A running analysis is restarted so that the new limits apply at once.
+    void setAnalysisSettings(int depth, int multiPv);
+    [[nodiscard]] int analysisDepth() const;
+    [[nodiscard]] int analysisMultiPv() const;
+
+    // Concessions. Resigning only applies to a game against the engine; a draw
+    // offer is decided by the engine there and agreed between the two players
+    // in free play.
+    [[nodiscard]] bool canResign() const;
+    void resign();
+    [[nodiscard]] bool canOfferDraw() const;
+    void offerDraw();
+
     // Draw claims (threefold repetition / fifty-move rule). The controller
     // adjudicates these draws automatically in computer games; this explicit
     // path covers free play and positions loaded from FEN or PGN.
     [[nodiscard]] bool canClaimDraw() const;
     void claimDraw();
 
-    // Fixed-depth (18), mainline-only engine audit. Results are committed as
-    // one transaction so cancelling or losing the engine cannot leave a partial PGN.
+    // Mainline-only engine audit. Results are committed as one transaction so
+    // cancelling or losing the engine cannot leave a partial PGN, and they are
+    // also summarised as an enriched report.
     [[nodiscard]] bool canStartGameAudit() const;
     bool startGameAudit();
     void cancelGameAudit();
     [[nodiscard]] bool isGameAuditActive() const;
     [[nodiscard]] QVector<AuditFinding> auditFindings() const;
+
+    // Search depth of the audit, 18 by default. It is used by the next run and
+    // by the score gate while the audit runs.
+    void setGameAuditDepth(int depth);
+    [[nodiscard]] int gameAuditDepth() const;
+
+    // Enriched result of the last completed audit. It is invalidated as soon
+    // as the game it describes changes.
+    [[nodiscard]] const AuditReport &auditReport() const;
 
     // State
     [[nodiscard]] const Rules &rules() const;
@@ -182,6 +211,9 @@ signals:
     void auditStateChanged(bool active);
     void auditProgressChanged(int completedPositions, int totalPositions);
     void auditCompleted(bool applied);
+    // Emitted when a new report is available or when the current one is
+    // invalidated by a change to the game.
+    void auditReportChanged();
 
 private:
     void sendPositionToEngine();
@@ -194,6 +226,9 @@ private:
     void ensureRemoteEngine();
     void handleEngineStateChanged();
     void startEngineAnalysis();
+    // Starts an analysis with an explicit MultiPV count; the depth limit is
+    // always the configured one. Move previews ask for a single variation.
+    void startEngineAnalysis(int multiPv);
     void stopEngineAnalysis();
     void startEngineTimedSearch(qint64 whiteTimeMilliseconds,
                                 qint64 blackTimeMilliseconds);
@@ -205,8 +240,19 @@ private:
     void onAnalysisLine(const EngineAnalysisLine &line);
     void onAuditBestMove(const QString &bestMove, const QString &ponder);
     void startNextAuditPosition();
+    // Moves the board to the position the audit is currently analysing.
+    void showAuditPosition();
     void finishGameAudit(bool applyResults, const QString &message);
     void restoreAfterGameAudit();
+    // Clears the report of a game that no longer matches it.
+    void invalidateAuditReport();
+    // Standard algebraic notation of every main-line ply, replayed from the
+    // initial position.
+    [[nodiscard]] QVector<QString> mainLineSan() const;
+    // Converts a UCI move into the notation of the given position, falling
+    // back to the UCI text when it cannot be interpreted.
+    [[nodiscard]] QString sanForUciMove(const Rules &position,
+                                        const QString &uciMove) const;
     bool recordMove(const Rules::Move &move);
     void appendPgnMove(const QString &san, Rules::Color movingColor);
     void rebuildPositionToCursor();
@@ -246,11 +292,16 @@ private:
     QString remoteEngineAccessKey_;
     bool pendingAnalysisStart_ = false;
     bool pendingGatewaySelection_ = false;
+    int analysisDepth_ = 0;
+    int analysisMultiPv_ = 1;
 
     ComputerGameSettings pendingComputerGameSettings_;
     ComputerGameSettings computerGameSettings_;
     bool pendingComputerGameStart_ = false;
     bool computerGameActive_ = false;
+    // True once a game was started against the engine, including after it
+    // ended: a finished computer game is not resumed by a take-back.
+    bool computerGameStarted_ = false;
     bool computerMovePreviewEnabled_ = false;
     bool recommendedMovePreviewEnabled_ = false;
     Rules::Color computerColor_ = Rules::Color::Black;
@@ -267,10 +318,12 @@ private:
     bool auditResumeManualAnalysis_ = false;
     int auditSavedCursor_ = 0;
     int auditPosition_ = 0;
+    int gameAuditDepth_ = 18;
     QVector<AuditScore> auditScores_;
     QStringList auditBestMoves_;
     std::optional<EngineAnalysisLine> auditLatestLine_;
     QVector<AuditFinding> auditFindings_;
+    AuditReport auditReport_;
     // One display percentage for White per ply, starting position included.
     QVector<double> evaluationCurve_;
 };

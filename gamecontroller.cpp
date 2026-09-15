@@ -17,7 +17,9 @@
 #include <utility>
 
 namespace {
-    constexpr int GameAuditDepth = 18;
+    // An engine is assumed to accept a draw offer while it is not ahead by
+    // more than half a pawn in the current position.
+    constexpr int DrawAcceptanceThresholdCp = 50;
 }
 
 GameController::GameController(QObject *parent)
@@ -182,6 +184,8 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
 
     computerGameActive_ = false;
     pendingComputerGameStart_ = false;
+    computerGameStarted_ = false;
+    invalidateAuditReport();
     historyPrefix_ = QStringLiteral("[FEN \"%1\"]\n\n%2").arg(fen, description);
 
     rules_ = newRules;
@@ -216,6 +220,8 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
 void GameController::newGame() {
     computerGameActive_ = false;
     pendingComputerGameStart_ = false;
+    computerGameStarted_ = false;
+    invalidateAuditReport();
     historyPrefix_.clear();
     initialFen_.clear();
     clearMovePreviews();
@@ -257,6 +263,8 @@ bool GameController::loadPgn(const QString &pgnContent) {
 
     computerGameActive_ = false;
     pendingComputerGameStart_ = false;
+    computerGameStarted_ = false;
+    invalidateAuditReport();
     historyPrefix_.clear();
     clearMovePreviews();
 
@@ -382,12 +390,12 @@ bool GameController::stepForward() {
 }
 
 bool GameController::canStepBack() const {
-    return !computerGameActive_ && !pendingComputerGameStart_ &&
+    return !auditActive_ && !computerGameActive_ && !pendingComputerGameStart_ &&
            moveCursor_ > 0;
 }
 
 bool GameController::canStepForward() const {
-    return !computerGameActive_ && !pendingComputerGameStart_ &&
+    return !auditActive_ && !computerGameActive_ && !pendingComputerGameStart_ &&
            moveCursor_ < uciMoves_.size();
 }
 
@@ -428,6 +436,91 @@ bool GameController::goToMove(int moveIndex) {
 
 int GameController::moveCursor() const {
     return moveCursor_;
+}
+
+bool GameController::canTakeBack() const {
+    if (auditActive_ || pendingComputerGameStart_ || uciMoves_.isEmpty()) {
+        return false;
+    }
+
+    // Taking back is only defined for the current end of the game; use the
+    // navigation actions to review an earlier position.
+    if (moveCursor_ != uciMoves_.size()) {
+        return false;
+    }
+
+    if (computerGameActive_) {
+        // While the engine is to move, only the human's own last move can go
+        // back; on the human's turn the engine's reply goes back with it.
+        return rules_.currentPlayer() == computerColor_ || uciMoves_.size() >= 2;
+    }
+
+    // A finished game against the engine is not resumed by a take-back; the
+    // player starts a new game instead. Free play and loaded games may always
+    // step back from a result.
+    return pgnResult_ == QStringLiteral("*") || !computerGameStarted_;
+}
+
+bool GameController::takeBack() {
+    if (!canTakeBack()) {
+        return false;
+    }
+
+    int plies = 1;
+    if (computerGameActive_ && rules_.currentPlayer() != computerColor_) {
+        plies = 2;
+    }
+
+    const bool resumeAnalysis = !computerGameActive_ && isEngineAnalyzing();
+    stopEngineAnalysis();
+    clearMovePreviews();
+
+    const int remaining = qMax(0, uciMoves_.size() - plies);
+    uciMoves_.resize(remaining);
+    if (plyAnnotations_.size() > remaining + 1) {
+        plyAnnotations_.resize(remaining + 1);
+    }
+    if (evaluationCurve_.size() > remaining + 1) {
+        evaluationCurve_.resize(remaining + 1);
+    }
+
+    moveCursor_ = remaining;
+    rebuildPositionToCursor();
+    // Recomputes the notation and the move numbers of the surviving moves.
+    rebuildPgnHistory();
+
+    if (pgnResult_ != QStringLiteral("*")) {
+        pgnResult_ = QStringLiteral("*");
+        updatePgnResult(pgnResult_);
+    }
+
+    invalidateAuditReport();
+    emit evaluationCurveChanged();
+    refreshMoveHistory();
+    updateEvaluation();
+    emit positionChanged();
+
+    emit statusMessage(plies == 2
+                           ? tr("Your last move and the engine's reply were taken back.")
+                           : tr("The last move was taken back."));
+
+    if (computerGameActive_) {
+        emit humanTurnBegan();
+        if (isEngineConnected()) {
+            sendPositionToEngine();
+            startMovePreviewAnalysis();
+        }
+        return true;
+    }
+
+    if (isEngineConnected()) {
+        sendPositionToEngine();
+        if (resumeAnalysis) {
+            startEngineAnalysis();
+        }
+    }
+
+    return true;
 }
 
 bool GameController::isPromotionMove(Rules::Position from, Rules::Position to) const {
@@ -589,7 +682,17 @@ void GameController::startAnalysis() {
 }
 
 void GameController::stopAnalysis() {
-    if (computerGameActive_ || auditActive_ || !isEngineConnected()) {
+    if (computerGameActive_ || !isEngineConnected()) {
+        return;
+    }
+
+    if (auditActive_) {
+        // The search shown in the engine panel belongs to the game analysis:
+        // stopping it cancels the whole run instead of letting it walk on to
+        // the next position. A former manual analysis is not resumed, because
+        // the user asked for the engine to stop.
+        auditResumeManualAnalysis_ = false;
+        cancelGameAudit();
         return;
     }
 
@@ -598,8 +701,12 @@ void GameController::stopAnalysis() {
 }
 
 void GameController::startEngineAnalysis() {
+    startEngineAnalysis(analysisMultiPv_);
+}
+
+void GameController::startEngineAnalysis(int multiPv) {
     if (EngineBackend *backend = activeBackendForCommands(); backend != nullptr) {
-        backend->startAnalysis();
+        backend->startAnalysis(analysisDepth_, multiPv);
     }
 }
 
@@ -668,6 +775,7 @@ bool GameController::startGameAudit() {
         return false;
     }
 
+    invalidateAuditReport();
     auditActive_ = true;
     auditSavedCursor_ = moveCursor_;
     auditPosition_ = 0;
@@ -703,6 +811,57 @@ bool GameController::isGameAuditActive() const {
 
 QVector<GameController::AuditFinding> GameController::auditFindings() const {
     return auditFindings_;
+}
+
+void GameController::setGameAuditDepth(int depth) {
+    gameAuditDepth_ = qBound(1, depth, 99);
+}
+
+int GameController::gameAuditDepth() const {
+    return gameAuditDepth_;
+}
+
+const AuditReport &GameController::auditReport() const {
+    return auditReport_;
+}
+
+void GameController::invalidateAuditReport() {
+    if (!auditReport_.valid) {
+        return;
+    }
+    auditReport_ = AuditReport{};
+    emit auditReportChanged();
+}
+
+QVector<QString> GameController::mainLineSan() const {
+    QVector<QString> sanByPly;
+    sanByPly.reserve(uciMoves_.size() + 1);
+    sanByPly.append(QString());
+
+    Rules replay;
+    if (initialFen_.isEmpty() || !replay.loadFen(initialFen_)) {
+        replay.reset();
+    }
+
+    for (const QString &moveText : uciMoves_) {
+        const auto move = parseUciMove(moveText);
+        if (!move.has_value() || !replay.isValidMove(*move)) {
+            break;
+        }
+        sanByPly.append(replay.toSan(*move));
+        replay.tryMove(*move);
+    }
+
+    return sanByPly;
+}
+
+QString GameController::sanForUciMove(const Rules &position,
+                                      const QString &uciMove) const {
+    const auto move = parseUciMove(uciMove);
+    if (!move.has_value() || !position.isValidMove(*move)) {
+        return uciMove;
+    }
+    return position.toSan(*move);
 }
 
 const Rules &GameController::rules() const {
@@ -1034,6 +1193,8 @@ void GameController::beginComputerGame() {
     computerGameSettings_ = pendingComputerGameSettings_;
     pendingComputerGameStart_ = false;
     computerGameActive_ = true;
+    computerGameStarted_ = true;
+    invalidateAuditReport();
     computerColor_ = computerGameSettings_.enginePlaysWhite
                          ? Rules::Color::White
                          : Rules::Color::Black;
@@ -1128,7 +1289,8 @@ void GameController::startMovePreviewAnalysis() {
     }
 
     sendPositionToEngine();
-    startEngineAnalysis();
+    // Previews only need the best line, whatever the MultiPV setting is.
+    startEngineAnalysis(1);
 }
 
 void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
@@ -1183,9 +1345,12 @@ void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
 }
 
 void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
+    // The last scored line of the position being audited is kept whatever
+    // depth it reports: a position that is already mate (or that the engine
+    // solves early) legitimately stops below the requested depth, and the
+    // whole audit must not be discarded because of it.
     if (auditActive_ && auditPosition_ >= 0 && auditPosition_ < auditScores_.size() &&
-        line.multipv == 1 && line.depth.value_or(0) >= GameAuditDepth &&
-        (line.scoreCp.has_value() || line.mateIn.has_value())) {
+        line.multipv == 1 && (line.scoreCp.has_value() || line.mateIn.has_value())) {
         auditLatestLine_ = line;
     }
     updateMovePreviews(line);
@@ -1223,8 +1388,8 @@ void GameController::onAuditBestMove(const QString &bestMove, const QString &pon
     if (!auditActive_ || auditPosition_ < 0 || auditPosition_ >= auditScores_.size()) return;
     if (!auditLatestLine_.has_value()) {
         finishGameAudit(false,
-                        tr("Game analysis stopped because the engine did not return a depth %1 score.")
-                            .arg(GameAuditDepth));
+                        tr("Game analysis stopped: the engine did not return a score for position %1.")
+                            .arg(auditPosition_ + 1));
         return;
     }
     auditScores_[auditPosition_] = {auditLatestLine_->scoreCp, auditLatestLine_->mateIn};
@@ -1274,8 +1439,24 @@ void GameController::startNextAuditPosition() {
         return;
     }
     auditLatestLine_.reset();
+    showAuditPosition();
     backend->sendPosition(initialFen_, uciMoves_.mid(0, auditPosition_));
-    backend->startAnalysis(GameAuditDepth);
+    backend->startAnalysis(gameAuditDepth_);
+}
+
+void GameController::showAuditPosition() {
+    // The board follows the analysis so that the reviewer sees the position
+    // the engine is scoring, highlighted in the move list and the curve.
+    const int target = qBound(0, auditPosition_, uciMoves_.size());
+    if (moveCursor_ == target) {
+        return;
+    }
+
+    moveCursor_ = target;
+    rebuildPositionToCursor();
+    clearMovePreviews();
+    emit positionChanged();
+    updateEvaluation();
 }
 
 void GameController::finishGameAudit(bool applyResults, const QString &message) {
@@ -1286,11 +1467,39 @@ void GameController::finishGameAudit(bool applyResults, const QString &message) 
         bool usable = auditScores_.size() == uciMoves_.size() + 1;
         for (const AuditScore &score : std::as_const(auditScores_))
             usable = usable && (score.centipawns.has_value() || score.mateIn.has_value());
+
+        AuditReport report;
+        report.depth = gameAuditDepth_;
+        report.plies = uciMoves_.size();
+        report.analysedPositions = auditScores_.size();
+        report.sanByPly = mainLineSan();
+        report.centipawnLossByPly.fill(-1, uciMoves_.size() + 1);
+
+        double whiteAccuracy = 0.0;
+        double blackAccuracy = 0.0;
+        const auto statsFor = [&report](Rules::Color color) -> AuditPlayerStats & {
+            return color == Rules::Color::White ? report.white : report.black;
+        };
+        const auto accuracySumFor = [&](Rules::Color color) -> double & {
+            return color == Rules::Color::White ? whiteAccuracy : blackAccuracy;
+        };
+
+        // Walking the main line also gives the notation of the best move of
+        // every position, which the report shows next to the played one.
+        Rules replay;
+        if (initialFen_.isEmpty() || !replay.loadFen(initialFen_)) {
+            replay.reset();
+        }
+
         for (int ply = 1; usable && ply <= uciMoves_.size(); ++ply) {
             const AuditScore &before = auditScores_.at(ply - 1);
             const AuditScore &after = auditScores_.at(ply);
+            // Both mate values are read from the side to move, so a positive
+            // value after the move means the opponent now mates: the mover's
+            // own forced mate is gone. A value of exactly zero means the move
+            // delivered mate, which is the opposite of a blunder.
             const bool lostForcedMate = before.mateIn.has_value() && *before.mateIn > 0 &&
-                (!after.mateIn.has_value() || *after.mateIn >= 0);
+                (!after.mateIn.has_value() || *after.mateIn > 0);
             const bool allowedForcedMate = after.mateIn.has_value() && *after.mateIn > 0;
             int loss = 0;
             AuditSeverity severity = AuditSeverity::None;
@@ -1299,21 +1508,85 @@ void GameController::finishGameAudit(bool applyResults, const QString &message) 
                 loss = qMax(0, qRound(*before.centipawns + *after.centipawns));
                 severity = loss >= 200 ? AuditSeverity::Blunder : loss >= 100 ? AuditSeverity::Mistake :
                            loss >= 50 ? AuditSeverity::Inaccuracy : AuditSeverity::None;
-            } else if (before.mateIn.has_value() || after.mateIn.has_value()) continue;
-            else { usable = false; break; }
+            } else if (before.mateIn.has_value() || after.mateIn.has_value()) {
+                // A mate score that is not a lost or an allowed forced mate
+                // still carries a winning percentage, so the move is scored
+                // for accuracy even though it has no centipawn loss.
+            } else { usable = false; break; }
+
+            const Rules::Color mover = sideToMoveAtPly(ply - 1);
+            AuditPlayerStats &stats = statsFor(mover);
+
+            // Both scores are read from the side to move, so the position
+            // after the move has to be turned around before it can be compared
+            // with the position before it.
+            const double winningBefore = UciParser::scoreToWinningPercentage(
+                before.centipawns.value_or(0.0), before.mateIn);
+            const double winningAfter =
+                100.0 - UciParser::scoreToWinningPercentage(
+                            after.centipawns.value_or(0.0), after.mateIn);
+            accuracySumFor(mover) +=
+                AuditReports::moveAccuracy(winningBefore - winningAfter);
+            ++stats.scoredMoves;
+
+            if (before.centipawns.has_value() && after.centipawns.has_value()) {
+                ++stats.centipawnMoves;
+                stats.totalCentipawnLoss += loss;
+                report.centipawnLossByPly[ply] = loss;
+            }
+
+            switch (severity) {
+            case AuditSeverity::Inaccuracy:
+                ++stats.inaccuracies;
+                break;
+            case AuditSeverity::Mistake:
+                ++stats.mistakes;
+                break;
+            case AuditSeverity::Blunder:
+                ++stats.blunders;
+                break;
+            case AuditSeverity::None:
+                break;
+            }
+
             if (severity != AuditSeverity::None) {
                 AuditAnnotation annotation{severity, loss, auditBestMoves_.at(ply - 1),
                                            uciMoves_.at(ply - 1), lostForcedMate || allowedForcedMate};
                 annotations[ply] = annotation;
-                findings.append({severity, ply, loss, annotation.bestMove, annotation.forcedMate});
+                AuditFinding finding{severity, ply, loss, annotation.bestMove, annotation.forcedMate};
+                finding.bestMoveSan = sanForUciMove(replay, annotation.bestMove);
+                findings.append(finding);
+            }
+
+            if (const auto played = parseUciMove(uciMoves_.at(ply - 1));
+                played.has_value() && replay.isValidMove(*played)) {
+                replay.tryMove(*played);
             }
         }
+
         if (usable) {
+            for (AuditPlayerStats *stats : {&report.white, &report.black}) {
+                stats->averageCentipawnLoss =
+                    stats->centipawnMoves > 0
+                        ? static_cast<double>(stats->totalCentipawnLoss) /
+                              stats->centipawnMoves
+                        : 0.0;
+                stats->accuracy = stats->scoredMoves > 0
+                                      ? (stats == &report.white ? whiteAccuracy
+                                                                : blackAccuracy) /
+                                            stats->scoredMoves
+                                      : 0.0;
+            }
+            report.findings = findings;
+            report.valid = true;
+
             for (PlyAnnotations &annotation : plyAnnotations_) annotation.audit = {};
             for (int ply = 1; ply < annotations.size(); ++ply) plyAnnotations_[ply].audit = annotations.at(ply);
             auditFindings_ = findings;
+            auditReport_ = report;
             refreshMoveHistory();
             emit annotationsChanged();
+            emit auditReportChanged();
         } else applyResults = false;
     }
     auditActive_ = false;
@@ -1323,14 +1596,28 @@ void GameController::finishGameAudit(bool applyResults, const QString &message) 
     emit auditStateChanged(false);
     emit auditCompleted(applyResults);
     emit statusMessage(message);
-    if (isEngineAnalyzing()) stopEngineAnalysis();
-    else if (auditRestorePending_ && engineState() == UciEngine::State::Ready) restoreAfterGameAudit();
+    if (isEngineAnalyzing()) {
+        stopEngineAnalysis();
+    }
+    // Puts the board back on the user's position, with or without an engine.
+    restoreAfterGameAudit();
 }
 
 void GameController::restoreAfterGameAudit() {
+    // The board followed the analysis: it returns to the position the user was
+    // looking at as soon as the audit ends, whether an engine is still
+    // connected or not.
+    const int target = qBound(0, auditSavedCursor_, uciMoves_.size());
+    if (moveCursor_ != target) {
+        moveCursor_ = target;
+        rebuildPositionToCursor();
+        clearMovePreviews();
+        emit positionChanged();
+        updateEvaluation();
+    }
+
     if (!auditRestorePending_ || engineState() != UciEngine::State::Ready) return;
     auditRestorePending_ = false;
-    moveCursor_ = qBound(0, auditSavedCursor_, uciMoves_.size());
     sendPositionToEngine();
     if (auditResumeManualAnalysis_) {
         auditResumeManualAnalysis_ = false;
@@ -1344,6 +1631,9 @@ bool GameController::recordMove(const Rules::Move &move) {
     if (san.isEmpty() || !rules_.tryMove(move)) {
         return false;
     }
+
+    // The game no longer matches any report built for it.
+    invalidateAuditReport();
 
     if (moveCursor_ < uciMoves_.size()) {
         // A move played from the middle of the history discards the
@@ -1537,6 +1827,94 @@ void GameController::claimDraw() {
     refreshMoveHistory();
     emit statusMessage(message);
     emit gameFinished(pgnResult_, message);
+}
+
+bool GameController::canResign() const {
+    return computerGameActive_ && pgnResult_ == QStringLiteral("*");
+}
+
+void GameController::resign() {
+    if (!canResign()) {
+        return;
+    }
+
+    const QString result = computerColor_ == Rules::Color::White
+                               ? QStringLiteral("1-0")
+                               : QStringLiteral("0-1");
+    finishComputerGame(result,
+                       tr("You resigned; the engine wins."));
+}
+
+bool GameController::canOfferDraw() const {
+    if (auditActive_ || pendingComputerGameStart_ ||
+        pgnResult_ != QStringLiteral("*")) {
+        return false;
+    }
+
+    // An offer describes the current position, so a review position has to be
+    // left first.
+    if (moveCursor_ != uciMoves_.size()) {
+        return false;
+    }
+
+    if (computerGameActive_) {
+        return true;
+    }
+
+    // Free play: the two players share the board, so at least one move must
+    // have been played before they can agree on a draw.
+    return !uciMoves_.isEmpty();
+}
+
+void GameController::offerDraw() {
+    if (!canOfferDraw()) {
+        return;
+    }
+
+    if (computerGameActive_) {
+        const int centipawns = HeuristicEval::evaluateCentipawns(rules_);
+        const int engineCentipawns = computerColor_ == Rules::Color::White
+                                         ? centipawns
+                                         : -centipawns;
+        if (engineCentipawns > DrawAcceptanceThresholdCp) {
+            emit statusMessage(tr("The engine declined the draw offer."));
+            return;
+        }
+
+        finishComputerGame(QStringLiteral("1/2-1/2"),
+                           tr("The engine accepted the draw offer."));
+        return;
+    }
+
+    pgnResult_ = QStringLiteral("1/2-1/2");
+    updatePgnResult(pgnResult_);
+    refreshMoveHistory();
+    emit statusMessage(tr("Draw agreed."));
+    emit gameFinished(pgnResult_, tr("Draw agreed."));
+}
+
+void GameController::setAnalysisSettings(int depth, int multiPv) {
+    const int clampedDepth = qBound(0, depth, 99);
+    const int clampedMultiPv = qBound(1, multiPv, 8);
+    if (analysisDepth_ == clampedDepth && analysisMultiPv_ == clampedMultiPv) {
+        return;
+    }
+
+    analysisDepth_ = clampedDepth;
+    analysisMultiPv_ = clampedMultiPv;
+
+    // Restart a running analysis so that the new limits apply immediately.
+    if (!computerGameActive_ && !auditActive_ && isEngineAnalyzing()) {
+        startEngineAnalysis();
+    }
+}
+
+int GameController::analysisDepth() const {
+    return analysisDepth_;
+}
+
+int GameController::analysisMultiPv() const {
+    return analysisMultiPv_;
 }
 
 std::optional<Rules::Move> GameController::parseUciMove(const QString &moveText) {

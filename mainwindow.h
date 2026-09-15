@@ -17,6 +17,7 @@
 
 class ChessBoard;
 class ChessGatewayClient;
+class AnalysisReportDialog;
 class EngineOutputWidget;
 class EvaluationBar;
 class EvaluationGraph;
@@ -77,7 +78,11 @@ public:
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
     [[nodiscard]] QAction *claimDrawAction() const;
+    [[nodiscard]] QAction *takeBackAction() const;
+    [[nodiscard]] QAction *resignAction() const;
+    [[nodiscard]] QAction *offerDrawAction() const;
     [[nodiscard]] QAction *analyzeGameAction() const;
+    [[nodiscard]] QAction *analysisReportAction() const;
     [[nodiscard]] QAction *firstMoveAction() const;
     [[nodiscard]] QAction *lastMoveAction() const;
     [[nodiscard]] QAction *copyFenAction() const;
@@ -90,6 +95,12 @@ public:
     void loadConfiguration(const QString &configFilePath = QString());
     void saveConfiguration();
     bool loadImageFile(const QString &filePath = QString());
+
+    // Drag-and-drop entry points: a drop carries an image or a local PGN
+    // file. They are public so that the drop path can be exercised without a
+    // platform drag session.
+    [[nodiscard]] bool hasSupportedDrop(const QMimeData *mime) const;
+    bool handleMimeData(const QMimeData *mime);
 
 public slots:
     void pieceMoved(QChar piece, Rules::Position oldPosition,
@@ -125,7 +136,14 @@ public slots:
     void goToEnd();
     void clearBoardAnnotations();
     void claimDraw();
+    void takeBack();
+    void resignGame();
+    void offerDraw();
+    void setAnalysisSettings(int depth, int multiPv);
     void toggleGameAudit();
+    // Opens (or raises) the enriched report of the last game analysis.
+    void showAnalysisReport();
+    void setGameAuditDepth(int depth);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -157,7 +175,6 @@ private:
     static QString findModelPath();
 
     bool hasSupportedImage(const QMimeData *mime) const;
-    bool handleMimeData(const QMimeData *mime);
     void processImage(const QImage &image, const QString &displayName);
     void loadRemoteImage(const QUrl &url);
     void applyConfiguredEngineOptions();
@@ -245,7 +262,12 @@ private:
     QAction *stopEngineAction_ = nullptr;
     QAction *clearAnnotationsAction_ = nullptr;
     QAction *claimDrawAction_ = nullptr;
+    QAction *takeBackAction_ = nullptr;
+    QAction *resignAction_ = nullptr;
+    QAction *offerDrawAction_ = nullptr;
     QAction *analyzeGameAction_ = nullptr;
+    QAction *analysisReportAction_ = nullptr;
+    AnalysisReportDialog *analysisReportDialog_ = nullptr;
 
     QString loadedPgnContent_;
     QStringList loadedPgnGames_;

@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRandomGenerator>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 ComputerGameDialog::ComputerGameDialog(const QString &engineName,
@@ -89,6 +90,10 @@ ComputerGameDialog::ComputerGameDialog(const QString &engineName,
                                QVariant::fromValue<qint64>(900000));
     timeControlCombo_->addItem(tr("Blitz — 5 minutes / player"),
                                QVariant::fromValue<qint64>(300000));
+    // The custom entry carries a negative value: a real base time is never
+    // negative, so it can never be mistaken for a preset.
+    timeControlCombo_->addItem(tr("Custom…"),
+                               QVariant::fromValue<qint64>(-1));
     timeControlCombo_->setCurrentIndex(0);
     gameLayout->addRow(tr("Time control:"), timeControlCombo_);
 
@@ -107,6 +112,28 @@ ComputerGameDialog::ComputerGameDialog(const QString &engineName,
     incrementCombo_->setToolTip(
         tr("Time added to a player's clock after every move played"));
     gameLayout->addRow(tr("Increment:"), incrementCombo_);
+
+    customMinutesSpin_ = new QSpinBox(gameGroup);
+    customMinutesSpin_->setObjectName(QStringLiteral("customMinutesSpin"));
+    customMinutesSpin_->setRange(1, 600);
+    customMinutesSpin_->setValue(10);
+    customMinutesSpin_->setSuffix(tr(" min"));
+    customMinutesSpin_->setToolTip(
+        tr("Base time given to each player when the custom control is used"));
+    gameLayout->addRow(tr("Custom base time:"), customMinutesSpin_);
+
+    customIncrementSpin_ = new QSpinBox(gameGroup);
+    customIncrementSpin_->setObjectName(QStringLiteral("customIncrementSpin"));
+    customIncrementSpin_->setRange(0, 180);
+    customIncrementSpin_->setValue(0);
+    customIncrementSpin_->setSuffix(tr(" s"));
+    customIncrementSpin_->setToolTip(
+        tr("Increment used with the custom base time"));
+    gameLayout->addRow(tr("Custom increment:"), customIncrementSpin_);
+
+    connect(timeControlCombo_, &QComboBox::currentIndexChanged, this,
+            [this](int) { updateCustomTimeEnabled(); });
+    updateCustomTimeEnabled();
 
     auto *timeDescription = new QLabel(
         tr("Each player receives the base time, plus the selected increment "
@@ -135,8 +162,17 @@ ComputerGameSettings ComputerGameDialog::settings() const {
     result.round = roundEdit_->text();
     result.playerName = playerNameEdit_->text();
     result.engineName = engineNameEdit_->text();
-    result.timeLimitMilliseconds = timeControlCombo_->currentData().toLongLong();
-    result.incrementMilliseconds = incrementCombo_->currentData().toLongLong();
+
+    const qint64 presetMilliseconds = timeControlCombo_->currentData().toLongLong();
+    if (presetMilliseconds < 0) {
+        result.timeLimitMilliseconds =
+            static_cast<qint64>(customMinutesSpin_->value()) * 60000;
+        result.incrementMilliseconds =
+            static_cast<qint64>(customIncrementSpin_->value()) * 1000;
+    } else {
+        result.timeLimitMilliseconds = presetMilliseconds;
+        result.incrementMilliseconds = incrementCombo_->currentData().toLongLong();
+    }
 
     switch (colorCombo_->currentIndex()) {
     case 0:
@@ -151,4 +187,27 @@ ComputerGameSettings ComputerGameDialog::settings() const {
     }
 
     return result;
+}
+
+QComboBox *ComputerGameDialog::timeControlCombo() const {
+    return timeControlCombo_;
+}
+
+QComboBox *ComputerGameDialog::incrementCombo() const {
+    return incrementCombo_;
+}
+
+QSpinBox *ComputerGameDialog::customMinutesSpin() const {
+    return customMinutesSpin_;
+}
+
+QSpinBox *ComputerGameDialog::customIncrementSpin() const {
+    return customIncrementSpin_;
+}
+
+void ComputerGameDialog::updateCustomTimeEnabled() {
+    const bool custom = timeControlCombo_->currentData().toLongLong() < 0;
+    customMinutesSpin_->setEnabled(custom);
+    customIncrementSpin_->setEnabled(custom);
+    incrementCombo_->setEnabled(!custom);
 }

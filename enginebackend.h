@@ -7,6 +7,7 @@
 
 #include <QList>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
@@ -91,10 +92,16 @@ private:
     };
 
     void sendUciCommand(const QString &command);
+    void transmitOption(const QString &name, const QVariant &value);
+    // Sends the options that were requested while a search was running. It
+    // runs once the engine is idle and before the next "go".
+    void applyPendingOptions();
 
     QString defaultEngineName_;
     SearchType activeSearchType_ = SearchType::None;
     SearchType pendingSearchType_ = SearchType::None;
+    // Options requested during a search, in request order.
+    QList<QPair<QString, QVariant>> pendingOptions_;
 };
 
 #endif // CHESSGUI_ENGINEBACKEND_H
