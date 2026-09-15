@@ -849,3 +849,12 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
 QSize ChessBoard::sizeHint() const {
     return {480, 480};
 }
+
+QRect ChessBoard::paintedBoardRect() const {
+    const BoardGeometry geometry = boardGeometry();
+    if (geometry.squareSize <= 0) {
+        return {};
+    }
+
+    return {geometry.boardX, geometry.boardY, geometry.boardSide, geometry.boardSide};
+}

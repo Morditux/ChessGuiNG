@@ -71,6 +71,12 @@ public:
     void clearUserAnnotations();
     [[nodiscard]] bool hasUserAnnotations() const;
 
+    // Painted squares in widget coordinates, empty while the widget is too
+    // small to draw a board. Read-only geometry query for the panels that must
+    // stay aligned with the board itself and not with the widget, which also
+    // carries the rank and file labels.
+    [[nodiscard]] QRect paintedBoardRect() const;
+
 signals:
     void pieceMoved(QChar piece, Rules::Position oldPosition,
                     Rules::Position newPosition);

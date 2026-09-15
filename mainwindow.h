@@ -36,6 +36,7 @@ class QNetworkReply;
 class QSplitter;
 class QToolButton;
 class QUrl;
+class QVBoxLayout;
 struct EngineAnalysisLine;
 struct VisionResult;
 
@@ -133,9 +134,16 @@ private slots:
     void onEngineError(const QString &errorMessage);
     void onVisionResult(const VisionResult &result);
     void adjustEnginePanelSize();
+    void syncEvaluationBarGeometry();
 
 private:
     void setupUi();
+
+    // True when the current game has moves that differ from the last saved or
+    // loaded PGN. Used to avoid losing a game on close.
+    [[nodiscard]] bool hasUnsavedGame() const;
+    // Returns false when the user cancels closing the window.
+    bool confirmDiscardingUnsavedGame();
 
     static bool isSupportedImagePath(const QString &path);
     static bool isRemoteImageUrl(const QUrl &url);
@@ -184,6 +192,7 @@ private:
     QCheckBox *showRecommendedMoveCheckBox_ = nullptr;
     QCheckBox *highlightLastMoveCheckBox_ = nullptr;
     QToolButton *flipBoardButton_ = nullptr;
+    QVBoxLayout *gaugeLayout_ = nullptr;
     QLabel *visionStatusLabel_ = nullptr;
     QNetworkAccessManager *networkManager_ = nullptr;
     QNetworkReply *remoteImageReply_ = nullptr;
@@ -214,6 +223,9 @@ private:
     QStringList loadedPgnGames_;
     QVector<PgnFile::GameSegment> loadedPgnGameSegments_;
     int selectedPgnGameIndex_ = -1;
+    // PGN text as last saved to or loaded from a file; anything else means the
+    // game has unsaved moves.
+    QString persistedPgnText_;
 
     VisionWorker *visionWorker_ = nullptr;
     QThread *visionThread_ = nullptr;

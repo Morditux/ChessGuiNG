@@ -20,6 +20,7 @@ private slots:
     void testKeywords();
     void testToUciMove();
     void testScoreToWinningPercentage();
+    void testFormatScore();
 };
 
 void UciParserTest::testParseInfoStandard() {
@@ -158,6 +159,21 @@ void UciParserTest::testScoreToWinningPercentage() {
 
     // Mate negative should be 0%
     QCOMPARE(UciParser::scoreToWinningPercentage(0.0, -1), 0.0);
+}
+
+void UciParserTest::testFormatScore() {
+    // Centipawns are shown as pawns with two decimals and an explicit sign.
+    QCOMPARE(UciParser::formatScore(135.0), QStringLiteral("+1.35"));
+    QCOMPARE(UciParser::formatScore(-42.0), QStringLiteral("-0.42"));
+    QCOMPARE(UciParser::formatScore(0.0), QStringLiteral("0.00"));
+    QCOMPARE(UciParser::formatScore(725.0), QStringLiteral("+7.25"));
+
+    // A mate distance supersedes the centipawn score.
+    QCOMPARE(UciParser::formatScore(0.0, 3), QStringLiteral("+M3"));
+    QCOMPARE(UciParser::formatScore(0.0, -5), QStringLiteral("-M5"));
+    // A mate of zero is a mate that is already on the board.
+    QCOMPARE(UciParser::formatScore(0.0, 0), QStringLiteral("Mate"));
+    QCOMPARE(UciParser::formatScore(-10000.0, 0), QStringLiteral("Mate"));
 }
 
 QTEST_MAIN(UciParserTest)

@@ -98,7 +98,6 @@ private:
     void updateHeaderSummary();
     void updateTableDisplay();
     [[nodiscard]] int desiredHeight() const;
-    static QString formatScore(double scoreCp, std::optional<int> mateIn);
     static QString formatNodes(qint64 nodes);
     static QString formatNps(qint64 nps);
     static QString formatTime(qint64 timeMs);

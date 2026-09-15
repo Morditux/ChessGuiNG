@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QMetaType>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTest>
 #include <QTemporaryDir>
@@ -122,6 +123,7 @@ private slots:
     void initTestCase();
     void testInitialState();
     void testLoadFen();
+    void testEvaluationScore();
     void testNewGame();
     void testLoadPgn();
     void testRequestMove();
@@ -187,6 +189,27 @@ void GameControllerTest::testLoadFen() {
 
     QVERIFY(!controller.loadFen(QStringLiteral("not a fen")));
     QCOMPARE(controller.initialFen(), fen);
+}
+
+void GameControllerTest::testEvaluationScore() {
+    GameController controller;
+    QSignalSpy scoreSpy(&controller, &GameController::evaluationScoreChanged);
+
+    controller.updateEvaluation();
+    QCOMPARE(scoreSpy.count(), 1);
+    const QString initialScore = scoreSpy.at(0).at(0).toString();
+    QVERIFY2(QRegularExpression(QStringLiteral("^[+-]?\\d+\\.\\d{2}$"))
+                 .match(initialScore).hasMatch(),
+             qPrintable(initialScore));
+
+    // Fool's mate: the checkmate is already on the board, so the heuristic
+    // cannot report a distance and the score is labelled "Mate".
+    QVERIFY(controller.loadFen(QStringLiteral(
+        "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")));
+    scoreSpy.clear();
+    controller.updateEvaluation();
+    QCOMPARE(scoreSpy.count(), 1);
+    QCOMPARE(scoreSpy.at(0).at(0).toString(), QStringLiteral("Mate"));
 }
 
 void GameControllerTest::testNewGame() {

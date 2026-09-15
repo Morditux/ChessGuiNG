@@ -4,6 +4,7 @@
 
 #include "evaluationbar.h"
 
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -102,16 +103,33 @@ void EvaluationBar::setShowEvaluationText(bool show) {
     update();
 }
 
+QString EvaluationBar::scoreText() const {
+    return scoreText_;
+}
+
+void EvaluationBar::setScoreText(const QString &scoreText) {
+    if (scoreText_ == scoreText) {
+        return;
+    }
+    scoreText_ = scoreText;
+    updateToolTip();
+    update();
+}
+
 QSize EvaluationBar::sizeHint() const {
-    return {13, 400};
+    // Wide enough to hold a score such as "+1.35" at the default font size.
+    return {38, 400};
 }
 
 QSize EvaluationBar::minimumSizeHint() const {
-    return {8, 120};
+    return {24, 120};
 }
 
 void EvaluationBar::updateToolTip() {
-    setToolTip(tr("Evaluation: %1% White").arg(value_, 0, 'f', 1));
+    const QString percentage = tr("Evaluation: %1% White").arg(value_, 0, 'f', 1);
+    setToolTip(scoreText_.isEmpty()
+                   ? percentage
+                   : tr("Evaluation: %1 (%2)").arg(scoreText_, percentage));
 }
 
 void EvaluationBar::paintEvent(QPaintEvent *event) {
@@ -165,19 +183,51 @@ void EvaluationBar::paintEvent(QPaintEvent *event) {
 
     painter.restore();
 
+    // Boundary between the two sections: without it the white section can
+    // vanish into a light window background.
+    if (blackHeight > 0.0 && whiteHeight > 0.0) {
+        const qreal boundaryY = barRect.top() + blackHeight;
+        painter.setPen(QPen(borderColor_, 1.0));
+        painter.drawLine(QPointF(barRect.left(), boundaryY),
+                         QPointF(barRect.right(), boundaryY));
+    }
+
     // Draw border
     painter.setPen(QPen(borderColor_, 1.5));
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(barRect, cornerRadius, cornerRadius);
 
-    // Optional evaluation text
+    // Optional evaluation text: the number is what makes the gauge readable.
+    // Around equality the centre of the bar is exactly on the boundary between
+    // the two sections, so the score is drawn in a pill rather than straddling
+    // it.
     if (showEvaluationText_) {
-        painter.setPen(value_ >= 50.0 ? blackColor_ : whiteColor_);
+        const QString text = scoreText_.isEmpty()
+                                 ? QString::number(std::round(value_))
+                                 : scoreText_;
+
         QFont textFont = font();
         textFont.setPointSize(8);
         textFont.setBold(true);
         painter.setFont(textFont);
-        const QString text = QString::number(std::round(value_));
-        painter.drawText(barRect, Qt::AlignCenter, text);
+
+        const bool whiteSectionAtCenter = value_ >= 50.0;
+        const QColor pillColor = whiteSectionAtCenter ? whiteColor_ : blackColor_;
+        const QColor textColor = whiteSectionAtCenter ? blackColor_ : whiteColor_;
+
+        const QFontMetricsF metrics(textFont);
+        const qreal pillWidth =
+            std::min(barRect.width() - 2.0, metrics.horizontalAdvance(text) + 6.0);
+        const QRectF pillRect(barRect.center().x() - pillWidth / 2.0,
+                              barRect.center().y() - metrics.height() / 2.0 - 1.0,
+                              pillWidth,
+                              metrics.height() + 2.0);
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(pillColor);
+        painter.drawRoundedRect(pillRect, 2.0, 2.0);
+
+        painter.setPen(textColor);
+        painter.drawText(pillRect, Qt::AlignCenter, text);
     }
 }

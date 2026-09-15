@@ -152,6 +152,10 @@ signals:
     void positionChanged();
     void historyChanged(const QString &pgnText);
     void evaluationChanged(double displayPercentage);
+    // Same evaluation as evaluationChanged, in engine notation ("+1.35",
+    // "-M3"), so the UI can show a number next to the bar. Emitted from the
+    // heuristic evaluator when no engine reports a score.
+    void evaluationScoreChanged(const QString &scoreText);
     void statusMessage(const QString &message);
     void computerTurnBegan();
     void humanTurnBegan();

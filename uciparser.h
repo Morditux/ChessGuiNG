@@ -62,6 +62,12 @@ public:
     static QString toUciMove(Rules::Position from, Rules::Position to,
                              Rules::PieceType promotion = Rules::PieceType::None);
     static double scoreToWinningPercentage(double scoreCp, std::optional<int> mateIn = std::nullopt);
+
+    // Formats a score for display from a single point of view, so that the
+    // engine panel and the evaluation bar cannot disagree: "+1.35", "-0.42",
+    // "+M3", "-M5", or "Mate" when the mate is already delivered.
+    [[nodiscard]] static QString formatScore(double scoreCp,
+                                            std::optional<int> mateIn = std::nullopt);
 };
 
 #endif // CHESSGUI_UCIPARSER_H

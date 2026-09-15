@@ -18,6 +18,7 @@ private slots:
     void testSignals();
     void testColors();
     void testVisibilityFlags();
+    void testScoreText();
     void testRendering();
 };
 
@@ -110,9 +111,27 @@ void EvaluationBarTest::testVisibilityFlags() {
     QCOMPARE(bar.showEvaluationText(), true);
 }
 
+void EvaluationBarTest::testScoreText() {
+    EvaluationBar bar;
+
+    // No score is drawn by default: the rounded percentage is used instead.
+    QVERIFY(bar.scoreText().isEmpty());
+
+    bar.setScoreText(QStringLiteral("+1.35"));
+    QCOMPARE(bar.scoreText(), QStringLiteral("+1.35"));
+
+    bar.setScoreText(QString());
+    QVERIFY(bar.scoreText().isEmpty());
+
+    // The bar must be wide enough to hold a score such as "+1.35".
+    QVERIFY(bar.sizeHint().width() >= 32);
+    QVERIFY(bar.minimumSizeHint().width() <= bar.sizeHint().width());
+}
+
 void EvaluationBarTest::testRendering() {
     EvaluationBar bar;
-    bar.resize(13, 400);
+    bar.resize(bar.sizeHint().width(), 400);
+    bar.setShowEvaluationText(true);
 
     QPixmap pixmap(bar.size());
 
@@ -123,6 +142,10 @@ void EvaluationBarTest::testRendering() {
         bar.render(&pixmap);
 
         bar.setShowEvaluationText(true);
+        bar.setScoreText(QStringLiteral("+1.35"));
+        bar.render(&pixmap);
+
+        bar.setScoreText(QString());
         bar.render(&pixmap);
     }
 }

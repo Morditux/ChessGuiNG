@@ -22,6 +22,7 @@ private slots:
     void testResetClearsAnnotations();
     void testStripAnnotationTags();
     void testFormatComment();
+    void testPaintedBoardRect();
 };
 
 void ChessBoardTest::testSquareAnnotationToggle() {
@@ -241,6 +242,26 @@ void ChessBoardTest::testFormatComment() {
              QStringLiteral("No visual tags"));
     QCOMPARE(PgnAnnotations::formatComment({}, {}, QString()),
              QString());
+}
+
+void ChessBoardTest::testPaintedBoardRect() {
+    ChessBoard board;
+    board.resize(400, 400);
+
+    const QRect squares = board.paintedBoardRect();
+    QVERIFY(!squares.isEmpty());
+    QCOMPARE(squares.width(), squares.height());
+    QCOMPARE(squares.width() % 8, 0);
+    // The painted squares sit inside the widget, which also holds the labels.
+    QVERIFY(board.rect().contains(squares));
+    QVERIFY(squares.width() < board.width());
+
+    // Too small to draw a board: no geometry is reported. The widget enforces
+    // a minimum size, which the test lifts to reach that state.
+    board.setMinimumSize(0, 0);
+    board.resize(20, 20);
+    QCOMPARE(board.size(), QSize(20, 20));
+    QVERIFY(board.paintedBoardRect().isEmpty());
 }
 
 QTEST_MAIN(ChessBoardTest)

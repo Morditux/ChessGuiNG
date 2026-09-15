@@ -153,6 +153,10 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
     connect(gameController_, &GameController::evaluationChanged, this, [this](double value) {
         evaluationBar_->setValue(value);
     });
+    connect(gameController_, &GameController::evaluationScoreChanged, this,
+            [this](const QString &scoreText) {
+                evaluationBar_->setScoreText(scoreText);
+            });
     connect(gameController_, &GameController::statusMessage, this, [this](const QString &message) {
         setActivityMessage(message);
     });
@@ -583,8 +587,37 @@ void MainWindow::saveConfiguration() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+    if (!confirmDiscardingUnsavedGame()) {
+        event->ignore();
+        return;
+    }
     saveConfiguration();
     QWidget::closeEvent(event);
+}
+
+bool MainWindow::hasUnsavedGame() const {
+    // An empty game has nothing to lose, and a game that still matches the
+    // last saved or loaded PGN is already on disk.
+    return !gameController_->pgnMoves().isEmpty() &&
+           gameController_->pgnText() != persistedPgnText_;
+}
+
+bool MainWindow::confirmDiscardingUnsavedGame() {
+    if (!hasUnsavedGame()) {
+        return true;
+    }
+
+    const QMessageBox::StandardButton choice = QMessageBox::warning(
+        this,
+        tr("Unsaved game"),
+        tr("The current game has not been saved yet."),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+
+    if (choice == QMessageBox::Save) {
+        return savePgnFile();
+    }
+    return choice == QMessageBox::Discard;
 }
 
 void MainWindow::keyPressEvent(QKeyEvent *event) {
@@ -914,6 +947,23 @@ void MainWindow::adjustEnginePanelSize() {
     mainSplitter_->setSizes({sizes.first(), engineOutputWidget_->sizeHint().height()});
 }
 
+void MainWindow::syncEvaluationBarGeometry() {
+    if (!board_ || !evaluationBar_ || !gaugeLayout_) {
+        return;
+    }
+
+    // The board centres its squares inside a widget that also carries the rank
+    // and file labels, so the gauge follows the painted squares rather than
+    // the widget: otherwise it overhangs the board by the centring slack.
+    const QRect squares = board_->paintedBoardRect();
+    if (squares.isEmpty()) {
+        return;
+    }
+
+    gaugeLayout_->setContentsMargins(
+        0, squares.top(), 0, qMax(0, board_->height() - squares.bottom() - 1));
+}
+
 void MainWindow::onVisionResult(const VisionResult &result) {
     if (result.requestId != visionRequestId_) {
         // A newer image was requested while this one was being processed.
@@ -969,6 +1019,10 @@ void MainWindow::onVisionResult(const VisionResult &result) {
 }
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == board_ && event->type() == QEvent::Resize) {
+        syncEvaluationBarGeometry();
+    }
+
     if (event->type() == QEvent::DragEnter ||
         event->type() == QEvent::DragMove) {
         auto *dragEvent = static_cast<QDropEvent *>(event);
@@ -1072,6 +1126,7 @@ bool MainWindow::loadPgnContent(const QString &pgnContent, int selectedGameIndex
     }
 
     rememberLoadedPgnSource(pgnContent, segments, selectedIndex);
+    persistedPgnText_ = gameController_->pgnText();
     return true;
 }
 
@@ -1164,6 +1219,7 @@ bool MainWindow::savePgnFile(const QString &filePath) {
     }
 
     setActivityMessage(tr("Game saved to %1").arg(path));
+    persistedPgnText_ = gameController_->pgnText();
     return true;
 }
 
@@ -1417,6 +1473,7 @@ void MainWindow::stopEngineAnalysis() {
 void MainWindow::newGame() {
     gameController_->newGame();
     clearLoadedPgnSource();
+    persistedPgnText_.clear();
     if (engineOutputWidget_) {
         engineOutputWidget_->clearAnalysis();
     }
@@ -1682,7 +1739,8 @@ void MainWindow::setupUi() {
     QAction *quitAction = menuFile->addAction(tr("Quit"));
     configureToolAction(quitAction, QStringLiteral(":/icons/toolbar-quit.svg"),
                         tr("Quit ChessGui"));
-    connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
+    // Closing goes through the window so that an unsaved game is not lost.
+    connect(quitAction, &QAction::triggered, this, &MainWindow::close);
     menubar->addMenu(menuFile);
 
     // Menu Games
@@ -1697,7 +1755,7 @@ void MainWindow::setupUi() {
 
     firstMoveAction_ = menuGames->addAction(tr("Go to start"));
     firstMoveAction_->setObjectName(QStringLiteral("firstMoveAction"));
-    configureToolAction(firstMoveAction_, QStringLiteral(":/icons/toolbar-step-back.svg"),
+    configureToolAction(firstMoveAction_, QStringLiteral(":/icons/toolbar-first-move.svg"),
                         tr("Go to the beginning of the game"));
     firstMoveAction_->setShortcut(QKeySequence(Qt::Key_Home));
     firstMoveAction_->setShortcutContext(Qt::WindowShortcut);
@@ -1727,7 +1785,7 @@ void MainWindow::setupUi() {
 
     lastMoveAction_ = menuGames->addAction(tr("Go to end"));
     lastMoveAction_->setObjectName(QStringLiteral("lastMoveAction"));
-    configureToolAction(lastMoveAction_, QStringLiteral(":/icons/toolbar-step-forward.svg"),
+    configureToolAction(lastMoveAction_, QStringLiteral(":/icons/toolbar-last-move.svg"),
                         tr("Go to the end of the game"));
     lastMoveAction_->setShortcut(QKeySequence(Qt::Key_End));
     lastMoveAction_->setShortcutContext(Qt::WindowShortcut);
@@ -1778,7 +1836,7 @@ void MainWindow::setupUi() {
 
     copyFenAction_ = menuGames->addAction(tr("Copy FEN"));
     copyFenAction_->setObjectName(QStringLiteral("copyFenAction"));
-    configureToolAction(copyFenAction_, QStringLiteral(":/icons/toolbar-paste.svg"),
+    configureToolAction(copyFenAction_, QStringLiteral(":/icons/toolbar-copy-fen.svg"),
                         tr("Copy current board position as FEN to clipboard"));
     copyFenAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+F")));
     copyFenAction_->setShortcutContext(Qt::WindowShortcut);
@@ -1787,7 +1845,7 @@ void MainWindow::setupUi() {
 
     copyPgnAction_ = menuGames->addAction(tr("Copy PGN"));
     copyPgnAction_->setObjectName(QStringLiteral("copyPgnAction"));
-    configureToolAction(copyPgnAction_, QStringLiteral(":/icons/toolbar-save-pgn.svg"),
+    configureToolAction(copyPgnAction_, QStringLiteral(":/icons/toolbar-copy-pgn.svg"),
                         tr("Copy current game as PGN to clipboard"));
     copyPgnAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+C")));
     copyPgnAction_->setShortcutContext(Qt::WindowShortcut);
@@ -1897,8 +1955,6 @@ void MainWindow::setupUi() {
     toolBar->setMovable(false);
     toolBar->setFloatable(false);
     toolBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    toolBar->addAction(quitAction);
-    toolBar->addSeparator();
     toolBar->addAction(newGameAction_);
     toolBar->addAction(firstMoveAction_);
     toolBar->addAction(stepBackAction_);
@@ -1918,6 +1974,9 @@ void MainWindow::setupUi() {
     toolBar->addAction(toggleAnalysisAction_);
     toolBar->addAction(analyzeGameAction_);
     toolBar->addAction(stopEngineAction_);
+    // Quitting is destructive and now sits last, away from the editing tools.
+    toolBar->addSeparator();
+    toolBar->addAction(quitAction);
 
     auto *layout = new QGridLayout(this);
     setLayout(layout);
@@ -1933,21 +1992,42 @@ void MainWindow::setupUi() {
     // Top horizontal splitter: splits board on the left and move history on the right
     topSplitter_ = new QSplitter(Qt::Horizontal, mainSplitter_);
 
-    // Left pane: Evaluation bar + Chess board
+    // Left pane: Chess board with the evaluation gauge alongside it
     auto *boardContainer = new QWidget(topSplitter_);
     auto *boardLayout = new QHBoxLayout(boardContainer);
     boardLayout->setContentsMargins(8, 8, 8, 8);
     boardLayout->setSpacing(8);
 
-    evaluationBar_ = new EvaluationBar(boardContainer);
     auto *boardPanel = new QWidget(boardContainer);
     auto *boardPanelLayout = new QVBoxLayout(boardPanel);
     boardPanelLayout->setContentsMargins(0, 0, 0, 0);
     boardPanelLayout->setSpacing(4);
 
-    board_ = new ChessBoard(boardPanel);
+    // The gauge shares a row with the board so that it measures the board
+    // itself, and not the board plus the control bar above it.
+    auto *boardRow = new QWidget(boardPanel);
+    auto *boardRowLayout = new QHBoxLayout(boardRow);
+    boardRowLayout->setContentsMargins(0, 0, 0, 0);
+    boardRowLayout->setSpacing(6);
+
+    // ChessBoard reserves 8 px at the top and 28 px at the bottom for the
+    // rank and file labels: the gauge uses the same insets to stay aligned
+    // with the painted squares.
+    auto *gaugeColumn = new QWidget(boardRow);
+    gaugeLayout_ = new QVBoxLayout(gaugeColumn);
+    gaugeLayout_->setContentsMargins(0, 8, 0, 28);
+    gaugeLayout_->setSpacing(0);
+
+    evaluationBar_ = new EvaluationBar(gaugeColumn);
+    evaluationBar_->setShowEvaluationText(true);
+    gaugeLayout_->addWidget(evaluationBar_);
+
+    board_ = new ChessBoard(boardRow);
     board_->setAcceptDrops(true);
     board_->installEventFilter(this);
+
+    boardRowLayout->addWidget(gaugeColumn);
+    boardRowLayout->addWidget(board_, 1);
 
     blackPendulum_ = new PendulumWidget(PendulumWidget::PieceColor::Black,
                                         boardPanel);
@@ -2090,9 +2170,8 @@ void MainWindow::setupUi() {
             flipBoardButton_, &QToolButton::setChecked);
 
     boardPanelLayout->addWidget(gameControlBar);
-    boardPanelLayout->addWidget(board_, 1);
+    boardPanelLayout->addWidget(boardRow, 1);
 
-    boardLayout->addWidget(evaluationBar_);
     boardLayout->addWidget(boardPanel, 1);
 
     boardPanel->setAcceptDrops(true);

@@ -165,7 +165,7 @@ void EngineOutputWidget::setDepth(int depth, int seldepth) {
 }
 
 void EngineOutputWidget::setScore(double scoreCp, std::optional<int> mateIn) {
-    scoreText_ = formatScore(scoreCp, mateIn);
+    scoreText_ = UciParser::formatScore(scoreCp, mateIn);
     updateHeaderSummary();
 }
 
@@ -215,7 +215,7 @@ void EngineOutputWidget::updateAnalysisLine(const EngineAnalysisLine &line) {
             seldepth_ = *line.seldepth;
         }
         if (line.scoreCp.has_value() || line.mateIn.has_value()) {
-            scoreText_ = formatScore(line.scoreCp.value_or(0.0), line.mateIn);
+            scoreText_ = UciParser::formatScore(line.scoreCp.value_or(0.0), line.mateIn);
         }
         if (line.nodes.has_value()) {
             nodes_ = *line.nodes;
@@ -276,7 +276,7 @@ void EngineOutputWidget::setAnalysisLines(const QList<EngineAnalysisLine> &lines
         if (best.depth.has_value()) depth_ = *best.depth;
         if (best.seldepth.has_value()) seldepth_ = *best.seldepth;
         if (best.scoreCp.has_value() || best.mateIn.has_value()) {
-            scoreText_ = formatScore(best.scoreCp.value_or(0.0), best.mateIn);
+            scoreText_ = UciParser::formatScore(best.scoreCp.value_or(0.0), best.mateIn);
         }
         if (best.nodes.has_value()) nodes_ = *best.nodes;
         if (best.nps.has_value()) nps_ = *best.nps;
@@ -653,7 +653,7 @@ void EngineOutputWidget::updateTableDisplay() {
 
         QString scoreStr = QStringLiteral("-");
         if (line.scoreCp.has_value() || line.mateIn.has_value()) {
-            scoreStr = formatScore(line.scoreCp.value_or(0.0), line.mateIn);
+            scoreStr = UciParser::formatScore(line.scoreCp.value_or(0.0), line.mateIn);
         }
         auto *scoreItem = new QTableWidgetItem(scoreStr);
         scoreItem->setTextAlignment(Qt::AlignCenter);
@@ -679,23 +679,6 @@ void EngineOutputWidget::updateTableDisplay() {
         pvTable_->setItem(i, 3, nodesItem);
         pvTable_->setItem(i, 4, pvItem);
     }
-}
-
-QString EngineOutputWidget::formatScore(double scoreCp, std::optional<int> mateIn) {
-    if (mateIn.has_value()) {
-        const int mate = *mateIn;
-        if (mate > 0) {
-            return tr("+M%1").arg(mate);
-        }
-        if (mate < 0) {
-            return tr("-M%1").arg(-mate);
-        }
-        return tr("Mate");
-    }
-
-    const double scorePawns = scoreCp / 100.0;
-    const QString sign = scorePawns > 0.0 ? tr("+") : QString();
-    return tr("%1%2").arg(sign).arg(scorePawns, 0, 'f', 2);
 }
 
 QString EngineOutputWidget::formatNodes(qint64 nodes) {

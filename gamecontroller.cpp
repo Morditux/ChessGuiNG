@@ -642,7 +642,16 @@ void GameController::setRecommendedMovePreviewEnabled(bool enabled) {
 }
 
 void GameController::updateEvaluation() {
-    emit evaluationChanged(heuristicEval_.evaluateDisplayPercentage(rules_));
+    const int centipawns = HeuristicEval::evaluateCentipawns(rules_);
+    emit evaluationChanged(HeuristicEval::centipawnsToPercentage(centipawns));
+
+    // The heuristic reports checkmate as exactly +/-MateScore and never as a
+    // distance; "Mate" is the honest label for a mate that is already on the
+    // board. Any other score is clamped below that value.
+    const bool checkmate = centipawns == HeuristicEval::MateScore ||
+                           centipawns == -HeuristicEval::MateScore;
+    const std::optional<int> mateIn = checkmate ? std::optional<int>(0) : std::nullopt;
+    emit evaluationScoreChanged(UciParser::formatScore(centipawns, mateIn));
 }
 
 bool GameController::canStartGameAudit() const {
@@ -1128,6 +1137,8 @@ void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
         const double winPct =
             UciParser::scoreToWinningPercentage(whiteScoreCp, mateForWhite);
         emit evaluationChanged(winPct);
+        emit evaluationScoreChanged(
+            UciParser::formatScore(whiteScoreCp, mateForWhite));
     }
 }
 

@@ -4,6 +4,7 @@
 
 #include "uciparser.h"
 
+#include <QCoreApplication>
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
@@ -239,4 +240,22 @@ double UciParser::scoreToWinningPercentage(double scoreCp, std::optional<int> ma
     // Standard winning percentage formula based on centipawns
     const double winPercentage = 100.0 / (1.0 + std::exp(-0.003682 * scoreCp));
     return std::clamp(winPercentage, 0.0, 100.0);
+}
+
+QString UciParser::formatScore(double scoreCp, std::optional<int> mateIn) {
+    if (mateIn.has_value()) {
+        const int mate = *mateIn;
+        if (mate > 0) {
+            return QCoreApplication::translate("UciParser", "+M%1").arg(mate);
+        }
+        if (mate < 0) {
+            return QCoreApplication::translate("UciParser", "-M%1").arg(-mate);
+        }
+        return QCoreApplication::translate("UciParser", "Mate");
+    }
+
+    const double scorePawns = scoreCp / 100.0;
+    // The sign is a format token, not translatable content.
+    const QString sign = scorePawns > 0.0 ? QStringLiteral("+") : QString();
+    return sign + QString::number(scorePawns, 'f', 2);
 }

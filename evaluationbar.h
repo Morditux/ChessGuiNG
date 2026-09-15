@@ -6,6 +6,7 @@
 #define CHESSGUI_EVALUATIONBAR_H
 
 #include <QColor>
+#include <QString>
 #include <QWidget>
 
 class EvaluationBar : public QWidget {
@@ -17,6 +18,7 @@ class EvaluationBar : public QWidget {
     Q_PROPERTY(QColor borderColor READ borderColor WRITE setBorderColor)
     Q_PROPERTY(bool showCenterLine READ showCenterLine WRITE setShowCenterLine)
     Q_PROPERTY(bool showEvaluationText READ showEvaluationText WRITE setShowEvaluationText)
+    Q_PROPERTY(QString scoreText READ scoreText WRITE setScoreText)
 
 public:
     explicit EvaluationBar(QWidget *parent = nullptr);
@@ -40,6 +42,11 @@ public:
     [[nodiscard]] bool showEvaluationText() const;
     void setShowEvaluationText(bool show);
 
+    // Score shown inside the bar when the text is enabled, for example
+    // "+1.35" or "-M3". When empty, the rounded percentage is drawn instead.
+    [[nodiscard]] QString scoreText() const;
+    void setScoreText(const QString &scoreText);
+
     [[nodiscard]] QSize sizeHint() const override;
     [[nodiscard]] QSize minimumSizeHint() const override;
 
@@ -61,6 +68,7 @@ private:
     QColor borderColor_ = QColor("#5c4033");
     bool showCenterLine_ = true;
     bool showEvaluationText_ = false;
+    QString scoreText_;
 
     void updateToolTip();
 };

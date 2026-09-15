@@ -17,7 +17,11 @@
         <file alias="flip-board.svg">assets/icons/flip-board.svg</file>
         <file alias="toolbar-analysis.svg">assets/icons/toolbar-analysis.svg</file>
         <file alias="toolbar-configure.svg">assets/icons/toolbar-configure.svg</file>
+        <file alias="toolbar-copy-fen.svg">assets/icons/toolbar-copy-fen.svg</file>
+        <file alias="toolbar-copy-pgn.svg">assets/icons/toolbar-copy-pgn.svg</file>
         <file alias="toolbar-disconnect-engine.svg">assets/icons/toolbar-disconnect-engine.svg</file>
+        <file alias="toolbar-first-move.svg">assets/icons/toolbar-first-move.svg</file>
+        <file alias="toolbar-last-move.svg">assets/icons/toolbar-last-move.svg</file>
         <file alias="toolbar-load-engine.svg">assets/icons/toolbar-load-engine.svg</file>
         <file alias="toolbar-load-pgn.svg">assets/icons/toolbar-load-pgn.svg</file>
         <file alias="toolbar-save-pgn.svg">assets/icons/toolbar-save-pgn.svg</file>
