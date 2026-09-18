@@ -741,6 +741,31 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
             <source>Evaluation of each move of the game; click to jump to a move</source>
             <translation>Évaluation de chaque coup de la partie ; cliquez pour aller à un coup</translation>
         </message>
+        <message>
+            <location filename="../evaluationgraph.cpp" line="114" />
+            <source>Start</source>
+            <translation>Début</translation>
+        </message>
+        <message>
+            <location filename="../evaluationgraph.cpp" line="115" />
+            <source>Move %1 (%2)</source>
+            <translation>Coup %1 (%2)</translation>
+        </message>
+        <message>
+            <location filename="../evaluationgraph.cpp" line="117" />
+            <source>White</source>
+            <translation>Blancs</translation>
+        </message>
+        <message>
+            <location filename="../evaluationgraph.cpp" line="117" />
+            <source>Black</source>
+            <translation>Noirs</translation>
+        </message>
+        <message>
+            <location filename="../evaluationgraph.cpp" line="118" />
+            <source>%1 — Evaluation: %2% White</source>
+            <translation>%1 — Évaluation : %2 % pour les Blancs</translation>
+        </message>
     </context>
     <context>
         <name>GameController</name>

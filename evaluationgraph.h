@@ -38,10 +38,15 @@ public:
 
     [[nodiscard]] QSize sizeHint() const override;
 
+    // Hover text for the position plotted after `ply`: the move it follows and
+    // White's display evaluation. Empty when `ply` is not plotted.
+    [[nodiscard]] QString tooltipForPly(int ply) const;
+
 signals:
     void plySelected(int ply);
 
 protected:
+    bool event(QEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
 

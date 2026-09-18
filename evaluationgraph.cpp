@@ -4,11 +4,13 @@
 
 #include "evaluationgraph.h"
 
+#include <QHelpEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QPolygonF>
+#include <QToolTip>
 #include <algorithm>
 
 namespace {
@@ -100,6 +102,33 @@ int EvaluationGraph::plyAtX(int x) const {
 
     const qreal step = plot.width() / qreal(count - 1);
     return qBound(0, qRound((x - plot.left()) / step), count - 1);
+}
+
+QString EvaluationGraph::tooltipForPly(int ply) const {
+    if (ply < 0 || ply >= evaluations_.size()) {
+        return {};
+    }
+
+    // Ply 0 is the starting position; the others follow a single move.
+    const QString position =
+        ply == 0 ? tr("Start")
+                 : tr("Move %1 (%2)")
+                       .arg((ply + 1) / 2)
+                       .arg(ply % 2 == 1 ? tr("White") : tr("Black"));
+    return tr("%1 — Evaluation: %2% White")
+        .arg(position)
+        .arg(evaluations_.at(ply), 0, 'f', 1);
+}
+
+bool EvaluationGraph::event(QEvent *event) {
+    if (event->type() == QEvent::ToolTip && !evaluations_.isEmpty()) {
+        auto *help = static_cast<QHelpEvent *>(event);
+        const int ply = plyAtX(help->pos().x());
+        QToolTip::showText(help->globalPos(), tooltipForPly(ply), this);
+        return true;
+    }
+
+    return QWidget::event(event);
 }
 
 void EvaluationGraph::paintEvent(QPaintEvent *event) {

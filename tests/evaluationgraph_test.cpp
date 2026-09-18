@@ -16,6 +16,7 @@ private slots:
     void testEvaluations();
     void testCurrentPly();
     void testClickSelectsPly();
+    void testTooltip();
     void testRendering();
 };
 
@@ -87,6 +88,27 @@ void EvaluationGraphTest::testClickSelectsPly() {
                       QPoint(graph.width() / 2, 40));
     QCOMPARE(spy.count(), 3);
     QCOMPARE(spy.at(2).at(0).toInt(), 2);
+}
+
+void EvaluationGraphTest::testTooltip() {
+    EvaluationGraph graph;
+    graph.setEvaluations({50.0, 60.5, 45.0});
+
+    // Plies that are not plotted have no tooltip.
+    QVERIFY(graph.tooltipForPly(-1).isEmpty());
+    QVERIFY(graph.tooltipForPly(3).isEmpty());
+
+    const QString start = graph.tooltipForPly(0);
+    QVERIFY(start.contains(QStringLiteral("Start")));
+    QVERIFY(start.contains(QStringLiteral("50.0")));
+
+    const QString whiteMove = graph.tooltipForPly(1);
+    QVERIFY(whiteMove.contains(QStringLiteral("Move 1 (White)")));
+    QVERIFY(whiteMove.contains(QStringLiteral("60.5")));
+
+    const QString blackMove = graph.tooltipForPly(2);
+    QVERIFY(blackMove.contains(QStringLiteral("Move 1 (Black)")));
+    QVERIFY(blackMove.contains(QStringLiteral("45.0")));
 }
 
 void EvaluationGraphTest::testRendering() {
