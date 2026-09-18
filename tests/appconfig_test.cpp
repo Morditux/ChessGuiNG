@@ -409,6 +409,7 @@ void AppConfigTest::testLoadAndSaveMovePreviewSettings() {
     config.setComputerMovePreviewEnabled(true);
     config.setRecommendedMovePreviewEnabled(true);
     config.setHighlightLastMoveEnabled(false);
+    config.setHighlightCheckEnabled(false);
     QVERIFY(config.save());
 
     AppConfig loadedConfig(confPath);
@@ -416,6 +417,7 @@ void AppConfigTest::testLoadAndSaveMovePreviewSettings() {
     QVERIFY(loadedConfig.computerMovePreviewEnabled());
     QVERIFY(loadedConfig.recommendedMovePreviewEnabled());
     QVERIFY(!loadedConfig.highlightLastMoveEnabled());
+    QVERIFY(!loadedConfig.highlightCheckEnabled());
 }
 
 void AppConfigTest::testLoadAndSaveEngineSectionVisibility() {
@@ -503,6 +505,7 @@ void AppConfigTest::testResetToDefaults() {
     config.setComputerMovePreviewEnabled(true);
     config.setRecommendedMovePreviewEnabled(true);
     config.setHighlightLastMoveEnabled(false);
+    config.setHighlightCheckEnabled(false);
     config.setEngineAnalysisSectionVisible(false);
     config.setEngineLogSectionVisible(false);
 
@@ -523,6 +526,7 @@ void AppConfigTest::testResetToDefaults() {
     QVERIFY(!config.computerMovePreviewEnabled());
     QVERIFY(!config.recommendedMovePreviewEnabled());
     QVERIFY(config.highlightLastMoveEnabled());
+    QVERIFY(config.highlightCheckEnabled());
     QVERIFY(!config.engineAnalysisSectionVisible());
     QVERIFY(!config.engineLogSectionVisible());
     QVERIFY(!config.engineDetailsVisible());

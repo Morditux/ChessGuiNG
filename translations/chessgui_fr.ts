@@ -1676,6 +1676,21 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
             <translation>Surligner les cases de départ et d'arrivée du dernier coup sur l'échiquier</translation>
         </message>
         <message>
+            <location filename="../mainwindow.cpp" line="2464" />
+            <source>Highlight king in check</source>
+            <translation>Surligner le roi en échec</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2470" />
+            <source>Highlight the king's square when that side is in check</source>
+            <translation>Surligner la case du roi lorsque son camp est en échec</translation>
+        </message>
+        <message>
+            <location filename="../mainwindow.cpp" line="2551" />
+            <source>Highlight the king's square when that side is in check on the chessboard</source>
+            <translation>Surligner sur l'échiquier la case du roi lorsque son camp est en échec</translation>
+        </message>
+        <message>
             <location filename="../mainwindow.cpp" line="2511" />
             <source>Game information</source>
             <translation>Informations sur la partie</translation>

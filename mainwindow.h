@@ -74,9 +74,11 @@ public:
     [[nodiscard]] QCheckBox *showComputerMoveCheckBox() const;
     [[nodiscard]] QCheckBox *showRecommendedMoveCheckBox() const;
     [[nodiscard]] QCheckBox *highlightLastMoveCheckBox() const;
+    [[nodiscard]] QCheckBox *highlightCheckCheckBox() const;
     [[nodiscard]] QToolButton *flipBoardButton() const;
     [[nodiscard]] QAction *flipBoardAction() const;
     [[nodiscard]] QAction *highlightLastMoveAction() const;
+    [[nodiscard]] QAction *highlightCheckAction() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
     [[nodiscard]] QAction *claimDrawAction() const;
@@ -131,6 +133,7 @@ public slots:
     void setComputerMovePreviewEnabled(bool enabled);
     void setRecommendedMovePreviewEnabled(bool enabled);
     void setLastMoveHighlightingEnabled(bool enabled);
+    void setCheckHighlightingEnabled(bool enabled);
     void setWhiteToMove(bool whiteToMove);
     void stepBack();
     void stepForward();
@@ -233,6 +236,7 @@ private:
     QCheckBox *showComputerMoveCheckBox_ = nullptr;
     QCheckBox *showRecommendedMoveCheckBox_ = nullptr;
     QCheckBox *highlightLastMoveCheckBox_ = nullptr;
+    QCheckBox *highlightCheckCheckBox_ = nullptr;
     QToolButton *flipBoardButton_ = nullptr;
     QVBoxLayout *gaugeLayout_ = nullptr;
     QVBoxLayout *boardPanelLayout_ = nullptr;
@@ -261,6 +265,7 @@ private:
     QAction *showComputerMoveAction_ = nullptr;
     QAction *showRecommendedMoveAction_ = nullptr;
     QAction *highlightLastMoveAction_ = nullptr;
+    QAction *highlightCheckAction_ = nullptr;
     QAction *flipBoardAction_ = nullptr;
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;

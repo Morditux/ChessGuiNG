@@ -15,6 +15,7 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
   - Crisp vector rendering using third-party SVG pieces (Chessnut set).
   - Smooth piece interaction with both click-to-move and drag-and-drop support.
   - Visual hints for selected squares, hovered squares, and legal move destinations.
+  - The checked king is highlighted in red (`Board -> Highlight king in check`, `Ctrl+Shift+K`), so a position in check never depends on the `+` of the notation alone.
   - Automatic board resizing with responsive aspect ratio preservation.
   - The board is a read-only view of the position: it reports move intent and is refreshed by the game controller, which owns the authoritative state.
 
@@ -84,7 +85,7 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
 - **OS-Standard Configuration Management**
   - QSettings-backed INI configuration (`AppConfig`), auto-created at startup if missing.
   - Stored in the OS-standard configuration directory (`~/.config/ChessGui/` on Linux, `AppData/Local/ChessGui/` on Windows, `Library/Application Support/ChessGui/` on macOS).
-  - Automatically persists the chosen UCI engine path, the selected remote engine (gateway host, port, engine id, optional access key), the analysis depth, the MultiPV limit and the game-analysis depth, MainWindow position and size, and all splitter layout sizes.
+  - Automatically persists the chosen UCI engine path, the selected remote engine (gateway host, port, engine id, optional access key), the analysis depth, the MultiPV limit and the game-analysis depth, the board-highlight preferences (last move and checked king), MainWindow position and size, and all splitter layout sizes.
 
 - **Localization**
   - Every user-visible string goes through `tr()` with English as the source language.

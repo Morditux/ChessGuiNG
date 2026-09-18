@@ -693,12 +693,15 @@ void RulesTest::testMovePreviewControls() {
     QCheckBox *computerMoveCheckBox = window.showComputerMoveCheckBox();
     QCheckBox *recommendedMoveCheckBox = window.showRecommendedMoveCheckBox();
     QCheckBox *highlightLastMoveCheckBox = window.highlightLastMoveCheckBox();
+    QCheckBox *highlightCheckCheckBox = window.highlightCheckCheckBox();
     QVERIFY(computerMoveCheckBox != nullptr);
     QVERIFY(recommendedMoveCheckBox != nullptr);
     QVERIFY(highlightLastMoveCheckBox != nullptr);
+    QVERIFY(highlightCheckCheckBox != nullptr);
     QVERIFY(!computerMoveCheckBox->isChecked());
     QVERIFY(!recommendedMoveCheckBox->isChecked());
     QVERIFY(highlightLastMoveCheckBox->isChecked());
+    QVERIFY(highlightCheckCheckBox->isChecked());
 
     QAction *computerMoveAction = window.findChild<QAction *>(
         QStringLiteral("showComputerMoveAction"));
@@ -719,10 +722,10 @@ void RulesTest::testMovePreviewControls() {
     QVERIFY(positionToolsButton != nullptr);
     QVERIFY(positionToolsMenu != nullptr);
     QCOMPARE(positionToolsButton->menu(), positionToolsMenu);
-    QCOMPARE(positionToolsMenu->actions().size(), 4);
+    QCOMPARE(positionToolsMenu->actions().size(), 5);
 
     const auto widgetActions = positionToolsMenu->findChildren<QWidgetAction *>();
-    QCOMPARE(widgetActions.size(), 4);
+    QCOMPARE(widgetActions.size(), 5);
     QVERIFY(std::any_of(widgetActions.cbegin(), widgetActions.cend(),
                         [computerMoveCheckBox](const QWidgetAction *action) {
         return action->defaultWidget() == computerMoveCheckBox;
@@ -734,6 +737,10 @@ void RulesTest::testMovePreviewControls() {
     QVERIFY(std::any_of(widgetActions.cbegin(), widgetActions.cend(),
                         [highlightLastMoveCheckBox](const QWidgetAction *action) {
         return action->defaultWidget() == highlightLastMoveCheckBox;
+    }));
+    QVERIFY(std::any_of(widgetActions.cbegin(), widgetActions.cend(),
+                        [highlightCheckCheckBox](const QWidgetAction *action) {
+        return action->defaultWidget() == highlightCheckCheckBox;
     }));
 
     window.resize(1000, 800);
@@ -773,6 +780,14 @@ void RulesTest::testMovePreviewControls() {
     positionToolsMenu->popup(
         positionToolsButton->mapToGlobal(positionToolsButton->rect().bottomLeft()));
     QTRY_VERIFY(positionToolsMenu->isVisible());
+    highlightCheckCheckBox->click();
+    QVERIFY(!highlightCheckCheckBox->isChecked());
+    QVERIFY(!window.chessBoard()->checkHighlightingEnabled());
+    QVERIFY(!window.config().highlightCheckEnabled());
+
+    positionToolsMenu->popup(
+        positionToolsButton->mapToGlobal(positionToolsButton->rect().bottomLeft()));
+    QTRY_VERIFY(positionToolsMenu->isVisible());
     QTest::keyClick(positionToolsMenu, Qt::Key_Escape);
     QTRY_VERIFY(!positionToolsMenu->isVisible());
 
@@ -781,6 +796,7 @@ void RulesTest::testMovePreviewControls() {
     QVERIFY(savedConfig.computerMovePreviewEnabled());
     QVERIFY(savedConfig.recommendedMovePreviewEnabled());
     QVERIFY(!savedConfig.highlightLastMoveEnabled());
+    QVERIFY(!savedConfig.highlightCheckEnabled());
 }
 
 void RulesTest::testMainWindowLoadPgnContent() {
@@ -919,11 +935,15 @@ void RulesTest::testMainWindowMenuLayoutAndShortcuts() {
 
     QVERIFY(window.flipBoardAction() != nullptr);
     QVERIFY(window.highlightLastMoveAction() != nullptr);
+    QVERIFY(window.highlightCheckAction() != nullptr);
     QVERIFY(boardMenu->actions().contains(window.flipBoardAction()));
     QVERIFY(boardMenu->actions().contains(window.highlightLastMoveAction()));
+    QVERIFY(boardMenu->actions().contains(window.highlightCheckAction()));
     QCOMPARE(shortcutOf(window.flipBoardAction()), QStringLiteral("Ctrl+F"));
     QCOMPARE(shortcutOf(window.highlightLastMoveAction()),
              QStringLiteral("Ctrl+Shift+H"));
+    QCOMPARE(shortcutOf(window.highlightCheckAction()),
+             QStringLiteral("Ctrl+Shift+K"));
 
     // The flip action and the status-line button share one orientation.
     QVERIFY(!window.chessBoard()->boardFlipped());

@@ -98,6 +98,9 @@ public:
     [[nodiscard]] bool highlightLastMoveEnabled() const;
     void setHighlightLastMoveEnabled(bool enabled);
 
+    [[nodiscard]] bool highlightCheckEnabled() const;
+    void setHighlightCheckEnabled(bool enabled);
+
     [[nodiscard]] bool engineAnalysisSectionVisible() const;
     void setEngineAnalysisSectionVisible(bool visible);
 
@@ -146,6 +149,7 @@ private:
     bool computerMovePreviewEnabled_ = false;
     bool recommendedMovePreviewEnabled_ = false;
     bool highlightLastMoveEnabled_ = true;
+    bool highlightCheckEnabled_ = true;
     bool engineAnalysisSectionVisible_ = false;
     bool engineLogSectionVisible_ = false;
     bool engineDetailsVisible_ = false;

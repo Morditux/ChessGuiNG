@@ -120,12 +120,16 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             this, &MainWindow::setRecommendedMovePreviewEnabled);
     connect(highlightLastMoveCheckBox_, &QCheckBox::toggled,
             this, &MainWindow::setLastMoveHighlightingEnabled);
+    connect(highlightCheckCheckBox_, &QCheckBox::toggled,
+            this, &MainWindow::setCheckHighlightingEnabled);
     connect(showComputerMoveAction_, &QAction::toggled,
             this, &MainWindow::setComputerMovePreviewEnabled);
     connect(showRecommendedMoveAction_, &QAction::toggled,
             this, &MainWindow::setRecommendedMovePreviewEnabled);
     connect(highlightLastMoveAction_, &QAction::toggled,
             this, &MainWindow::setLastMoveHighlightingEnabled);
+    connect(highlightCheckAction_, &QAction::toggled,
+            this, &MainWindow::setCheckHighlightingEnabled);
 
     connect(gameController_, &GameController::positionChanged, this, [this] {
         board_->setRules(gameController_->rules());
@@ -399,6 +403,10 @@ QCheckBox *MainWindow::highlightLastMoveCheckBox() const {
     return highlightLastMoveCheckBox_;
 }
 
+QCheckBox *MainWindow::highlightCheckCheckBox() const {
+    return highlightCheckCheckBox_;
+}
+
 QToolButton *MainWindow::flipBoardButton() const {
     return flipBoardButton_;
 }
@@ -409,6 +417,10 @@ QAction *MainWindow::flipBoardAction() const {
 
 QAction *MainWindow::highlightLastMoveAction() const {
     return highlightLastMoveAction_;
+}
+
+QAction *MainWindow::highlightCheckAction() const {
+    return highlightCheckAction_;
 }
 
 QLabel *MainWindow::visionStatusLabel() const {
@@ -579,6 +591,7 @@ void MainWindow::loadConfiguration(const QString &configFilePath) {
     setComputerMovePreviewEnabled(config_.computerMovePreviewEnabled());
     setRecommendedMovePreviewEnabled(config_.recommendedMovePreviewEnabled());
     setLastMoveHighlightingEnabled(config_.highlightLastMoveEnabled());
+    setCheckHighlightingEnabled(config_.highlightCheckEnabled());
 
     gameController_->setRemoteEngine(config_.remoteEngineHost(),
                                      config_.remoteEnginePort(),
@@ -669,6 +682,7 @@ void MainWindow::saveConfiguration() {
     config_.setComputerMovePreviewEnabled(gameController_->isComputerMovePreviewEnabled());
     config_.setRecommendedMovePreviewEnabled(gameController_->isRecommendedMovePreviewEnabled());
     config_.setHighlightLastMoveEnabled(board_->lastMoveHighlightingEnabled());
+    config_.setHighlightCheckEnabled(board_->checkHighlightingEnabled());
     if (engineOutputWidget_) {
         config_.setEngineDetailsPage(
             engineOutputWidget_->detailsPage() == EngineOutputWidget::DetailsPage::UciLog
@@ -1861,6 +1875,22 @@ void MainWindow::setLastMoveHighlightingEnabled(bool enabled) {
     config_.save();
 }
 
+void MainWindow::setCheckHighlightingEnabled(bool enabled) {
+    if (highlightCheckCheckBox_ != nullptr) {
+        const QSignalBlocker blocker(highlightCheckCheckBox_);
+        highlightCheckCheckBox_->setChecked(enabled);
+    }
+    if (highlightCheckAction_ != nullptr) {
+        const QSignalBlocker blocker(highlightCheckAction_);
+        highlightCheckAction_->setChecked(enabled);
+    }
+
+    board_->setCheckHighlightingEnabled(enabled);
+
+    config_.setHighlightCheckEnabled(enabled);
+    config_.save();
+}
+
 void MainWindow::onEngineLoaded(const QString &name, const QString &author) {
     Q_UNUSED(author)
     engineOutputWidget_->setEngineName(name);
@@ -2242,6 +2272,17 @@ void MainWindow::setupUi() {
     highlightLastMoveAction_->setStatusTip(highlightLastMoveAction_->toolTip());
     addAction(highlightLastMoveAction_);
 
+    highlightCheckAction_ = menuBoard->addAction(tr("Highlight king in check"));
+    highlightCheckAction_->setObjectName(QStringLiteral("highlightCheckAction"));
+    highlightCheckAction_->setCheckable(true);
+    highlightCheckAction_->setChecked(true);
+    highlightCheckAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+K")));
+    highlightCheckAction_->setShortcutContext(Qt::WindowShortcut);
+    highlightCheckAction_->setToolTip(
+        tr("Highlight the king's square when that side is in check"));
+    highlightCheckAction_->setStatusTip(highlightCheckAction_->toolTip());
+    addAction(highlightCheckAction_);
+
     menubar->addMenu(menuBoard);
 
     // Menu Edit: clipboard actions.
@@ -2545,6 +2586,19 @@ void MainWindow::setupUi() {
     highlightLastMoveAction->setObjectName(QStringLiteral("highlightLastMoveWidgetAction"));
     highlightLastMoveAction->setDefaultWidget(highlightLastMoveCheckBox_);
     positionToolsMenu->addAction(highlightLastMoveAction);
+
+    highlightCheckCheckBox_ = new QCheckBox(
+        tr("Highlight king in check"), positionToolsMenu);
+    highlightCheckCheckBox_->setObjectName(QStringLiteral("highlightCheckCheckBox"));
+    highlightCheckCheckBox_->setChecked(true);
+    highlightCheckCheckBox_->setToolTip(
+        tr("Highlight the king's square when that side is in check"));
+    highlightCheckCheckBox_->setAccessibleDescription(
+        tr("Highlight the king's square when that side is in check on the chessboard"));
+    auto *highlightCheckAction = new QWidgetAction(positionToolsMenu);
+    highlightCheckAction->setObjectName(QStringLiteral("highlightCheckWidgetAction"));
+    highlightCheckAction->setDefaultWidget(highlightCheckCheckBox_);
+    positionToolsMenu->addAction(highlightCheckAction);
 
     connect(flipBoardButton_, &QToolButton::toggled,
             board_, &ChessBoard::setBoardFlipped);

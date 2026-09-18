@@ -103,6 +103,19 @@ bool ChessBoard::lastMoveHighlightingEnabled() const {
     return lastMoveHighlightingEnabled_;
 }
 
+void ChessBoard::setCheckHighlightingEnabled(bool enabled) {
+    if (checkHighlightingEnabled_ == enabled) {
+        return;
+    }
+
+    checkHighlightingEnabled_ = enabled;
+    update();
+}
+
+bool ChessBoard::checkHighlightingEnabled() const {
+    return checkHighlightingEnabled_;
+}
+
 void ChessBoard::setBoardFlipped(bool flipped) {
     if (boardFlipped_ == flipped) {
         return;
@@ -345,6 +358,20 @@ QRect ChessBoard::squareRect(Rules::Position position) const {
 bool ChessBoard::isLegalDestination(Rules::Position position) const {
     return std::find(legalMoves_.cbegin(), legalMoves_.cend(), position) !=
            legalMoves_.cend();
+}
+
+std::optional<Rules::Position> ChessBoard::kingPosition(Rules::Color color) const {
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const Rules::Position position{row, column};
+            const auto piece = rules_.pieceAt(position);
+            if (piece.has_value() && piece->color == color &&
+                piece->type == Rules::PieceType::King) {
+                return position;
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 bool ChessBoard::isCurrentPlayerPiece(Rules::Position position) const {
@@ -700,6 +727,19 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
             QColor hoveredColor("#6fae4f");
             hoveredColor.setAlpha(155);
             painter.fillRect(squareRect(*hoveredPosition_), hoveredColor);
+        }
+    }
+
+    // A checked king is easy to miss with only the '+ ' of the notation: the
+    // square is painted in red so the threat is visible on the board itself.
+    if (checkHighlightingEnabled_) {
+        const Rules::Color checked = rules_.currentPlayer();
+        if (rules_.isInCheck(checked)) {
+            if (const auto king = kingPosition(checked); king.has_value()) {
+                QColor checkColor("#d64545");
+                checkColor.setAlpha(165);
+                painter.fillRect(squareRect(*king), checkColor);
+            }
         }
     }
 

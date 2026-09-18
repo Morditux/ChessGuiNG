@@ -367,6 +367,12 @@ void UciEngineTest::testMainWindowControlButtons() {
 }
 
 void UciEngineTest::testMainWindowMultiPvChangeWhileAnalyzing() {
+    // A private configuration keeps the test independent from a previous run:
+    // a MultiPV persisted in the test's default profile would make the
+    // setValue(3) below a no-op and hide the restart under test.
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
     const QString scriptPath =
         QDir::current().filePath(QStringLiteral("mock_engine_multipv.sh"));
     QFile scriptFile(scriptPath);
@@ -410,9 +416,13 @@ void UciEngineTest::testMainWindowMultiPvChangeWhileAnalyzing() {
                                       QFile::ReadGroup | QFile::ExeGroup |
                                       QFile::ReadOther | QFile::ExeOther);
 
-    MainWindow window;
+    MainWindow window(nullptr, tempDir.filePath(QStringLiteral("chessGui.conf")));
     auto *outputWidget = window.engineOutputWidget();
     QVERIFY(outputWidget != nullptr);
+
+    // Fresh configuration: the analysis starts on a single variation, so
+    // raising it to three while the engine searches must restart the search.
+    QCOMPARE(outputWidget->multiPvSpin()->value(), 1);
 
     QVERIFY(window.uciEngine()->startEngine(scriptPath));
     QTRY_COMPARE_WITH_TIMEOUT(window.uciEngine()->state(), UciEngine::State::Ready, 2000);

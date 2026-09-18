@@ -23,6 +23,7 @@ private slots:
     void testStripAnnotationTags();
     void testFormatComment();
     void testPaintedBoardRect();
+    void testCheckHighlight();
 };
 
 void ChessBoardTest::testSquareAnnotationToggle() {
@@ -262,6 +263,41 @@ void ChessBoardTest::testPaintedBoardRect() {
     board.resize(20, 20);
     QCOMPARE(board.size(), QSize(20, 20));
     QVERIFY(board.paintedBoardRect().isEmpty());
+}
+
+void ChessBoardTest::testCheckHighlight() {
+    ChessBoard board;
+    QVERIFY(board.checkHighlightingEnabled());
+
+    // White is to move and its king is attacked by the rook on e2.
+    Rules checked;
+    QVERIFY(checked.loadFen(QStringLiteral(
+        "4k3/8/8/8/8/8/4r3/4K3 w - - 0 1")));
+    QVERIFY(checked.isInCheck(Rules::Color::White));
+
+    board.setRules(checked);
+    board.resize(640, 640);
+    board.show();
+    QCoreApplication::processEvents();
+    const QImage withHighlight = board.grab().toImage();
+
+    board.setCheckHighlightingEnabled(false);
+    QVERIFY(!board.checkHighlightingEnabled());
+    QCoreApplication::processEvents();
+    const QImage withoutHighlight = board.grab().toImage();
+    QVERIFY(withHighlight != withoutHighlight);
+
+    board.setCheckHighlightingEnabled(true);
+    QCoreApplication::processEvents();
+    QVERIFY(board.grab().toImage() == withHighlight);
+
+    // A quiet position looks the same whether the option is on or off.
+    board.setRules(Rules{});
+    QCoreApplication::processEvents();
+    const QImage quietWithHighlight = board.grab().toImage();
+    board.setCheckHighlightingEnabled(false);
+    QCoreApplication::processEvents();
+    QVERIFY(board.grab().toImage() == quietWithHighlight);
 }
 
 QTEST_MAIN(ChessBoardTest)

@@ -37,6 +37,8 @@ class ChessBoard : public QWidget {
                WRITE setLegalMoveHighlightingEnabled)
     Q_PROPERTY(bool lastMoveHighlightingEnabled READ lastMoveHighlightingEnabled
                WRITE setLastMoveHighlightingEnabled)
+    Q_PROPERTY(bool checkHighlightingEnabled READ checkHighlightingEnabled
+               WRITE setCheckHighlightingEnabled)
     Q_PROPERTY(bool boardFlipped READ boardFlipped WRITE setBoardFlipped
                NOTIFY boardFlippedChanged)
 
@@ -49,6 +51,8 @@ public:
     [[nodiscard]] bool legalMoveHighlightingEnabled() const;
     void setLastMoveHighlightingEnabled(bool enabled);
     [[nodiscard]] bool lastMoveHighlightingEnabled() const;
+    void setCheckHighlightingEnabled(bool enabled);
+    [[nodiscard]] bool checkHighlightingEnabled() const;
     void setBoardFlipped(bool flipped);
     [[nodiscard]] bool boardFlipped() const;
     [[nodiscard]] const Rules &rules() const;
@@ -117,6 +121,7 @@ private:
     bool dragging_ = false;
     bool legalMoveHighlightingEnabled_ = true;
     bool lastMoveHighlightingEnabled_ = true;
+    bool checkHighlightingEnabled_ = true;
     bool boardFlipped_ = false;
     std::optional<Rules::Move> computerMovePreview_;
     std::optional<Rules::Move> recommendedMovePreview_;
@@ -133,6 +138,7 @@ private:
     [[nodiscard]] Rules::Position modelPosition(Rules::Position position) const;
     [[nodiscard]] std::optional<Rules::Position> positionAt(const QPoint &point) const;
     [[nodiscard]] QRect squareRect(Rules::Position position) const;
+    [[nodiscard]] std::optional<Rules::Position> kingPosition(Rules::Color color) const;
     [[nodiscard]] bool isLegalDestination(Rules::Position position) const;
     [[nodiscard]] bool isCurrentPlayerPiece(Rules::Position position) const;
 

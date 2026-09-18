@@ -143,6 +143,8 @@ bool AppConfig::load() {
         QStringLiteral("recommendedMove"), recommendedMovePreviewEnabled_).toBool();
     highlightLastMoveEnabled_ = settings.value(
         QStringLiteral("lastMoveHighlight"), highlightLastMoveEnabled_).toBool();
+    highlightCheckEnabled_ = settings.value(
+        QStringLiteral("checkHighlight"), highlightCheckEnabled_).toBool();
     settings.endGroup();
 
     settings.beginGroup(QStringLiteral("EngineOutput"));
@@ -239,6 +241,7 @@ bool AppConfig::save() const {
     settings.setValue(QStringLiteral("computerMove"), computerMovePreviewEnabled_);
     settings.setValue(QStringLiteral("recommendedMove"), recommendedMovePreviewEnabled_);
     settings.setValue(QStringLiteral("lastMoveHighlight"), highlightLastMoveEnabled_);
+    settings.setValue(QStringLiteral("checkHighlight"), highlightCheckEnabled_);
     settings.endGroup();
 
     settings.beginGroup(QStringLiteral("EngineOutput"));
@@ -433,6 +436,14 @@ void AppConfig::setHighlightLastMoveEnabled(bool enabled) {
     highlightLastMoveEnabled_ = enabled;
 }
 
+bool AppConfig::highlightCheckEnabled() const {
+    return highlightCheckEnabled_;
+}
+
+void AppConfig::setHighlightCheckEnabled(bool enabled) {
+    highlightCheckEnabled_ = enabled;
+}
+
 bool AppConfig::engineAnalysisSectionVisible() const {
     return engineAnalysisSectionVisible_;
 }
@@ -534,6 +545,7 @@ void AppConfig::resetToDefaults() {
     computerMovePreviewEnabled_ = false;
     recommendedMovePreviewEnabled_ = false;
     highlightLastMoveEnabled_ = true;
+    highlightCheckEnabled_ = true;
     engineAnalysisSectionVisible_ = false;
     engineLogSectionVisible_ = false;
     engineDetailsVisible_ = false;
