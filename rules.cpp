@@ -11,6 +11,14 @@
 #include <cstdlib>
 #include <limits>
 
+namespace {
+quint64 zobristPieceKey(Rules::Color color, Rules::PieceType type, int row,
+                        int column);
+quint64 zobristSideKey();
+quint64 zobristCastlingKey(int colorIndex, int sideIndex);
+quint64 zobristEnPassantKey(int file);
+} // namespace
+
 Rules::Rules() {
     reset();
 }
@@ -42,6 +50,7 @@ void Rules::reset() {
     lastMove_.reset();
     halfmoveClock_ = 0;
     fullmoveNumber_ = 1;
+    recomputeHash();
     repetitionHistory_.clear();
     repetitionHistory_.push_back(positionKey());
 }
@@ -91,6 +100,7 @@ bool Rules::tryMove(const Move &move) {
     const Piece movingPiece = *board_[move.from.row][move.from.column];
     const bool isCapture = board_[move.to.row][move.to.column].has_value();
 
+    hash_ ^= enPassantHash();
     applyMoveUnchecked(move);
     lastMove_ = move;
 
@@ -106,7 +116,11 @@ bool Rules::tryMove(const Move &move) {
         ++fullmoveNumber_;
     }
     currentPlayer_ = opposite(currentPlayer_);
-    repetitionHistory_.push_back(positionKey());
+    hash_ ^= zobristSideKey();
+    hash_ ^= enPassantHash();
+    if (trackRepetition_) {
+        repetitionHistory_.push_back(positionKey());
+    }
     return true;
 }
 
@@ -553,7 +567,11 @@ bool Rules::hasLegalMove(Color color) const {
 }
 
 void Rules::applyMoveUnchecked(const Move &move) {
+    const quint64 oldCastling = castlingHash();
+
     Piece movingPiece = *board_[move.from.row][move.from.column];
+    hash_ ^= zobristPieceKey(movingPiece.color, movingPiece.type, move.from.row,
+                             move.from.column);
     board_[move.from.row][move.from.column].reset();
 
     const bool castling = movingPiece.type == PieceType::King &&
@@ -563,16 +581,29 @@ void Rules::applyMoveUnchecked(const Move &move) {
                            !board_[move.to.row][move.to.column].has_value();
 
     if (enPassant) {
+        const auto &captured = board_[move.from.row][move.to.column];
+        if (captured.has_value()) {
+            hash_ ^= zobristPieceKey(captured->color, captured->type,
+                                     move.from.row, move.to.column);
+        }
         board_[move.from.row][move.to.column].reset();
+    } else if (board_[move.to.row][move.to.column].has_value()) {
+        const auto &captured = board_[move.to.row][move.to.column];
+        hash_ ^= zobristPieceKey(captured->color, captured->type, move.to.row,
+                                 move.to.column);
     }
 
     if (castling) {
         const int rookFromColumn = move.to.column > move.from.column ? 7 : 0;
         const int rookToColumn = move.to.column > move.from.column ? 5 : 3;
         Piece rook = *board_[move.from.row][rookFromColumn];
+        hash_ ^= zobristPieceKey(rook.color, rook.type, move.from.row,
+                                 rookFromColumn);
         board_[move.from.row][rookFromColumn].reset();
         rook.hasMoved = true;
         board_[move.from.row][rookToColumn] = rook;
+        hash_ ^= zobristPieceKey(rook.color, rook.type, move.from.row,
+                                 rookToColumn);
     }
 
     movingPiece.hasMoved = true;
@@ -584,6 +615,10 @@ void Rules::applyMoveUnchecked(const Move &move) {
     }
 
     board_[move.to.row][move.to.column] = movingPiece;
+    hash_ ^= zobristPieceKey(movingPiece.color, movingPiece.type, move.to.row,
+                             move.to.column);
+
+    hash_ ^= oldCastling ^ castlingHash();
 }
 
 bool Rules::loadFen(const QString &fen) {
@@ -841,6 +876,7 @@ bool Rules::loadFen(const QString &fen) {
     lastMove_ = newLastMove;
     halfmoveClock_ = halfmove;
     fullmoveNumber_ = fullmove;
+    recomputeHash();
     repetitionHistory_.clear();
     repetitionHistory_.push_back(positionKey());
     return true;
@@ -1396,4 +1432,465 @@ bool Rules::loadPgn(const QString &pgnContent,
     }
 
     return true;
+}
+
+namespace {
+
+struct ZobristTable {
+    quint64 pieces[2][6][64];
+    quint64 sideToMove;
+    quint64 castling[2][2];
+    quint64 enPassantFile[8];
+
+    ZobristTable() {
+        quint64 state = 0x2545F4914F6CDD1Dull;
+        const auto next = [&state]() {
+            state += 0x9E3779B97F4A7C15ull;
+            quint64 z = state;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+            return z ^ (z >> 31);
+        };
+        for (auto &color : pieces) {
+            for (auto &type : color) {
+                for (auto &square : type) {
+                    square = next();
+                }
+            }
+        }
+        sideToMove = next();
+        for (auto &color : castling) {
+            for (auto &side : color) {
+                side = next();
+            }
+        }
+        for (auto &file : enPassantFile) {
+            file = next();
+        }
+    }
+};
+
+const ZobristTable &zobristTable() {
+    static const ZobristTable table;
+    return table;
+}
+
+constexpr int pieceIndex(Rules::PieceType type) {
+    return static_cast<int>(type) - 1;
+}
+
+quint64 zobristPieceKey(Rules::Color color, Rules::PieceType type, int row,
+                        int column) {
+    const int colorIndex = color == Rules::Color::White ? 0 : 1;
+    return zobristTable()
+        .pieces[colorIndex][pieceIndex(type)][row * 8 + column];
+}
+
+quint64 zobristSideKey() {
+    return zobristTable().sideToMove;
+}
+
+quint64 zobristCastlingKey(int colorIndex, int sideIndex) {
+    return zobristTable().castling[colorIndex][sideIndex];
+}
+
+quint64 zobristEnPassantKey(int file) {
+    return zobristTable().enPassantFile[file];
+}
+
+} // namespace
+
+void Rules::setTrackRepetition(bool enabled) {
+    trackRepetition_ = enabled;
+}
+
+bool Rules::trackRepetition() const {
+    return trackRepetition_;
+}
+
+Rules Rules::detachedCopy() const {
+    Rules copy;
+    copy.board_ = board_;
+    copy.currentPlayer_ = currentPlayer_;
+    copy.lastMove_ = lastMove_;
+    copy.halfmoveClock_ = halfmoveClock_;
+    copy.fullmoveNumber_ = fullmoveNumber_;
+    copy.trackRepetition_ = false;
+    copy.hash_ = hash_;
+    return copy;
+}
+
+int Rules::generatePseudoLegalMoves(Move *moves, int capacity) const {
+    int count = 0;
+    const auto add = [&](const Move &move) {
+        if (count < capacity) {
+            moves[count++] = move;
+        }
+    };
+
+    const Color us = currentPlayer_;
+    const Color them = opposite(us);
+    const int pawnDirection = us == Color::White ? -1 : 1;
+    const int startingRow = us == Color::White ? 6 : 1;
+    const int promotionRow = us == Color::White ? 0 : 7;
+
+    const auto isOwn = [this, us](int row, int column) {
+        const auto &square = board_[row][column];
+        return square.has_value() && square->color == us;
+    };
+
+    static constexpr std::array<std::array<int, 2>, 8> knightOffsets = {{
+        {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
+        {1, -2},  {1, 2},  {2, -1},  {2, 1}
+    }};
+    static constexpr std::array<std::array<int, 2>, 8> kingOffsets = {{
+        {-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+        {0, 1},   {1, -1}, {1, 0},  {1, 1}
+    }};
+    static constexpr std::array<std::array<int, 2>, 4> bishopDirections = {{
+        {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
+    }};
+    static constexpr std::array<std::array<int, 2>, 4> rookDirections = {{
+        {-1, 0}, {1, 0}, {0, -1}, {0, 1}
+    }};
+
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto &square = board_[row][column];
+            if (!square.has_value() || square->color != us) {
+                continue;
+            }
+
+            switch (square->type) {
+            case PieceType::Pawn: {
+                const int forward = row + pawnDirection;
+                if (isInside({forward, column}) &&
+                    !board_[forward][column].has_value()) {
+                    if (forward == promotionRow) {
+                        for (const PieceType promotion :
+                             {PieceType::Queen, PieceType::Rook,
+                              PieceType::Bishop, PieceType::Knight}) {
+                            add({{row, column}, {forward, column}, promotion});
+                        }
+                    } else {
+                        add({{row, column}, {forward, column}, PieceType::None});
+                        const int doubleRow = row + 2 * pawnDirection;
+                        if (row == startingRow &&
+                            !board_[doubleRow][column].has_value()) {
+                            add({{row, column},
+                                 {doubleRow, column},
+                                 PieceType::None});
+                        }
+                    }
+                }
+                for (const int columnDelta : {-1, 1}) {
+                    const int targetColumn = column + columnDelta;
+                    if (!isInside({forward, targetColumn})) {
+                        continue;
+                    }
+                    const auto &target = board_[forward][targetColumn];
+                    if (target.has_value()) {
+                        if (target->color == us ||
+                            target->type == PieceType::King) {
+                            continue;
+                        }
+                        if (forward == promotionRow) {
+                            for (const PieceType promotion :
+                                 {PieceType::Queen, PieceType::Rook,
+                                  PieceType::Bishop, PieceType::Knight}) {
+                                add({{row, column},
+                                     {forward, targetColumn},
+                                     promotion});
+                            }
+                        } else {
+                            add({{row, column},
+                                 {forward, targetColumn},
+                                 PieceType::None});
+                        }
+                    } else if (lastMove_.has_value()) {
+                        const Move &previous = *lastMove_;
+                        const auto &previousPiece =
+                            board_[previous.to.row][previous.to.column];
+                        if (previousPiece.has_value() &&
+                            previousPiece->type == PieceType::Pawn &&
+                            previousPiece->color != us &&
+                            std::abs(previous.to.row - previous.from.row) == 2 &&
+                            previous.to.row == row &&
+                            previous.to.column == targetColumn) {
+                            add({{row, column},
+                                 {forward, targetColumn},
+                                 PieceType::None});
+                        }
+                    }
+                }
+                break;
+            }
+            case PieceType::Knight:
+                for (const auto &offset : knightOffsets) {
+                    const int targetRow = row + offset[0];
+                    const int targetColumn = column + offset[1];
+                    if (!isInside({targetRow, targetColumn}) ||
+                        isOwn(targetRow, targetColumn)) {
+                        continue;
+                    }
+                    const auto &target = board_[targetRow][targetColumn];
+                    if (target.has_value() &&
+                        target->type == PieceType::King) {
+                        continue;
+                    }
+                    add({{row, column}, {targetRow, targetColumn},
+                         PieceType::None});
+                }
+                break;
+            case PieceType::Bishop:
+            case PieceType::Rook:
+            case PieceType::Queen: {
+                const auto slide = [&](int rowDelta, int columnDelta) {
+                    int targetRow = row + rowDelta;
+                    int targetColumn = column + columnDelta;
+                    while (isInside({targetRow, targetColumn})) {
+                        const auto &target = board_[targetRow][targetColumn];
+                        if (target.has_value()) {
+                            if (target->color != us &&
+                                target->type != PieceType::King) {
+                                add({{row, column},
+                                     {targetRow, targetColumn},
+                                     PieceType::None});
+                            }
+                            break;
+                        }
+                        add({{row, column},
+                             {targetRow, targetColumn},
+                             PieceType::None});
+                        targetRow += rowDelta;
+                        targetColumn += columnDelta;
+                    }
+                };
+                if (square->type != PieceType::Rook) {
+                    for (const auto &direction : bishopDirections) {
+                        slide(direction[0], direction[1]);
+                    }
+                }
+                if (square->type != PieceType::Bishop) {
+                    for (const auto &direction : rookDirections) {
+                        slide(direction[0], direction[1]);
+                    }
+                }
+                break;
+            }
+            case PieceType::King: {
+                for (const auto &offset : kingOffsets) {
+                    const int targetRow = row + offset[0];
+                    const int targetColumn = column + offset[1];
+                    if (!isInside({targetRow, targetColumn}) ||
+                        isOwn(targetRow, targetColumn)) {
+                        continue;
+                    }
+                    const auto &target = board_[targetRow][targetColumn];
+                    if (target.has_value() &&
+                        target->type == PieceType::King) {
+                        continue;
+                    }
+                    add({{row, column}, {targetRow, targetColumn},
+                         PieceType::None});
+                }
+
+                const int homeRow = us == Color::White ? 7 : 0;
+                if (row != homeRow || column != 4 || square->hasMoved ||
+                    isInCheck(us)) {
+                    break;
+                }
+                for (const int kingSide : {1, 0}) {
+                    const int rookColumn = kingSide == 1 ? 7 : 0;
+                    const auto &rook = board_[homeRow][rookColumn];
+                    if (!rook.has_value() || rook->color != us ||
+                        rook->type != PieceType::Rook || rook->hasMoved) {
+                        continue;
+                    }
+                    const int step = kingSide == 1 ? 1 : -1;
+                    bool clear = true;
+                    for (int file = column + step; file != rookColumn;
+                         file += step) {
+                        if (board_[homeRow][file].has_value()) {
+                            clear = false;
+                            break;
+                        }
+                    }
+                    if (!clear) {
+                        continue;
+                    }
+                    const Position crossing{homeRow, column + step};
+                    if (isSquareAttacked(crossing, them)) {
+                        continue;
+                    }
+                    add({{row, column},
+                         {homeRow, column + 2 * step},
+                         PieceType::None});
+                }
+                break;
+            }
+            case PieceType::None:
+                break;
+            }
+        }
+    }
+
+    return count;
+}
+
+bool Rules::makeMove(const Move &move, Undo &undo) {
+    const auto &source = board_[move.from.row][move.from.column];
+    if (!source.has_value() || source->color != currentPlayer_) {
+        return false;
+    }
+
+    undo.movedPiece = *source;
+    undo.previousPlayer = currentPlayer_;
+    undo.halfmoveClock = halfmoveClock_;
+    undo.fullmoveNumber = fullmoveNumber_;
+    undo.hadLastMove = lastMove_.has_value();
+    undo.previousHash = hash_;
+    if (undo.hadLastMove) {
+        undo.lastMove = *lastMove_;
+    }
+
+    undo.castled = undo.movedPiece.type == PieceType::King &&
+                   std::abs(move.to.column - move.from.column) == 2;
+    const bool enPassant =
+        undo.movedPiece.type == PieceType::Pawn &&
+        move.from.column != move.to.column &&
+        !board_[move.to.row][move.to.column].has_value();
+
+    if (undo.castled) {
+        const int rookFromColumn = move.to.column > move.from.column ? 7 : 0;
+        const int rookToColumn = move.to.column > move.from.column ? 5 : 3;
+        undo.rookFrom = {move.from.row, rookFromColumn};
+        undo.rookTo = {move.from.row, rookToColumn};
+        undo.rookPiece =
+            *board_[undo.rookFrom.row][undo.rookFrom.column];
+    } else if (enPassant) {
+        undo.hasCapture = true;
+        undo.capturedSquare = {move.from.row, move.to.column};
+        undo.capturedPiece = *board_[move.from.row][move.to.column];
+    } else if (board_[move.to.row][move.to.column].has_value()) {
+        undo.hasCapture = true;
+        undo.capturedSquare = move.to;
+        undo.capturedPiece = *board_[move.to.row][move.to.column];
+    }
+
+    hash_ ^= enPassantHash();
+    applyMoveUnchecked(move);
+    lastMove_ = move;
+
+    if (undo.movedPiece.type == PieceType::Pawn || undo.hasCapture) {
+        halfmoveClock_ = 0;
+    } else {
+        ++halfmoveClock_;
+    }
+    if (currentPlayer_ == Color::Black) {
+        ++fullmoveNumber_;
+    }
+    currentPlayer_ = opposite(currentPlayer_);
+    hash_ ^= zobristSideKey();
+    hash_ ^= enPassantHash();
+
+    if (trackRepetition_) {
+        repetitionHistory_.push_back(positionKey());
+        undo.pushedRepetition = true;
+    }
+
+    if (isInCheck(undo.movedPiece.color)) {
+        unmakeMove(move, undo);
+        return false;
+    }
+    return true;
+}
+
+void Rules::unmakeMove(const Move &move, const Undo &undo) {
+    board_[move.to.row][move.to.column].reset();
+    board_[move.from.row][move.from.column] = undo.movedPiece;
+
+    if (undo.hasCapture) {
+        board_[undo.capturedSquare.row][undo.capturedSquare.column] =
+            undo.capturedPiece;
+    }
+    if (undo.castled) {
+        board_[undo.rookTo.row][undo.rookTo.column].reset();
+        board_[undo.rookFrom.row][undo.rookFrom.column] = undo.rookPiece;
+    }
+
+    halfmoveClock_ = undo.halfmoveClock;
+    fullmoveNumber_ = undo.fullmoveNumber;
+    currentPlayer_ = undo.previousPlayer;
+    if (undo.hadLastMove) {
+        lastMove_ = undo.lastMove;
+    } else {
+        lastMove_.reset();
+    }
+    hash_ = undo.previousHash;
+    if (undo.pushedRepetition) {
+        repetitionHistory_.pop_back();
+    }
+}
+
+quint64 Rules::zobristKey() const {
+    return hash_;
+}
+
+quint64 Rules::castlingHash() const {
+    const auto canCastle = [this](Color color, int rookColumn) {
+        const int homeRow = color == Color::White ? 7 : 0;
+        const auto &king = board_[homeRow][4];
+        const auto &rook = board_[homeRow][rookColumn];
+        return king.has_value() && king->type == PieceType::King &&
+               king->color == color && !king->hasMoved && rook.has_value() &&
+               rook->type == PieceType::Rook && rook->color == color &&
+               !rook->hasMoved;
+    };
+
+    quint64 key = 0;
+    if (canCastle(Color::White, 7)) {
+        key ^= zobristCastlingKey(0, 0);
+    }
+    if (canCastle(Color::White, 0)) {
+        key ^= zobristCastlingKey(0, 1);
+    }
+    if (canCastle(Color::Black, 7)) {
+        key ^= zobristCastlingKey(1, 0);
+    }
+    if (canCastle(Color::Black, 0)) {
+        key ^= zobristCastlingKey(1, 1);
+    }
+    return key;
+}
+
+quint64 Rules::enPassantHash() const {
+    if (!lastMove_.has_value()) {
+        return 0;
+    }
+    const Move &previous = *lastMove_;
+    const auto &piece = board_[previous.to.row][previous.to.column];
+    if (piece.has_value() && piece->type == PieceType::Pawn &&
+        std::abs(previous.to.row - previous.from.row) == 2) {
+        return zobristEnPassantKey(previous.to.column);
+    }
+    return 0;
+}
+
+void Rules::recomputeHash() {
+    hash_ = 0;
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto &square = board_[row][column];
+            if (square.has_value()) {
+                hash_ ^= zobristPieceKey(square->color, square->type, row,
+                                         column);
+            }
+        }
+    }
+    if (currentPlayer_ == Color::Black) {
+        hash_ ^= zobristSideKey();
+    }
+    hash_ ^= castlingHash();
+    hash_ ^= enPassantHash();
 }

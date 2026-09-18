@@ -27,8 +27,8 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
 
 - **Real-Time Heuristic Position Evaluation**
   - Self-contained classical evaluator (`HeuristicEval`) with no external model files required.
-  - Combines material, piece-square tables, mobility, pawn structure, passed pawns, king safety, bishop pair, rook activity, and game phase.
-  - Computes positional centipawn scores and a display percentage from White's perspective.
+  - Combines material, piece-square tables, phase-tapered mobility, pawn structure (doubled, isolated, backward, supported, candidate and passed pawns), king safety (shelter, open files, storms, castling rights), threats on hanging pieces, outposts, bad bishops, connected rooks, the bishop pair and a tapered game phase; drawish opposite-coloured bishop endings are scaled down.
+  - A short alpha-beta search with a delta-pruned quiescence extension resolves immediate captures and reports mates inside a shallow horizon, then computes positional centipawn scores and a display percentage from White's perspective. The search generates moves directly into a caller buffer and mutates the position in place through `Rules::makeMove`/`unmakeMove`, so no board state is copied per node; killer and history ordering plus a lockless transposition table (keyed by the incremental Zobrist hash) prune the tree without changing the returned value. Late-move reductions and horizon futility pruning cut it further; they can shorten a forced-mate line, so a parallel search trades a little exactness for speed. The root moves are searched across a persistent worker pool for depth 3 and above, and from depth 4 the search deepens iteratively with aspiration windows around the previous score (all cappable with `CHESSGUI_EVAL_THREADS`); the live evaluation and the whole-game curve use depth 2.
   - Automatically updates on each legal move.
 
 - **External UCI Chess Engine Integration**
@@ -293,8 +293,8 @@ Or run individual test suites directly:
 
 ### Test Coverage
 
-- **`RulesTest`**: Validates starting/midgame/endgame FEN parsing, invalid FEN detection, FEN round-trip generation, SAN move parsing with disambiguation/promotions/castling, PGN file/string parsing, the computer-game dialog (time control, Fischer increment and custom cadence selection, `TimeControl` PGN tag formatting), MainWindow FEN paste / PGN loading, and dragging a `.pgn` file onto the window.
-- **`HeuristicEvalTest`**: Validates balanced opening evaluation, insufficient material, centipawn-to-display-percentage formulas, passed pawns, piece advantage, Fool's Mate, Scholar's Mate, pawn-shelter rewards for castled kings, check penalty for the side to move, and drawn single-minor endgames.
+- **`RulesTest`**: Validates starting/midgame/endgame FEN parsing, invalid FEN detection, FEN round-trip generation, SAN move parsing with disambiguation/promotions/castling, PGN file/string parsing, the computer-game dialog (time control, Fischer increment and custom cadence selection, `TimeControl` PGN tag formatting), MainWindow FEN paste / PGN loading, dragging a `.pgn` file onto the window, and perft node counts that pin the search's move generator and make/unmake pair (castling, en passant, promotions, checks).
+- **`HeuristicEvalTest`**: Validates balanced opening evaluation, colour symmetry, reference positions, insufficient material (including two knights), centipawn-to-display-percentage formulas, passed, blocked and supported pawns, pawns on the seventh rank, piece advantage, hanging pieces, outposts, bad bishops, connected rooks, castling rights, opposite-coloured bishop scaling, Fool's Mate, Scholar's Mate, pawn-shelter rewards for castled kings, check penalty for the side to move, drawn single-minor endgames, and the short search (mate in one, free captures and dead drawn positions).
 - **`EvaluationBarTest`**: Validates evaluation bar property clamping, color customisation, signal emission, size constraints, and offscreen widget rendering.
 - **`EvaluationGraphTest`**: Validates the whole-game curve (point mapping, audit markers, cursor handling, and click-to-navigate).
 - **`MoveListWidgetTest`**: Validates move-pair rendering, current-move highlighting, audit annotations, and keyboard navigation.

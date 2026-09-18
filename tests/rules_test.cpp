@@ -45,10 +45,33 @@ QString moveListText(MainWindow &window) {
     return text;
 }
 
+// Counts the legal move sequences of the given depth using the search's
+// make/unmake primitives and its direct move generator.
+quint64 perft(Rules &rules, int depth) {
+    if (depth == 0) {
+        return 1;
+    }
+
+    Rules::Move moves[256];
+    const int count = rules.generatePseudoLegalMoves(moves, 256);
+    quint64 nodes = 0;
+    for (int index = 0; index < count; ++index) {
+        Rules::Undo undo;
+        if (!rules.makeMove(moves[index], undo)) {
+            continue;
+        }
+        nodes += perft(rules, depth - 1);
+        rules.unmakeMove(moves[index], undo);
+    }
+    return nodes;
+}
+
 class RulesTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void testPerft();
+    void testZobristHash();
     void testFenStartPos();
     void testFenMidGame();
     void testFenEndgame();
@@ -249,6 +272,95 @@ void RulesTest::testInsufficientMaterial() {
     QVERIFY(!rules.isInsufficientMaterial());
     QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/2Q5/4K3 w - - 0 1")));
     QVERIFY(!rules.isInsufficientMaterial());
+}
+
+void RulesTest::testPerft() {
+    // Known node counts that exercise castling, en passant, promotions and
+    // checks. They pin the exact behaviour of generatePseudoLegalMoves and of
+    // the make/unmake pair.
+    struct Case {
+        const char *fen;
+        int depth;
+        quint64 nodes;
+    };
+    const Case cases[] = {
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 1, 20},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 3, 8902},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+         1, 48},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+         3, 97862},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 4, 43238},
+        {"r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 3,
+         9467},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 3, 62379},
+        {"r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10",
+         3, 89890},
+    };
+
+    for (const Case &testCase : cases) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(testCase.fen)),
+                 testCase.fen);
+        rules.setTrackRepetition(false);
+        QCOMPARE(perft(rules, testCase.depth), testCase.nodes);
+    }
+}
+
+void RulesTest::testZobristHash() {
+    // The incrementally maintained key must match a fresh recomputation after
+    // every kind of move, and unmake must restore it exactly.
+    const auto checkMove = [](const char *fen, const Rules::Move &move) {
+        Rules rules;
+        QVERIFY(rules.loadFen(QString::fromLatin1(fen)));
+        rules.setTrackRepetition(false);
+        const quint64 before = rules.zobristKey();
+
+        Rules::Undo undo;
+        QVERIFY(rules.makeMove(move, undo));
+
+        Rules recomputed;
+        QVERIFY(recomputed.loadFen(rules.toFen()));
+        QCOMPARE(rules.zobristKey(), recomputed.zobristKey());
+        QVERIFY(rules.zobristKey() != before);
+
+        rules.unmakeMove(move, undo);
+        QCOMPARE(rules.zobristKey(), before);
+    };
+
+    // Quiet move, capture, castling, en passant and promotion.
+    checkMove("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+              {{6, 4}, {4, 4}, Rules::PieceType::None});
+    checkMove("4k3/8/8/8/8/8/3b4/3RK3 w - - 0 1",
+              {{7, 3}, {6, 3}, Rules::PieceType::None});
+    checkMove("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+              {{7, 4}, {7, 6}, Rules::PieceType::None});
+    checkMove("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 2",
+              {{3, 4}, {2, 3}, Rules::PieceType::None});
+    checkMove("4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+              {{1, 0}, {0, 0}, Rules::PieceType::Queen});
+
+    // Transpositions reached by different move orders share the same key. Both
+    // lines end on a bishop move, so neither offers an en passant capture.
+    Rules first;
+    QVERIFY(first.loadFen(
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")));
+    QVERIFY(first.tryMove({{6, 4}, {4, 4}})); // e4
+    QVERIFY(first.tryMove({{1, 4}, {3, 4}})); // e5
+    QVERIFY(first.tryMove({{7, 6}, {5, 5}})); // Nf3
+    QVERIFY(first.tryMove({{0, 1}, {2, 2}})); // Nc6
+    QVERIFY(first.tryMove({{7, 5}, {3, 1}})); // Bb5
+
+    Rules second;
+    QVERIFY(second.loadFen(
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")));
+    QVERIFY(second.tryMove({{6, 4}, {4, 4}})); // e4
+    QVERIFY(second.tryMove({{0, 1}, {2, 2}})); // Nc6
+    QVERIFY(second.tryMove({{7, 6}, {5, 5}})); // Nf3
+    QVERIFY(second.tryMove({{1, 4}, {3, 4}})); // e5
+    QVERIFY(second.tryMove({{7, 5}, {3, 1}})); // Bb5
+
+    QCOMPARE(first.zobristKey(), second.zobristKey());
 }
 
 void RulesTest::testThreefoldRepetition() {

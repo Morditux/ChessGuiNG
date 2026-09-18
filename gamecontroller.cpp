@@ -20,6 +20,12 @@ namespace {
     // An engine is assumed to accept a draw offer while it is not ahead by
     // more than half a pawn in the current position.
     constexpr int DrawAcceptanceThresholdCp = 50;
+
+    // Centipawns of the heuristic search at its default depth, used where only
+    // the score (and not the mate distance) is needed.
+    int heuristicCentipawns(const Rules &rules) {
+        return HeuristicEval::search(rules).centipawns;
+    }
 }
 
 GameController::GameController(QObject *parent)
@@ -753,16 +759,14 @@ void GameController::setRecommendedMovePreviewEnabled(bool enabled) {
 }
 
 void GameController::updateEvaluation() {
-    const int centipawns = HeuristicEval::evaluateCentipawns(rules_);
-    emit evaluationChanged(HeuristicEval::centipawnsToPercentage(centipawns));
-
-    // The heuristic reports checkmate as exactly +/-MateScore and never as a
-    // distance; "Mate" is the honest label for a mate that is already on the
-    // board. Any other score is clamped below that value.
-    const bool checkmate = centipawns == HeuristicEval::MateScore ||
-                           centipawns == -HeuristicEval::MateScore;
-    const std::optional<int> mateIn = checkmate ? std::optional<int>(0) : std::nullopt;
-    emit evaluationScoreChanged(UciParser::formatScore(centipawns, mateIn));
+    // A short search in front of the classical evaluation so that immediate
+    // tactics and mates inside the horizon are reflected; a mate already on
+    // the board is reported as exactly MateScore with a distance of zero.
+    const HeuristicEval::SearchResult result = HeuristicEval::search(rules_);
+    emit evaluationChanged(
+        HeuristicEval::centipawnsToPercentage(result.centipawns));
+    emit evaluationScoreChanged(
+        UciParser::formatScore(result.centipawns, result.mateIn));
 }
 
 bool GameController::canStartGameAudit() const {
@@ -941,13 +945,17 @@ void GameController::rebuildEvaluationCurve() {
         replay.reset();
     }
 
-    evaluationCurve_.append(HeuristicEval::evaluateDisplayPercentage(replay));
+    const auto curvePoint = [](const Rules &position) {
+        return HeuristicEval::centipawnsToPercentage(
+            heuristicCentipawns(position));
+    };
+    evaluationCurve_.append(curvePoint(replay));
     for (const QString &uci : std::as_const(uciMoves_)) {
         const auto move = parseUciMove(uci);
         if (!move.has_value() || !replay.tryMove(*move)) {
             break;
         }
-        evaluationCurve_.append(HeuristicEval::evaluateDisplayPercentage(replay));
+        evaluationCurve_.append(curvePoint(replay));
     }
 
     emit evaluationCurveChanged();
@@ -1655,7 +1663,8 @@ bool GameController::recordMove(const Rules::Move &move) {
 
     // The game only grows by one ply here, so the curve is appended rather
     // than rebuilt.
-    evaluationCurve_.append(HeuristicEval::evaluateDisplayPercentage(rules_));
+    evaluationCurve_.append(HeuristicEval::centipawnsToPercentage(
+        heuristicCentipawns(rules_)));
     emit evaluationCurveChanged();
 
     refreshMoveHistory();
@@ -1872,7 +1881,7 @@ void GameController::offerDraw() {
     }
 
     if (computerGameActive_) {
-        const int centipawns = HeuristicEval::evaluateCentipawns(rules_);
+        const int centipawns = heuristicCentipawns(rules_);
         const int engineCentipawns = computerColor_ == Rules::Color::White
                                          ? centipawns
                                          : -centipawns;
