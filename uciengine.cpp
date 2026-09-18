@@ -39,6 +39,12 @@ UciEngine::UciEngine(QObject *parent)
 }
 
 UciEngine::~UciEngine() {
+    // Stopping the process still flushes buffered engine output, and
+    // waitForFinished() delivers it synchronously. A signal emitted from here
+    // would reach receivers that are already being destroyed - the window that
+    // owns this engine is typically further down the same destruction chain -
+    // which Qt rejects with an assertion. The engine goes silent first.
+    blockSignals(true);
     stopEngine();
 }
 

@@ -6,6 +6,7 @@
 #include <QString>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
@@ -146,13 +147,18 @@ private:
      * H8; the vertical copy is reversed because image coordinates start at
      * the top while chess ranks start at rank 1 at the bottom.
      *
+     * Grayscale is computed only for the source pixels the bilinear taps
+     * actually reach, and the taps themselves are resolved once per axis, so
+     * the cost follows the board area rather than the screenshot area.
+     *
      * @param image Source image.
      * @param board Board rectangle in source-image coordinates.
-     * @return A flattened float tensor with shape [64, 1024].
+     * @param tiles Output tensor, resized to 64 * 1024 floats.
      * @throws std::runtime_error if the image or rectangle is invalid.
      */
-    [[nodiscard]] std::vector<float> extractTiles(const QImage& image,
-                                                  const QRect& board) const;
+    void extractTiles(const QImage& image,
+                      const QRect& board,
+                      std::vector<float>& tiles) const;
 
     /**
      * Runs ONNX inference and converts the winning class of every tile into
@@ -222,6 +228,19 @@ private:
      * @return A complete six-field FEN string.
      * @throws std::runtime_error if placement is not an eight-by-eight board.
      */
+
+    /** Input and output tensor names, resolved once when the session loads. */
+    std::string inputName_;
+    std::string outputName_;
+
+    /**
+     * Scratch buffers reused across classifications so that roughly 300 KB
+     * is not reallocated on every call. They make one instance non-reentrant:
+     * a FenRecognizer must be used from a single thread at a time.
+     */
+    mutable std::vector<float> grayScratch_;
+    mutable std::vector<float> resizedScratch_;
+    mutable std::vector<float> tilesScratch_;
     [[nodiscard]] static QString composeFen(const QString& placement);
 
     std::unique_ptr<Ort::Env> environment_;

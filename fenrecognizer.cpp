@@ -63,24 +63,6 @@ namespace {
 #endif
 
     /**
-     * Reads one grayscale pixel, clamping coordinates to the image edges.
-     *
-     * Clamping reproduces the edge behavior required by the bilinear resize
-     * when a sample falls just outside the source image.
-     */
-    float sampleClamped(const std::vector<float> &gray,
-                        int width,
-                        int height,
-                        int x,
-                        int y) {
-        const int cx = std::clamp(x, 0, width - 1);
-        const int cy = std::clamp(y, 0, height - 1);
-        return gray[static_cast<std::size_t>(cy) *
-                    static_cast<std::size_t>(width) +
-                    static_cast<std::size_t>(cx)];
-    }
-
-    /**
      * Expands a compressed placement into one character per board square.
      *
      * Empty squares are represented by '1' in the returned 64-character
@@ -148,7 +130,7 @@ FenRecognizer::FenRecognizer(const QString &modelPath) {
                 "chessVision");
 
         Ort::SessionOptions options;
-        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
+        options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         options.SetIntraOpNumThreads(1);
 
 #ifdef _WIN32
@@ -165,6 +147,20 @@ FenRecognizer::FenRecognizer(const QString &modelPath) {
 
         if (session_->GetInputCount() != 1 || session_->GetOutputCount() != 1)
             throw std::runtime_error("The model must have one input and one output");
+
+        // Tensor names never change for a loaded session, so they are
+        // resolved once instead of on every inference.
+        Ort::AllocatorWithDefaultOptions allocator;
+        Ort::AllocatedStringPtr inputName =
+                session_->GetInputNameAllocated(0, allocator);
+        Ort::AllocatedStringPtr outputName =
+                session_->GetOutputNameAllocated(0, allocator);
+        inputName_ = inputName.get();
+        outputName_ = outputName.get();
+
+        // The tile buffer only depends on the model contract, so it is
+        // allocated once and reused by every classification.
+        tilesScratch_.assign(TileCount * TileInputSize, 0.0f);
     } catch (const Ort::Exception &exception) {
         error_ = QStringLiteral("Could not load the model: %1")
                 .arg(QString::fromUtf8(exception.what()));
@@ -184,8 +180,9 @@ QString FenRecognizer::errorString() const {
     return error_;
 }
 
-std::vector<float> FenRecognizer::extractTiles(const QImage &image,
-                                               const QRect &board) const {
+void FenRecognizer::extractTiles(const QImage &image,
+                                 const QRect &board,
+                                 std::vector<float> &tiles) const {
     if (image.isNull() || board.width() <= 0 || board.height() <= 0)
         throw std::runtime_error("Image ou plateau invalide");
 
@@ -193,72 +190,112 @@ std::vector<float> FenRecognizer::extractTiles(const QImage &image,
     const int width = argb.width();
     const int height = argb.height();
 
-    std::vector<float> gray(static_cast<std::size_t>(width) *
-                            static_cast<std::size_t>(height));
+    const double x0 = static_cast<double>(board.x());
+    const double y0 = static_cast<double>(board.y());
+    const double boardWidth = static_cast<double>(board.width());
+    const double boardHeight = static_cast<double>(board.height());
 
-    for (int y = 0; y < height; ++y) {
-        const auto *row = reinterpret_cast<const QRgb *>(argb.constScanLine(y));
+    // Bilinear taps and weights only depend on the target coordinate, so they
+    // are resolved once per axis instead of once per sampled pixel. Clamping
+    // the taps to the image here reproduces the edge behaviour of a direct
+    // clamped sampler.
+    std::array<int, BoardPixels> tapX0{};
+    std::array<int, BoardPixels> tapX1{};
+    std::array<int, BoardPixels> tapY0{};
+    std::array<int, BoardPixels> tapY1{};
+    std::array<double, BoardPixels> weightsX{};
+    std::array<double, BoardPixels> weightsY{};
 
-        for (int x = 0; x < width; ++x) {
-            const QRgb pixel = row[x];
-            gray[static_cast<std::size_t>(y) *
-                 static_cast<std::size_t>(width) +
-                 static_cast<std::size_t>(x)] =
+    for (int target = 0; target < BoardPixels; ++target) {
+        const double sourceX =
+                x0 + ((static_cast<double>(target) + 0.5) * boardWidth) /
+                static_cast<double>(BoardPixels) - 0.5;
+        const int floorX = static_cast<int>(std::floor(sourceX));
+        tapX0[target] = std::clamp(floorX, 0, width - 1);
+        tapX1[target] = std::clamp(floorX + 1, 0, width - 1);
+        weightsX[target] = sourceX - static_cast<double>(floorX);
+
+        const double sourceY =
+                y0 + ((static_cast<double>(target) + 0.5) * boardHeight) /
+                static_cast<double>(BoardPixels) - 0.5;
+        const int floorY = static_cast<int>(std::floor(sourceY));
+        tapY0[target] = std::clamp(floorY, 0, height - 1);
+        tapY1[target] = std::clamp(floorY + 1, 0, height - 1);
+        weightsY[target] = sourceY - static_cast<double>(floorY);
+    }
+
+    // Only the pixels reached by a tap are ever read, so grayscale is built
+    // for their bounding box instead of for the whole screenshot.
+    int minX = tapX0[0];
+    int maxX = tapX0[0];
+    int minY = tapY0[0];
+    int maxY = tapY0[0];
+
+    for (int target = 0; target < BoardPixels; ++target) {
+        minX = std::min(minX, std::min(tapX0[target], tapX1[target]));
+        maxX = std::max(maxX, std::max(tapX0[target], tapX1[target]));
+        minY = std::min(minY, std::min(tapY0[target], tapY1[target]));
+        maxY = std::max(maxY, std::max(tapY0[target], tapY1[target]));
+    }
+
+    const int grayWidth = maxX - minX + 1;
+    const int grayHeight = maxY - minY + 1;
+    grayScratch_.resize(static_cast<std::size_t>(grayWidth) *
+                        static_cast<std::size_t>(grayHeight));
+
+    for (int y = 0; y < grayHeight; ++y) {
+        const auto *row = reinterpret_cast<const QRgb *>(
+                argb.constScanLine(minY + y));
+        float *destination =
+                grayScratch_.data() + static_cast<std::size_t>(y) * grayWidth;
+
+        for (int x = 0; x < grayWidth; ++x) {
+            const QRgb pixel = row[minX + x];
+            destination[x] =
                     0.299f * static_cast<float>(qRed(pixel)) +
                     0.587f * static_cast<float>(qGreen(pixel)) +
                     0.114f * static_cast<float>(qBlue(pixel));
         }
     }
 
-    const double x0 = static_cast<double>(board.x());
-    const double y0 = static_cast<double>(board.y());
-    const double boardWidth = static_cast<double>(board.width());
-    const double boardHeight = static_cast<double>(board.height());
-
-    std::vector<float> resized(static_cast<std::size_t>(BoardPixels) *
-                               static_cast<std::size_t>(BoardPixels));
+    resizedScratch_.resize(static_cast<std::size_t>(BoardPixels) *
+                           static_cast<std::size_t>(BoardPixels));
+    std::vector<float> &resized = resizedScratch_;
 
     // This is the same center-aligned bilinear resize used by Fenshot.
     for (int targetY = 0; targetY < BoardPixels; ++targetY) {
-        const double sourceY =
-                y0 + ((static_cast<double>(targetY) + 0.5) * boardHeight) /
-                static_cast<double>(BoardPixels) - 0.5;
-        const int floorY = static_cast<int>(std::floor(sourceY));
-        const double weightY = sourceY - static_cast<double>(floorY);
+        const float *topRow =
+                grayScratch_.data() +
+                static_cast<std::size_t>(tapY0[targetY] - minY) * grayWidth;
+        const float *bottomRow =
+                grayScratch_.data() +
+                static_cast<std::size_t>(tapY1[targetY] - minY) * grayWidth;
+        const double weightY = weightsY[targetY];
+        float *destinationRow =
+                resized.data() + static_cast<std::size_t>(targetY) * BoardPixels;
 
         for (int targetX = 0; targetX < BoardPixels; ++targetX) {
-            const double sourceX =
-                    x0 + ((static_cast<double>(targetX) + 0.5) * boardWidth) /
-                    static_cast<double>(BoardPixels) - 0.5;
-            const int floorX = static_cast<int>(std::floor(sourceX));
-            const double weightX = sourceX - static_cast<double>(floorX);
+            const int left = tapX0[targetX] - minX;
+            const int right = tapX1[targetX] - minX;
+            const double weightX = weightsX[targetX];
 
             const double top =
-                    static_cast<double>(sampleClamped(gray, width, height,
-                                                      floorX, floorY)) *
-                    (1.0 - weightX) +
-                    static_cast<double>(sampleClamped(gray, width, height,
-                                                      floorX + 1, floorY)) *
-                    weightX;
+                    static_cast<double>(topRow[left]) * (1.0 - weightX) +
+                    static_cast<double>(topRow[right]) * weightX;
 
             const double bottom =
-                    static_cast<double>(sampleClamped(gray, width, height,
-                                                      floorX, floorY + 1)) *
-                    (1.0 - weightX) +
-                    static_cast<double>(sampleClamped(gray, width, height,
-                                                      floorX + 1, floorY + 1)) *
-                    weightX;
+                    static_cast<double>(bottomRow[left]) * (1.0 - weightX) +
+                    static_cast<double>(bottomRow[right]) * weightX;
 
-            resized[static_cast<std::size_t>(targetY) * BoardPixels +
-                    static_cast<std::size_t>(targetX)] =
+            destinationRow[targetX] =
                     static_cast<float>((top * (1.0 - weightY) +
                                         bottom * weightY) /
                                        255.0);
         }
     }
 
-    std::vector<float> tiles(static_cast<std::size_t>(TileCount) *
-                             static_cast<std::size_t>(TileInputSize));
+    tiles.resize(static_cast<std::size_t>(TileCount) *
+                 static_cast<std::size_t>(TileInputSize));
 
     // rank 0 is rank 1, whose pixels are at the bottom of the image.
     for (int rank = 0; rank < 8; ++rank) {
@@ -279,8 +316,6 @@ std::vector<float> FenRecognizer::extractTiles(const QImage &image,
             }
         }
     }
-
-    return tiles;
 }
 
 FenRecognizer::Classification FenRecognizer::classify(const QImage &image,
@@ -288,7 +323,7 @@ FenRecognizer::Classification FenRecognizer::classify(const QImage &image,
     if (!isReady())
         throw std::runtime_error(error_.toStdString());
 
-    const std::vector<float> tiles = extractTiles(image, board);
+    extractTiles(image, board, tilesScratch_);
     const std::array<int64_t, 2> inputShape{
         TileCount,
         TileInputSize
@@ -299,19 +334,13 @@ FenRecognizer::Classification FenRecognizer::classify(const QImage &image,
 
     Ort::Value input = Ort::Value::CreateTensor<float>(
         memoryInfo,
-        const_cast<float *>(tiles.data()),
-        tiles.size(),
+        tilesScratch_.data(),
+        tilesScratch_.size(),
         inputShape.data(),
         inputShape.size());
 
-    Ort::AllocatorWithDefaultOptions allocator;
-    Ort::AllocatedStringPtr inputName =
-            session_->GetInputNameAllocated(0, allocator);
-    Ort::AllocatedStringPtr outputName =
-            session_->GetOutputNameAllocated(0, allocator);
-
-    const char *inputNames[] = {inputName.get()};
-    const char *outputNames[] = {outputName.get()};
+    const char *inputNames[] = {inputName_.c_str()};
+    const char *outputNames[] = {outputName_.c_str()};
 
     auto outputs = session_->Run(Ort::RunOptions{nullptr},
                                   inputNames,
