@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(ChessGui
-        VERSION 1.0.7
+        VERSION 1.0.8
         LANGUAGES CXX
 )
 
