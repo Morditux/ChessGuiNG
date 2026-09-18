@@ -456,19 +456,22 @@ void markSlidingAttacks(AttackInfo &info, const Board &board, int row,
     }
 }
 
-AttackInfo buildAttackInfo(const Board &board, Rules::Color color) {
-    AttackInfo info;
-    const int pawnDirection = forwardDirection(color);
-
+// Fills the attack maps of both colours in a single board pass. Attacks never
+// cross colours, so the interleaving order does not change the result.
+void buildAttackInfo(const Board &board, AttackInfo &white, AttackInfo &black) {
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
             const auto &piece = board[row][column];
-            if (!piece.has_value() || piece->color != color) {
+            if (!piece.has_value()) {
                 continue;
             }
 
+            const bool isWhite = piece->color == Rules::Color::White;
+            AttackInfo &info = isWhite ? white : black;
+
             switch (piece->type) {
-            case Rules::PieceType::Pawn:
+            case Rules::PieceType::Pawn: {
+                const int pawnDirection = forwardDirection(piece->color);
                 for (const int columnDelta : {-1, 1}) {
                     const int targetRow = row + pawnDirection;
                     const int targetColumn = column + columnDelta;
@@ -482,14 +485,12 @@ AttackInfo buildAttackInfo(const Board &board, Rules::Color color) {
                     }
                 }
                 break;
+            }
             case Rules::PieceType::Knight:
             case Rules::PieceType::King: {
-                const auto &offsets = piece->type == Rules::PieceType::Knight
-                                          ? KnightOffsets
-                                          : KingOffsets;
-                const int value = piece->type == Rules::PieceType::Knight
-                                      ? P.knightValue
-                                      : KingAttackerValue;
+                const bool knight = piece->type == Rules::PieceType::Knight;
+                const auto &offsets = knight ? KnightOffsets : KingOffsets;
+                const int value = knight ? P.knightValue : KingAttackerValue;
                 for (const auto &offset : offsets) {
                     const int targetRow = row + offset.rowDelta;
                     const int targetColumn = column + offset.columnDelta;
@@ -522,7 +523,6 @@ AttackInfo buildAttackInfo(const Board &board, Rules::Color color) {
             }
         }
     }
-    return info;
 }
 
 int countSliderMoves(const Board &board, const PieceOnBoard &piece,
@@ -1170,8 +1170,9 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck) {
         return 0;
     }
 
-    const AttackInfo attacksByWhite = buildAttackInfo(board, Rules::Color::White);
-    const AttackInfo attacksByBlack = buildAttackInfo(board, Rules::Color::Black);
+    AttackInfo attacksByWhite;
+    AttackInfo attacksByBlack;
+    buildAttackInfo(board, attacksByWhite, attacksByBlack);
 
     int score = evaluateMaterialAndPlacement(analysis);
     score += evaluatePawnStructure(board, analysis);
@@ -1364,82 +1365,77 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
     entry.key.store(key, std::memory_order_release);
 }
 
-bool isTacticalMove(const Rules &rules, const Rules::Move &move) {
-    if (move.promotion != Rules::PieceType::None) {
-        return true;
-    }
-    if (rules.pieceAt(move.to).has_value()) {
-        return true;
-    }
-    // En passant: a pawn moving diagonally onto an otherwise empty square.
-    const auto from = rules.pieceAt(move.from);
-    return from.has_value() && from->type == Rules::PieceType::Pawn &&
-           move.from.column != move.to.column;
-}
-
-// Material a move wins outright: the captured piece plus any promotion, which
-// is what delta pruning compares against the current alpha.
-int captureGainValue(const Rules &rules, const Rules::Move &move) {
+// Everything the search needs to know about a move besides its legality:
+// ordering score, whether it is a capture or promotion (and so worth searching
+// in the quiescence) and the material it wins outright for delta pruning. The
+// two squares are inspected once, where the old code looked them up again for
+// each of those questions.
+struct MoveOrdering {
+    int score = 0;
+    bool tactical = false;
     int gain = 0;
-    const auto target = rules.pieceAt(move.to);
-    if (target.has_value()) {
-        gain += HeuristicEval::pieceValue(target->type);
-    } else {
-        const auto from = rules.pieceAt(move.from);
-        if (from.has_value() && from->type == Rules::PieceType::Pawn &&
-            move.from.column != move.to.column) {
-            gain += PawnValue; // en passant capture
-        }
-    }
-    if (move.promotion != Rules::PieceType::None) {
-        gain += HeuristicEval::pieceValue(move.promotion);
-    }
-    return gain;
-}
+};
 
-int moveOrderingScore(const Rules &rules, const Rules::Move &move,
-                      const SearchState &state, int ply,
-                      const Rules::Move &tableMove, bool hasTableMove) {
-    if (hasTableMove && move == tableMove) {
-        return 2'000'000;
-    }
+MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
+                                 const SearchState &state, int ply,
+                                 const Rules::Move &tableMove,
+                                 bool hasTableMove) {
+    MoveOrdering ordering;
+
     const auto target = rules.pieceAt(move.to);
+    const auto from = rules.pieceAt(move.from);
+    // En passant: a pawn moving diagonally onto an otherwise empty square.
+    const bool enPassant = !target.has_value() && from.has_value() &&
+                           from->type == Rules::PieceType::Pawn &&
+                           move.from.column != move.to.column;
+
+    ordering.tactical = move.promotion != Rules::PieceType::None ||
+                        target.has_value() || enPassant;
     if (target.has_value()) {
-        const auto attacker = rules.pieceAt(move.from);
-        int score = 1'000'000 + 10 * HeuristicEval::pieceValue(target->type);
-        if (attacker.has_value()) {
-            score -= HeuristicEval::pieceValue(attacker->type);
-        }
-        return score;
+        ordering.gain += HeuristicEval::pieceValue(target->type);
+    } else if (enPassant) {
+        ordering.gain += PawnValue;
     }
     if (move.promotion != Rules::PieceType::None) {
-        return 900'000 + HeuristicEval::pieceValue(move.promotion);
+        ordering.gain += HeuristicEval::pieceValue(move.promotion);
     }
-    if (ply < MaxSearchPly) {
-        if (move == state.killers[ply][0]) {
-            return 800'000;
+
+    if (hasTableMove && move == tableMove) {
+        ordering.score = 2'000'000;
+    } else if (target.has_value()) {
+        ordering.score =
+            1'000'000 + 10 * HeuristicEval::pieceValue(target->type);
+        if (from.has_value()) {
+            ordering.score -= HeuristicEval::pieceValue(from->type);
         }
-        if (move == state.killers[ply][1]) {
-            return 799'000;
-        }
+    } else if (move.promotion != Rules::PieceType::None) {
+        ordering.score = 900'000 + HeuristicEval::pieceValue(move.promotion);
+    } else if (ply < MaxSearchPly && move == state.killers[ply][0]) {
+        ordering.score = 800'000;
+    } else if (ply < MaxSearchPly && move == state.killers[ply][1]) {
+        ordering.score = 799'000;
+    } else {
+        const int color = rules.currentPlayer() == Rules::Color::White ? 0 : 1;
+        ordering.score =
+            state.history[color][move.from.row * 8 + move.from.column]
+                         [move.to.row * 8 + move.to.column];
     }
-    const int color = rules.currentPlayer() == Rules::Color::White ? 0 : 1;
-    return state.history[color][move.from.row * 8 + move.from.column]
-                        [move.to.row * 8 + move.to.column];
+    return ordering;
 }
 
 // Classical evaluation seen from the side to move, without the terminal checks
 // the search performs itself, capped below the mate range.
-int leafScore(const Rules &rules) {
+int leafScore(const Rules &rules, bool inCheck) {
     const Rules::Color side = rules.currentPlayer();
     const Board board = snapshotBoard(rules);
-    const int white = evaluateBoard(board, side, rules.isInCheck(side));
+    const int white = evaluateBoard(board, side, inCheck);
     return std::clamp(signFor(side) * white, -MaxEvalScore, MaxEvalScore);
 }
 
 // Selects the not-yet-searched move with the highest ordering score and swaps
-// it into position `index`.
-void selectNextMove(Rules::Move *moves, int *scores, int index, int count) {
+// it into position `index`, keeping the parallel tactical/gain arrays aligned.
+void selectNextMove(Rules::Move *moves, int *scores, int index, int count,
+                    bool *tactical = nullptr, int *gain = nullptr) {
     int best = index;
     for (int j = index + 1; j < count; ++j) {
         if (scores[j] > scores[best]) {
@@ -1448,6 +1444,12 @@ void selectNextMove(Rules::Move *moves, int *scores, int index, int count) {
     }
     std::swap(moves[index], moves[best]);
     std::swap(scores[index], scores[best]);
+    if (tactical != nullptr) {
+        std::swap(tactical[index], tactical[best]);
+    }
+    if (gain != nullptr) {
+        std::swap(gain[index], gain[best]);
+    }
 }
 
 int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
@@ -1457,7 +1459,7 @@ int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
 
     int best = -SearchInfinity;
     if (!inCheck) {
-        const int standPat = leafScore(rules);
+        const int standPat = leafScore(rules, false);
         if (standPat >= beta) {
             return standPat;
         }
@@ -1468,29 +1470,46 @@ int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
     }
 
     if (depth <= 0 || ply >= MaxSearchPly) {
-        return inCheck ? leafScore(rules) : best;
+        return inCheck ? leafScore(rules, true) : best;
     }
 
     Rules::Move moves[MaxMoves];
     int scores[MaxMoves];
-    const int count = rules.generatePseudoLegalMoves(moves, MaxMoves);
+    bool tactical[MaxMoves];
+    int gains[MaxMoves];
+    int count = rules.generatePseudoLegalMoves(moves, MaxMoves);
     for (int i = 0; i < count; ++i) {
-        scores[i] = moveOrderingScore(rules, moves[i], state, ply,
-                                      Rules::Move{}, false);
+        const MoveOrdering ordering =
+            computeMoveOrdering(rules, moves[i], state, ply, Rules::Move{},
+                                false);
+        scores[i] = ordering.score;
+        tactical[i] = ordering.tactical;
+        gains[i] = ordering.gain;
+    }
+    // Out of check every quiet move is searched anyway, so drop them before
+    // ordering and searching rather than skipping them one by one.
+    if (!inCheck) {
+        int kept = 0;
+        for (int i = 0; i < count; ++i) {
+            if (!tactical[i]) {
+                continue;
+            }
+            moves[kept] = moves[i];
+            scores[kept] = scores[i];
+            gains[kept] = gains[i];
+            ++kept;
+        }
+        count = kept;
     }
 
     bool anyLegal = false;
     for (int i = 0; i < count; ++i) {
-        selectNextMove(moves, scores, i, count);
+        selectNextMove(moves, scores, i, count, tactical, gains);
         const Rules::Move move = moves[i];
         if (!inCheck) {
-            if (!isTacticalMove(rules, move)) {
-                continue;
-            }
             // Delta pruning: a capture that cannot raise the score even in the
             // best case is not worth searching.
-            if (best + captureGainValue(rules, move) + DeltaPruningMargin <=
-                alpha) {
+            if (best + gains[i] + DeltaPruningMargin <= alpha) {
                 continue;
             }
         }
@@ -1543,24 +1562,30 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
     const int alphaOriginal = alpha;
     Rules::Move moves[MaxMoves];
     int scores[MaxMoves];
+    bool tacticalFlags[MaxMoves];
+    int gains[MaxMoves];
     const int count = rules.generatePseudoLegalMoves(moves, MaxMoves);
     for (int i = 0; i < count; ++i) {
-        scores[i] = moveOrderingScore(rules, moves[i], state, ply, tableMove,
-                                      hasTableMove);
+        const MoveOrdering ordering =
+            computeMoveOrdering(rules, moves[i], state, ply, tableMove,
+                                hasTableMove);
+        scores[i] = ordering.score;
+        tacticalFlags[i] = ordering.tactical;
+        gains[i] = ordering.gain;
     }
 
     bool anyLegal = false;
     const bool futileNode = depth == 1 && !inCheck;
     int staticEval = 0;
     if (futileNode) {
-        staticEval = leafScore(rules);
+        staticEval = leafScore(rules, inCheck);
     }
     int best = futileNode ? staticEval : -SearchInfinity;
     Rules::Move bestMove{};
     for (int i = 0; i < count; ++i) {
-        selectNextMove(moves, scores, i, count);
+        selectNextMove(moves, scores, i, count, tacticalFlags, gains);
         const Rules::Move move = moves[i];
-        const bool tactical = isTacticalMove(rules, move);
+        const bool tactical = tacticalFlags[i];
 
         // Futility pruning: at the horizon a quiet move that cannot lift the
         // score past alpha is not worth searching.
@@ -1854,6 +1879,24 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
     return best;
 }
 
+// Tests whether the side to move has at least one legal move. This drives the
+// checkmate/stalemate tests at the top level, where Rules::hasLegalMove would
+// scan every piece against every target square; the search primitives decide
+// legality move by move and stop at the first legal one.
+bool hasAnyLegalMove(const Rules &rules) {
+    Rules probe = rules.detachedCopy();
+    Rules::Move moves[MaxMoves];
+    const int count = probe.generatePseudoLegalMoves(moves, MaxMoves);
+    for (int i = 0; i < count; ++i) {
+        Rules::Undo undo;
+        if (probe.makeMove(moves[i], undo)) {
+            probe.unmakeMove(moves[i], undo);
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 int HeuristicEval::pieceValue(Rules::PieceType type) {
@@ -1870,18 +1913,20 @@ int HeuristicEval::pieceValue(Rules::PieceType type) {
 }
 
 int HeuristicEval::evaluateCentipawns(const Rules &rules) {
-    // Only the side to move can legally be checkmated or stalemated.
+    // Only the side to move can legally be checkmated or stalemated. One
+    // check test and one legal-move scan replace the two isInCheck calls and
+    // the full hasLegalMove of isCheckmate()+isStalemate().
     const Rules::Color sideToMove = rules.currentPlayer();
-    if (rules.isCheckmate(sideToMove)) {
-        return sideToMove == Rules::Color::White ? -MateScore : MateScore;
-    }
-    if (rules.isStalemate(sideToMove)) {
-        return 0;
+    const bool inCheck = rules.isInCheck(sideToMove);
+    if (!hasAnyLegalMove(rules)) {
+        if (inCheck) {
+            return sideToMove == Rules::Color::White ? -MateScore : MateScore;
+        }
+        return 0; // Stalemate.
     }
 
     const Board board = snapshotBoard(rules);
-    const int score =
-        evaluateBoard(board, sideToMove, rules.isInCheck(sideToMove));
+    const int score = evaluateBoard(board, sideToMove, inCheck);
 
     // Reserve MateScore exclusively for actual checkmates.
     return std::clamp(score, -MateScore + 1, MateScore - 1);
@@ -1892,33 +1937,32 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
     SearchResult result;
 
     const Rules::Color side = rules.currentPlayer();
-    if (rules.isCheckmate(side)) {
-        result.centipawns =
-            side == Rules::Color::White ? -MateScore : MateScore;
-        result.mateIn = 0;
-        return result;
-    }
-    if (rules.isStalemate(side) || rules.isInsufficientMaterial()) {
-        return result;
-    }
-
     depth = std::max(0, depth);
     quiescenceDepth = std::max(0, quiescenceDepth);
 
     Rules::Move moves[MaxMoves];
     const int moveCount = rules.generatePseudoLegalMoves(moves, MaxMoves);
-    if (moveCount == 0) {
-        result.centipawns =
-            side == Rules::Color::White ? -MateScore : MateScore;
-        result.mateIn = 0;
+    // A single legal-move scan decides checkmate and stalemate; the old
+    // isCheckmate()+isStalemate() pair each ran their own full generation.
+    if (moveCount == 0 || !hasAnyLegalMove(rules)) {
+        if (rules.isInCheck(side)) {
+            result.centipawns =
+                side == Rules::Color::White ? -MateScore : MateScore;
+            result.mateIn = 0;
+        }
+        return result;
+    }
+    if (rules.isInsufficientMaterial()) {
         return result;
     }
 
     SearchState orderingState;
     int scores[MaxMoves];
     for (int i = 0; i < moveCount; ++i) {
-        scores[i] = moveOrderingScore(rules, moves[i], orderingState, 0,
-                                      Rules::Move{}, false);
+        scores[i] =
+            computeMoveOrdering(rules, moves[i], orderingState, 0, Rules::Move{},
+                                false)
+                .score;
     }
     for (int i = 0; i < moveCount; ++i) {
         selectNextMove(moves, scores, i, moveCount);

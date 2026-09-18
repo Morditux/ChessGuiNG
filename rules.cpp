@@ -23,6 +23,26 @@ Rules::Rules() {
     reset();
 }
 
+Rules::Rules(NoInitTag) {
+}
+
+int Rules::colorIndex(Color color) {
+    return color == Color::White ? 0 : 1;
+}
+
+void Rules::recomputeKingPositions() {
+    kingPosition_[0] = {-1, -1};
+    kingPosition_[1] = {-1, -1};
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto &square = board_[row][column];
+            if (square.has_value() && square->type == PieceType::King) {
+                kingPosition_[colorIndex(square->color)] = Position{row, column};
+            }
+        }
+    }
+}
+
 void Rules::reset() {
     for (auto &row : board_) {
         row.fill(std::nullopt);
@@ -50,6 +70,7 @@ void Rules::reset() {
     lastMove_.reset();
     halfmoveClock_ = 0;
     fullmoveNumber_ = 1;
+    recomputeKingPositions();
     recomputeHash();
     repetitionHistory_.clear();
     repetitionHistory_.push_back(positionKey());
@@ -81,7 +102,7 @@ bool Rules::isValidMove(const Move &move) const {
     }
 
     const Piece movingPiece = *board_[move.from.row][move.from.column];
-    Rules candidate = *this;
+    Rules candidate = detachedCopy();
     candidate.applyMoveUnchecked(move);
 
     return !candidate.isInCheck(movingPiece.color);
@@ -145,22 +166,8 @@ std::vector<Rules::Position> Rules::legalMoves(Position from) const {
 }
 
 bool Rules::isInCheck(Color color) const {
-    Position kingPosition{-1, -1};
-    for (int row = 0; row < 8; ++row) {
-        for (int column = 0; column < 8; ++column) {
-            const auto &square = board_[row][column];
-            if (square.has_value() && square->type == PieceType::King &&
-                square->color == color) {
-                kingPosition = Position{row, column};
-                break;
-            }
-        }
-        if (kingPosition.row != -1) {
-            break;
-        }
-    }
-
-    if (kingPosition.row == -1) {
+    const Position kingPosition = kingPosition_[colorIndex(color)];
+    if (!isInside(kingPosition)) {
         return false;
     }
 
@@ -484,61 +491,100 @@ bool Rules::isPathClear(Position from, Position to) const {
 }
 
 bool Rules::isSquareAttacked(Position position, Color byColor) const {
-    for (int row = 0; row < 8; ++row) {
-        for (int column = 0; column < 8; ++column) {
-            const auto &square = board_[row][column];
-            if (!square.has_value() || square->color != byColor) {
-                continue;
-            }
+    static constexpr std::array<std::array<int, 2>, 8> knightOffsets = {{
+        {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
+        {1, -2},  {1, 2},  {2, -1},  {2, 1}
+    }};
+    static constexpr std::array<std::array<int, 2>, 8> kingOffsets = {{
+        {-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
+        {0, 1},   {1, -1}, {1, 0},  {1, 1}
+    }};
+    static constexpr std::array<std::array<int, 2>, 4> bishopDirections = {{
+        {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
+    }};
+    static constexpr std::array<std::array<int, 2>, 4> rookDirections = {{
+        {-1, 0}, {1, 0}, {0, -1}, {0, 1}
+    }};
 
-            const Position from{row, column};
-            const int rowDelta = position.row - from.row;
-            const int columnDelta = position.column - from.column;
-            const int absoluteRowDelta = std::abs(rowDelta);
-            const int absoluteColumnDelta = std::abs(columnDelta);
+    const int row = position.row;
+    const int column = position.column;
 
-            switch (square->type) {
-            case PieceType::Pawn: {
-                const int direction = byColor == Color::White ? -1 : 1;
-                if (rowDelta == direction && absoluteColumnDelta == 1) {
+    // Pawns: a pawn of `byColor` captures forward, so it would sit one rank
+    // "behind" the target from its own point of view.
+    const int pawnRow = row + (byColor == Color::White ? 1 : -1);
+    for (const int columnOffset : {-1, 1}) {
+        const int pawnColumn = column + columnOffset;
+        if (!isInside({pawnRow, pawnColumn})) {
+            continue;
+        }
+        const auto &square = board_[pawnRow][pawnColumn];
+        if (square.has_value() && square->color == byColor &&
+            square->type == PieceType::Pawn) {
+            return true;
+        }
+    }
+
+    for (const auto &offset : knightOffsets) {
+        const int targetRow = row + offset[0];
+        const int targetColumn = column + offset[1];
+        if (!isInside({targetRow, targetColumn})) {
+            continue;
+        }
+        const auto &square = board_[targetRow][targetColumn];
+        if (square.has_value() && square->color == byColor &&
+            square->type == PieceType::Knight) {
+            return true;
+        }
+    }
+
+    for (const auto &offset : kingOffsets) {
+        const int targetRow = row + offset[0];
+        const int targetColumn = column + offset[1];
+        if (!isInside({targetRow, targetColumn})) {
+            continue;
+        }
+        const auto &square = board_[targetRow][targetColumn];
+        if (square.has_value() && square->color == byColor &&
+            square->type == PieceType::King) {
+            return true;
+        }
+    }
+
+    // Sliding pieces: walk outward from the target; the first piece met either
+    // attacks it or blocks the ray.
+    for (const auto &direction : bishopDirections) {
+        int targetRow = row + direction[0];
+        int targetColumn = column + direction[1];
+        while (isInside({targetRow, targetColumn})) {
+            const auto &square = board_[targetRow][targetColumn];
+            if (square.has_value()) {
+                if (square->color == byColor &&
+                    (square->type == PieceType::Bishop ||
+                     square->type == PieceType::Queen)) {
                     return true;
                 }
                 break;
             }
-            case PieceType::Knight:
-                if ((absoluteRowDelta == 2 && absoluteColumnDelta == 1) ||
-                    (absoluteRowDelta == 1 && absoluteColumnDelta == 2)) {
+            targetRow += direction[0];
+            targetColumn += direction[1];
+        }
+    }
+
+    for (const auto &direction : rookDirections) {
+        int targetRow = row + direction[0];
+        int targetColumn = column + direction[1];
+        while (isInside({targetRow, targetColumn})) {
+            const auto &square = board_[targetRow][targetColumn];
+            if (square.has_value()) {
+                if (square->color == byColor &&
+                    (square->type == PieceType::Rook ||
+                     square->type == PieceType::Queen)) {
                     return true;
                 }
-                break;
-            case PieceType::Bishop:
-                if (absoluteRowDelta == absoluteColumnDelta &&
-                    isPathClear(from, position)) {
-                    return true;
-                }
-                break;
-            case PieceType::Rook:
-                if ((rowDelta == 0 || columnDelta == 0) &&
-                    isPathClear(from, position)) {
-                    return true;
-                }
-                break;
-            case PieceType::Queen:
-                if ((absoluteRowDelta == absoluteColumnDelta ||
-                     rowDelta == 0 || columnDelta == 0) &&
-                    isPathClear(from, position)) {
-                    return true;
-                }
-                break;
-            case PieceType::King:
-                if (absoluteRowDelta <= 1 && absoluteColumnDelta <= 1 &&
-                    (absoluteRowDelta != 0 || absoluteColumnDelta != 0)) {
-                    return true;
-                }
-                break;
-            case PieceType::None:
                 break;
             }
+            targetRow += direction[0];
+            targetColumn += direction[1];
         }
     }
 
@@ -617,6 +663,10 @@ void Rules::applyMoveUnchecked(const Move &move) {
     board_[move.to.row][move.to.column] = movingPiece;
     hash_ ^= zobristPieceKey(movingPiece.color, movingPiece.type, move.to.row,
                              move.to.column);
+
+    if (movingPiece.type == PieceType::King) {
+        kingPosition_[colorIndex(movingPiece.color)] = move.to;
+    }
 
     hash_ ^= oldCastling ^ castlingHash();
 }
@@ -839,6 +889,8 @@ bool Rules::loadFen(const QString &fen) {
     candidate.board_ = newBoard;
     candidate.currentPlayer_ = newPlayer;
     candidate.lastMove_ = newLastMove;
+    candidate.kingPosition_[0] = whiteKing;
+    candidate.kingPosition_[1] = blackKing;
     if (candidate.isInCheck(opposite(newPlayer))) {
         return false;
     }
@@ -876,6 +928,8 @@ bool Rules::loadFen(const QString &fen) {
     lastMove_ = newLastMove;
     halfmoveClock_ = halfmove;
     fullmoveNumber_ = fullmove;
+    kingPosition_[0] = whiteKing;
+    kingPosition_[1] = blackKing;
     recomputeHash();
     repetitionHistory_.clear();
     repetitionHistory_.push_back(positionKey());
@@ -1509,7 +1563,7 @@ bool Rules::trackRepetition() const {
 }
 
 Rules Rules::detachedCopy() const {
-    Rules copy;
+    Rules copy(NoInitTag{});
     copy.board_ = board_;
     copy.currentPlayer_ = currentPlayer_;
     copy.lastMove_ = lastMove_;
@@ -1517,6 +1571,7 @@ Rules Rules::detachedCopy() const {
     copy.fullmoveNumber_ = fullmoveNumber_;
     copy.trackRepetition_ = false;
     copy.hash_ = hash_;
+    copy.kingPosition_ = kingPosition_;
     return copy;
 }
 
@@ -1809,6 +1864,10 @@ bool Rules::makeMove(const Move &move, Undo &undo) {
 void Rules::unmakeMove(const Move &move, const Undo &undo) {
     board_[move.to.row][move.to.column].reset();
     board_[move.from.row][move.from.column] = undo.movedPiece;
+
+    if (undo.movedPiece.type == PieceType::King) {
+        kingPosition_[colorIndex(undo.movedPiece.color)] = move.from;
+    }
 
     if (undo.hasCapture) {
         board_[undo.capturedSquare.row][undo.capturedSquare.column] =

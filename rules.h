@@ -149,8 +149,18 @@ private:
     bool trackRepetition_ = true;
     quint64 hash_ = 0;
     std::vector<QString> repetitionHistory_;
+    // Cached king squares indexed by Color (White = 0, Black = 1), kept in
+    // sync by applyMoveUnchecked/unmakeMove so isInCheck never scans the board.
+    std::array<Position, 2> kingPosition_{{{-1, -1}, {-1, -1}}};
+
+    // Tag used by detachedCopy() to build a position without running the
+    // expensive reset() (board setup, hashing and repetition bookkeeping).
+    struct NoInitTag {};
+    explicit Rules(NoInitTag);
 
     [[nodiscard]] static Color opposite(Color color);
+    [[nodiscard]] static int colorIndex(Color color);
+    void recomputeKingPositions();
     [[nodiscard]] QString positionKey() const;
     // Zobrist contributions recomputed from the board; `hash_` is updated
     // incrementally on every move.
