@@ -109,6 +109,7 @@ private slots:
     void testMainWindowRecognizesScreenshotWhenProvided();
     void testComputerGameDialogSettings();
     void testMainWindowExplainsTheEvaluation();
+    void testArrowNavigationNeverMovesTheFocus();
     void testMainWindowSettingsMenu();
 };
 
@@ -1365,6 +1366,73 @@ void RulesTest::testMainWindowSettingsMenu() {
 
     HeuristicEval::resetParams();
     HeuristicEval::setSearchThreads(0);
+}
+
+void RulesTest::testArrowNavigationNeverMovesTheFocus() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    MainWindow window(nullptr, tempDir.filePath(QStringLiteral("chessGui.conf")));
+    window.show();
+    if (!QTest::qWaitForWindowActive(&window)) {
+        QSKIP("The window cannot be activated on this platform");
+    }
+    QVERIFY(window.gameController()->loadPgn(QStringLiteral("1. e4 e5 2. Nf3 Nc6 *")));
+
+    // The status line and the engine panel hold focusable buttons. A button
+    // consumes a Left or Right it receives by walking the focus chain
+    // (QAbstractButton::keyPressEvent calls focusNextPrevChild), and at either end
+    // of the game the matching navigation action is disabled, so no shortcut
+    // claims the key: the focus then travelled from one button to the next until
+    // it parked in the analysis spin boxes, which swallowed the arrows for good.
+    auto *button = window.findChild<QToolButton *>(QStringLiteral("gameInformationButton"));
+    auto *stepForwardAction = window.findChild<QAction *>(QStringLiteral("stepForwardAction"));
+    auto *stepBackAction = window.findChild<QAction *>(QStringLiteral("stepBackAction"));
+    QVERIFY(button != nullptr);
+    QVERIFY(stepForwardAction != nullptr);
+    QVERIFY(stepBackAction != nullptr);
+
+    window.gameController()->goToMove(0);
+    button->setFocus();
+    QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(button));
+
+    // Walking the game forward keeps the focus where the user left it, and the
+    // last move turns the "Step forward" action off. Qt answers the arrows of the
+    // numeric keypad with the same shortcut, so both spellings are exercised.
+    for (int i = 0; i < 4; ++i) {
+        QTest::keyClick(QApplication::focusWidget(), Qt::Key_Right,
+                        i % 2 == 0 ? Qt::NoModifier : Qt::KeypadModifier);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(button));
+    }
+    QCOMPARE(window.gameController()->moveCursor(), 4);
+    QVERIFY(!stepForwardAction->isEnabled());
+
+    // Past the last move the arrows still belong to the navigation: they are
+    // consumed instead of reaching the focus chain, and the focus does not end up
+    // in the analysis spin boxes, where the arrows would be lost.
+    auto *depthSpin = window.findChild<QSpinBox *>(QStringLiteral("depthLimitSpin"));
+    QVERIFY(depthSpin != nullptr);
+    for (int i = 0; i < 8; ++i) {
+        QTest::keyClick(QApplication::focusWidget(), Qt::Key_Right,
+                        i % 2 == 0 ? Qt::NoModifier : Qt::KeypadModifier);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(button));
+    }
+    QVERIFY(QApplication::focusWidget() != static_cast<QWidget *>(depthSpin));
+
+    // The same holds at the beginning of the game, where "Step back" is off.
+    for (int i = 0; i < 8; ++i) {
+        QTest::keyClick(QApplication::focusWidget(), Qt::Key_Left,
+                        i % 2 == 0 ? Qt::NoModifier : Qt::KeypadModifier);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(button));
+    }
+    QCOMPARE(window.gameController()->moveCursor(), 0);
+    QVERIFY(!stepBackAction->isEnabled());
+
+    // The toolbar buttons are click targets, not keyboard stops.
+    auto *toolBar = window.findChild<QToolBar *>(QStringLiteral("mainToolBar"));
+    QVERIFY(toolBar != nullptr);
+    QWidget *stepForwardButton = toolBar->widgetForAction(stepForwardAction);
+    QVERIFY(stepForwardButton != nullptr);
+    QCOMPARE(stepForwardButton->focusPolicy(), Qt::NoFocus);
 }
 
 QTEST_MAIN(RulesTest)

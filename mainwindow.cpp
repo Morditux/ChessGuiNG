@@ -27,6 +27,7 @@
 #include "uciparser.h"
 #include "visionworker.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
@@ -1305,8 +1306,32 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         updateEvaluationGraphVisibility();
     }
 
-    if (event->type() == QEvent::DragEnter ||
-        event->type() == QEvent::DragMove) {
+    // The arrow keys belong to the game navigation, never to the focus chain: a
+    // focused button consumes a Left or Right it receives by walking that chain
+    // (QAbstractButton::keyPressEvent calls focusNextPrevChild), and at either end
+    // of the game the matching navigation action is disabled, so no shortcut
+    // claims the key. The focus used to drift from one button to the next until it
+    // reached the analysis spin boxes, which then swallowed the arrows for good.
+    // The key is only dropped when the navigation cannot use it, so an enabled
+    // shortcut keeps handling it as before.
+    if (event->type() == QEvent::KeyPress) {
+        auto *button = qobject_cast<QAbstractButton *>(watched);
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        const QAction *navigation = keyEvent->key() == Qt::Key_Left      ? stepBackAction_
+                                    : keyEvent->key() == Qt::Key_Right   ? stepForwardAction_
+                                                                         : nullptr;
+        // Qt answers the arrows of the numeric keypad with the same shortcut as
+        // the plain ones, so both spellings have to be kept from the focus chain.
+        const bool navigationKey = keyEvent->modifiers() == Qt::NoModifier ||
+                                   keyEvent->modifiers() == Qt::KeypadModifier;
+        if (button != nullptr && button->window() == this && navigation != nullptr &&
+            !navigation->isEnabled() && navigationKey) {
+            return true;
+        }
+    }
+
+    if (watched == this &&
+        (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove)) {
         auto *dragEvent = static_cast<QDropEvent *>(event);
         if (hasSupportedDrop(dragEvent->mimeData())) {
             dragEvent->acceptProposedAction();
@@ -1316,7 +1341,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
         return true;
     }
 
-    if (event->type() == QEvent::Drop) {
+    if (watched == this && event->type() == QEvent::Drop) {
         auto *dropEvent = static_cast<QDropEvent *>(event);
         if (!hasSupportedDrop(dropEvent->mimeData())) {
             dropEvent->ignore();
@@ -2158,7 +2183,9 @@ void MainWindow::setupUi() {
     setMinimumWidth(800);
     setMinimumHeight(600);
     setAcceptDrops(true);
-    installEventFilter(this);
+    // The filter is installed on the application and every branch below is
+    // restricted to this window, so the events of the dialogs stay untouched.
+    qApp->installEventFilter(this);
 
     auto *menubar = new QMenuBar(this);
     const auto configureToolAction = [](QAction *action, const QString &iconPath,
