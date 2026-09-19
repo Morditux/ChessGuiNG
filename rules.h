@@ -97,6 +97,26 @@ public:
     bool makeMove(const Move &move, Undo &undo);
     void unmakeMove(const Move &move, const Undo &undo);
 
+    // What a null move has to put back, which is only the bookkeeping the turn
+    // flip touches: no piece moves, so there is nothing else to restore.
+    struct NullUndo {
+        bool hadLastMove = false;
+        Move lastMove;
+        int halfmoveClock = 0;
+        int fullmoveNumber = 1;
+        Color previousPlayer = Color::White;
+        bool pushedRepetition = false;
+        quint64 previousHash = 0;
+    };
+
+    // Passes the turn without moving a piece, which is what null-move pruning
+    // needs. The previous move is forgotten, so no en passant target survives,
+    // and the fifty-move clock is left alone: a null move is not a move for the
+    // rule and must not turn a pruning test into a draw. It is refused while the
+    // side to move is in check, where passing describes no legal position.
+    bool makeNullMove(NullUndo &undo);
+    void unmakeNullMove(const NullUndo &undo);
+
     // Zobrist key of the current position, including the side to move, the
     // castling rights and the en passant file.
     [[nodiscard]] quint64 zobristKey() const;

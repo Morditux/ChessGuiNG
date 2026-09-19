@@ -75,6 +75,7 @@ class RulesTest : public QObject {
 private slots:
     void testPerft();
     void testZobristHash();
+    void testNullMovePassesTheTurn();
     void testFenStartPos();
     void testFenMidGame();
     void testFenEndgame();
@@ -352,6 +353,43 @@ void RulesTest::testPerft() {
         rules.setTrackRepetition(false);
         QCOMPARE(perft(rules, testCase.depth), testCase.nodes);
     }
+}
+
+void RulesTest::testNullMovePassesTheTurn() {
+    // The null move is what null-move pruning searches: it flips the turn
+    // without moving a piece, forgets the previous move with its en passant
+    // target, and has to leave the position exactly as it found it.
+    Rules rules;
+    QVERIFY(rules.loadFen(
+        QStringLiteral("r3k2r/8/8/3pP3/8/8/8/R3K2R w KQkq d6 0 1")));
+    const quint64 hash = rules.zobristKey();
+    const QString fen = rules.toFen();
+
+    Rules::NullUndo undo;
+    QVERIFY(rules.makeNullMove(undo));
+    QCOMPARE(rules.currentPlayer(), Rules::Color::Black);
+    QVERIFY(!rules.toFen().contains(QStringLiteral(" d6 ")));
+    QVERIFY(rules.zobristKey() != hash);
+
+    rules.unmakeNullMove(undo);
+    QCOMPARE(rules.currentPlayer(), Rules::Color::White);
+    QCOMPARE(rules.zobristKey(), hash);
+    QCOMPARE(rules.toFen(), fen);
+
+    // The fifty-move clock is not a move: passing must not push it forward.
+    Rules fiftyMove;
+    QVERIFY(fiftyMove.loadFen(
+        QStringLiteral("r3k2r/8/8/3pP3/8/8/8/R3K2R w KQkq - 98 60")));
+    Rules::NullUndo clockUndo;
+    QVERIFY(fiftyMove.makeNullMove(clockUndo));
+    QVERIFY(!fiftyMove.isFiftyMoveRule());
+    fiftyMove.unmakeNullMove(clockUndo);
+
+    // A side in check cannot pass: there is no position to describe.
+    Rules inCheck;
+    QVERIFY(inCheck.loadFen(QStringLiteral("4k3/8/8/8/8/8/4r3/4K3 w - - 0 1")));
+    Rules::NullUndo refused;
+    QVERIFY(!inCheck.makeNullMove(refused));
 }
 
 void RulesTest::testZobristHash() {

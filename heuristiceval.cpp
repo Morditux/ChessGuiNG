@@ -1330,6 +1330,10 @@ constexpr int DeltaPruningMargin = 200;
 // A quiet move at the horizon must gain at least this much over the static
 // score before it is searched.
 constexpr int FutilityMargin = 200;
+// How much shallower the search continues after passing the turn. Two plies is
+// the usual reduction: the null move only produces a bound, and the opponent
+// gets a free move in exchange.
+constexpr int NullMoveReduction = 2;
 
 // Maximum number of pseudo-legal moves in any position (218 legal, plus the
 // extra promotion variants).
@@ -1514,6 +1518,9 @@ struct SearchState {
     const SearchControl *control = nullptr;
     int nodes = 0;
     bool stopped = false;
+    // True while a null move is being searched, which forbids a second one in a
+    // row: two passes would prove nothing about the position.
+    bool nullMove = false;
     // Zobrist key of the position at each ply of the line being searched,
     // used to recognise a repetition inside the search. The root position is
     // seeded at index 0; quiescence is entered at the ply of the node that
@@ -1739,6 +1746,166 @@ MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
     return ordering;
 }
 
+// Pieces the swap below may trade before it gives up, which bounds the loop.
+constexpr int MaxSeePlies = 32;
+
+// True when the piece sitting on `from` attacks `to` on this board, which is a
+// plain copy the caller owns, so no pin or turn rule is consulted.
+bool pieceAttacks(const Board &board, Rules::Position from, Rules::Position to) {
+    const auto piece = board[from.row][from.column];
+    if (!piece.has_value()) {
+        return false;
+    }
+    const int rowStep = to.row - from.row;
+    const int columnStep = to.column - from.column;
+    const int rowDistance = std::abs(rowStep);
+    const int columnDistance = std::abs(columnStep);
+    switch (piece->type) {
+    case Rules::PieceType::Pawn:
+        // A pawn captures one step diagonally forward, and "forward" follows
+        // its colour.
+        return columnDistance == 1 &&
+               rowStep == (piece->color == Rules::Color::White ? -1 : 1);
+    case Rules::PieceType::Knight:
+        return (rowDistance == 2 && columnDistance == 1) ||
+               (rowDistance == 1 && columnDistance == 2);
+    case Rules::PieceType::King:
+        return rowDistance <= 1 && columnDistance <= 1 &&
+               (rowDistance != 0 || columnDistance != 0);
+    case Rules::PieceType::Bishop:
+        if (rowDistance != columnDistance) {
+            return false;
+        }
+        break;
+    case Rules::PieceType::Rook:
+        if (rowStep != 0 && columnStep != 0) {
+            return false;
+        }
+        break;
+    case Rules::PieceType::Queen:
+        if (rowDistance != columnDistance && rowStep != 0 && columnStep != 0) {
+            return false;
+        }
+        break;
+    case Rules::PieceType::None:
+        return false;
+    }
+
+    // A sliding piece needs an empty path: the walk stops on the first occupied
+    // square, which is the target when nothing stands in between.
+    const int rowDirection = (rowStep > 0) - (rowStep < 0);
+    const int columnDirection = (columnStep > 0) - (columnStep < 0);
+    int row = from.row + rowDirection;
+    int column = from.column + columnDirection;
+    while (row != to.row || column != to.column) {
+        if (!isInside(row, column) || board[row][column].has_value()) {
+            return false;
+        }
+        row += rowDirection;
+        column += columnDirection;
+    }
+    return true;
+}
+
+// Cheapest piece of `side` that attacks `to`, kings left out: a king taking
+// back on a defended square is not a legal exchange, and counting it would make
+// every defended piece look worthless.
+std::optional<Rules::Position> leastValuableAttacker(const Board &board,
+                                                     Rules::Position to,
+                                                     Rules::Color side) {
+    std::optional<Rules::Position> best;
+    int bestValue = 0;
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto &square = board[row][column];
+            if (!square.has_value() || square->color != side ||
+                square->type == Rules::PieceType::King) {
+                continue;
+            }
+            const int value = HeuristicEval::pieceValue(square->type);
+            if (best.has_value() && value >= bestValue) {
+                continue;
+            }
+            if (pieceAttacks(board, {row, column}, to)) {
+                best = Rules::Position{row, column};
+                bestValue = value;
+            }
+        }
+    }
+    return best;
+}
+
+// Material the exchange started by `move` is worth for the mover, by the classic
+// swap algorithm: the cheapest available piece always takes back, and the
+// balance is folded back so that either side may stop the exchange. The board is
+// a local copy, so the caller's position is never touched; kings never take
+// part, which is the usual approximation, and en passant removes the pawn that
+// is not on the target square.
+bool moveCaptures(const Rules &rules, const Rules::Move &move) {
+    if (rules.pieceAt(move.to).has_value()) {
+        return true;
+    }
+    const auto from = rules.pieceAt(move.from);
+    return from.has_value() && from->type == Rules::PieceType::Pawn &&
+           move.from.column != move.to.column;
+}
+
+int seeValue(const Rules &rules, const Rules::Move &move) {
+    Board board = snapshotBoard(rules);
+
+    const auto &victim = board[move.to.row][move.to.column];
+    const auto &mover = board[move.from.row][move.from.column];
+    const bool enPassant = !victim.has_value() && mover.has_value() &&
+                           mover->type == Rules::PieceType::Pawn &&
+                           move.from.column != move.to.column;
+    const int victimValue = victim.has_value()
+                                ? HeuristicEval::pieceValue(victim->type)
+                                : (enPassant ? HeuristicEval::pieceValue(
+                                                   Rules::PieceType::Pawn)
+                                             : 0);
+
+    // Play the capture on the local board, promoting the pawn if it does.
+    Rules::Piece landing = mover.value_or(Rules::Piece{});
+    if (move.promotion != Rules::PieceType::None) {
+        landing.type = move.promotion;
+    } else if (landing.type == Rules::PieceType::Pawn &&
+               (move.to.row == 0 || move.to.row == 7)) {
+        landing.type = Rules::PieceType::Queen;
+    }
+    board[move.from.row][move.from.column] = std::nullopt;
+    board[move.to.row][move.to.column] = landing;
+    if (enPassant) {
+        board[move.from.row][move.to.column] = std::nullopt;
+    }
+
+    int gain[MaxSeePlies + 1] = {};
+    gain[0] = victimValue;
+    int depth = 0;
+    Rules::Color side = rules.currentPlayer() == Rules::Color::White
+                            ? Rules::Color::Black
+                            : Rules::Color::White;
+    while (depth < MaxSeePlies) {
+        const auto attacker = leastValuableAttacker(board, move.to, side);
+        if (!attacker.has_value()) {
+            break;
+        }
+        ++depth;
+        const int onSquare =
+            HeuristicEval::pieceValue(board[move.to.row][move.to.column]->type);
+        gain[depth] = onSquare - gain[depth - 1];
+        board[move.to.row][move.to.column] =
+            board[attacker->row][attacker->column];
+        board[attacker->row][attacker->column] = std::nullopt;
+        side = side == Rules::Color::White ? Rules::Color::Black
+                                           : Rules::Color::White;
+    }
+    while (depth > 0) {
+        gain[depth - 1] = -std::max(-gain[depth - 1], gain[depth]);
+        --depth;
+    }
+    return gain[0];
+}
+
 // Classical evaluation seen from the side to move, without the terminal checks
 // the search performs itself, capped below the mate range. The score is a
 // function of the position alone (the caller's `inCheck` is that of the side to
@@ -1759,6 +1926,27 @@ int leafScore(const Rules &rules, bool inCheck) {
 // Defined further down; the draw test needs it to tell a checkmate from a
 // position that is merely in check when the fifty-move clock has run out.
 bool hasAnyLegalMove(const Rules &rules);
+
+// Null-move pruning is unsound in a position that can only get worse by being
+// forced to move, so it is limited to sides that still hold a piece next to
+// their pawns and their king.
+bool hasNonPawnMaterial(const Rules &rules, Rules::Color side) {
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto piece = rules.pieceAt({row, column});
+            if (!piece.has_value() || piece->color != side) {
+                continue;
+            }
+            if (piece->type == Rules::PieceType::Knight ||
+                piece->type == Rules::PieceType::Bishop ||
+                piece->type == Rules::PieceType::Rook ||
+                piece->type == Rules::PieceType::Queen) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 // Draws that depend on the line that reached the position: the fifty-move rule
 // and a repetition of a position already met by the same side to move earlier
@@ -1873,6 +2061,13 @@ int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
             if (best + gains[i] + DeltaPruningMargin <= alpha) {
                 continue;
             }
+            // Static exchange evaluation: when the swap on the target square
+            // loses material, the capture is not forced and searching it only
+            // grows the tree.
+            if (gains[i] > 0 && moveCaptures(rules, move) &&
+                seeValue(rules, move) < 0) {
+                continue;
+            }
         }
 
         Rules::Undo undo;
@@ -1930,6 +2125,30 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         return tableValue;
     }
 
+    // Null-move pruning: when the opponent cannot reach beta even after being
+    // handed a free move, every real move keeps this position at least as good,
+    // so the node is cut without searching any of them. It is skipped in check,
+    // in a position with nothing but pawns left (where being forced to move is
+    // the whole problem) and near the mate range, where a bound would be a lie.
+    if (!inCheck && depth >= 3 && std::abs(beta) < MateThreshold &&
+        !state.nullMove && hasNonPawnMaterial(rules, side)) {
+        Rules::NullUndo nullUndo;
+        if (rules.makeNullMove(nullUndo)) {
+            state.nullMove = true;
+            const int score = -negamax(rules, depth - 1 - NullMoveReduction,
+                                       quiescenceDepth, -beta, -beta + 1,
+                                       ply + 1, state);
+            state.nullMove = false;
+            rules.unmakeNullMove(nullUndo);
+            if (state.stopped) {
+                return 0;
+            }
+            if (score >= beta) {
+                return beta;
+            }
+        }
+    }
+
     const int alphaOriginal = alpha;
     Rules::Move moves[MaxMoves];
     int scores[MaxMoves];
@@ -1965,33 +2184,58 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
             continue;
         }
 
+        // A capture that loses material is not worth a full search at the
+        // horizon either: the quiescence search would never play it.
+        if (futileNode && tactical && !inCheck && gains[i] > 0 &&
+            moveCaptures(rules, move) && seeValue(rules, move) < 0) {
+            continue;
+        }
+
         Rules::Undo undo;
         if (!rules.makeMove(move, undo)) {
             continue;
         }
+        // The first move searched gets the full window; every later one is only
+        // scouted with a null window and re-searched when it beats alpha, which
+        // is what makes alpha-beta cut more of the tree.
+        const bool firstMove = !anyLegal;
         anyLegal = true;
-        // A check may start a forcing line, so it is never reduced.
-        // Late move reductions: quiet moves far down the list are searched a
-        // ply shallower and only re-searched in full when they beat alpha. The
-        // check test is part of the condition, so it is only paid for the moves
-        // that could actually be reduced.
+        // A move that gives check may start a forcing line, so it is searched one
+        // ply deeper and is never reduced. A check played while already in check
+        // is only an escape, and leaving those unextended is what keeps a series
+        // of checks from holding the remaining depth constant.
+        const bool givesCheck = rules.isInCheck(rules.currentPlayer());
         int childDepth = depth - 1;
         int reduction = 0;
-        if (depth >= 3 && !tactical && !inCheck && i >= 3 &&
-            alpha > -MateThreshold && beta < MateThreshold &&
-            !rules.isInCheck(rules.currentPlayer())) {
+        // Late move reductions: quiet moves far down the list are searched a ply
+        // shallower and only re-searched in full when they beat alpha. The check
+        // test is shared with the extension below, so it is not paid twice.
+        if (depth >= 3 && !tactical && !inCheck && i >= 3 && !givesCheck &&
+            alpha > -MateThreshold && beta < MateThreshold) {
             reduction = i >= 8 ? 2 : 1;
             if (reduction > childDepth) {
                 reduction = childDepth;
             }
             childDepth -= reduction;
         }
+        const int extension = givesCheck && !inCheck ? 1 : 0;
+        childDepth += extension;
 
-        int score = -negamax(rules, childDepth, quiescenceDepth, -beta, -alpha,
+        int score = 0;
+        if (firstMove) {
+            score = -negamax(rules, childDepth, quiescenceDepth, -beta, -alpha,
                              ply + 1, state);
+        } else {
+            score = -negamax(rules, childDepth, quiescenceDepth, -alpha - 1,
+                             -alpha, ply + 1, state);
+        }
         if (reduction > 0 && score > alpha) {
-            score = -negamax(rules, depth - 1, quiescenceDepth, -beta, -alpha,
-                             ply + 1, state);
+            score = -negamax(rules, depth - 1 + extension, quiescenceDepth,
+                             -alpha - 1, -alpha, ply + 1, state);
+        }
+        if (!firstMove && score > alpha && score < beta) {
+            score = -negamax(rules, depth - 1 + extension, quiescenceDepth,
+                             -beta, -alpha, ply + 1, state);
         }
         rules.unmakeMove(move, undo);
 

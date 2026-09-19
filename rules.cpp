@@ -1912,6 +1912,54 @@ void Rules::unmakeMove(const Move &move, const Undo &undo) {
     }
 }
 
+bool Rules::makeNullMove(NullUndo &undo) {
+    if (isInCheck(currentPlayer_)) {
+        return false;
+    }
+
+    undo.hadLastMove = lastMove_.has_value();
+    if (undo.hadLastMove) {
+        undo.lastMove = *lastMove_;
+    }
+    undo.halfmoveClock = halfmoveClock_;
+    undo.fullmoveNumber = fullmoveNumber_;
+    undo.previousPlayer = currentPlayer_;
+    undo.previousHash = hash_;
+    undo.pushedRepetition = false;
+
+    // Same bookkeeping as a real move, minus the board update: the en passant
+    // target of the previous move disappears with it, the side to move flips and
+    // the fifty-move clock is deliberately left where it is.
+    hash_ ^= enPassantHash();
+    lastMove_.reset();
+    if (currentPlayer_ == Color::Black) {
+        ++fullmoveNumber_;
+    }
+    currentPlayer_ = opposite(currentPlayer_);
+    hash_ ^= zobristSideKey();
+    hash_ ^= enPassantHash();
+    if (trackRepetition_) {
+        repetitionHistory_.push_back(repetitionKey());
+        undo.pushedRepetition = true;
+    }
+    return true;
+}
+
+void Rules::unmakeNullMove(const NullUndo &undo) {
+    halfmoveClock_ = undo.halfmoveClock;
+    fullmoveNumber_ = undo.fullmoveNumber;
+    currentPlayer_ = undo.previousPlayer;
+    if (undo.hadLastMove) {
+        lastMove_ = undo.lastMove;
+    } else {
+        lastMove_.reset();
+    }
+    hash_ = undo.previousHash;
+    if (undo.pushedRepetition) {
+        repetitionHistory_.pop_back();
+    }
+}
+
 quint64 Rules::zobristKey() const {
     return hash_;
 }

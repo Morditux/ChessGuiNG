@@ -965,14 +965,17 @@ void HeuristicEvalTest::testEvaluationCacheIsTransparent() {
     // evaluation must not notice it.
     const int warmSearch = HeuristicEval::search(rules, 4, 2).centipawns;
     const int warmStatic = HeuristicEval::evaluateCentipawns(rules);
-    HeuristicEval::setSearchThreads(0);
 
     QCOMPARE(warmSearch, coldSearch);
     QCOMPARE(warmStatic, coldStatic);
 
-    // Dropping it must not change anything either.
+    // Dropping it must not change anything either. The cap has to stay at one
+    // worker until the end: a parallel search shares alpha between workers and
+    // may split a different value out of the same position, which is not what
+    // this test is about.
     HeuristicEval::clearSearchCache();
     QCOMPARE(HeuristicEval::search(rules, 4, 2).centipawns, coldSearch);
+    HeuristicEval::setSearchThreads(0);
 }
 
 void HeuristicEvalTest::testEvaluationCacheFollowsTheParams() {
@@ -1047,28 +1050,27 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "g1f3", 3265, 0},
-        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "d2d3",
-         12529, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 70, "e2a6",
-         11204, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 510, "d7c8q", 4610, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1946, 0},
+        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
+         5819, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 84, "e2a6",
+         8341, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 510, "d7c8q", 1527, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2,
-         HeuristicEval::MateScore, "h5f7", 89, 1},
-        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 58, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 138, "b4f4", 2289, 0},
-        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 671, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -98,
-         "c6d4", 23584, 0},
-        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 982, "d2e3", 8977, 0},
-        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 16, "d2d3",
-         9575, 0},
-        // A materially drawn position is not searched at all: no line, no nodes.
+         HeuristicEval::MateScore, "h5f7", 85, 1},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 67, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 112, "b4f4", 1724, 0},
+        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 685, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -98, "c6d4",
+         4472, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 982, "e1e2", 13912, 0},
+        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
+         5500, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
-        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 179, "e4d5", 141, 0},
-        {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 571, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 958, "a7a8q", 148, 0},
-        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 990, "e1e2", 195, 0},
+        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 179, "e4d5", 156, 0},
+        {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 368, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 958, "a7a8q", 173, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 990, "e1e2", 280, 0},
     };
 
     HeuristicEval::resetParams();
