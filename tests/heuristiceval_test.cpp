@@ -64,6 +64,19 @@ QString mirrorUci(const QString &uci) {
     return mirrored;
 }
 
+// Material of a position as a sorted bag of piece letters, so a positional pair
+// can be checked to differ by one feature and not by material.
+QString materialOf(const QString &fen) {
+    QString pieces;
+    for (const QChar &ch : fen.section(QLatin1Char(' '), 0, 0)) {
+        if (ch.isLetter()) {
+            pieces.append(ch);
+        }
+    }
+    std::sort(pieces.begin(), pieces.end());
+    return pieces;
+}
+
 // Independent mate oracle used by the reference suite: a plain minimax over the
 // rules engine, so the mate distances the evaluator reports are checked against
 // something that shares none of its code. `plies` is odd, so the side to move
@@ -168,6 +181,7 @@ private slots:
     void testSearchMatchesTheMateOracle();
     void testSearchWinsTheFreeMaterial();
     void testSearchDefendsAgainstMateInOne();
+    void testPositionalKnowledge();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1228,6 +1242,62 @@ void HeuristicEvalTest::testSearchDefendsAgainstMateInOne() {
         rules.unmakeMove(*result.bestMove, undo);
     }
     HeuristicEval::setSearchThreads(0);
+}
+
+void HeuristicEvalTest::testPositionalKnowledge() {
+    // Pairs of positions that differ by one positional feature and carry the
+    // same material with the same side to move, so the static evaluation has to
+    // rank them by that feature alone. Every direction below was checked against
+    // an external engine (Stockfish dev, depth 18), which agreed with a clear
+    // margin; the assertion only asks that the evaluator keeps the same order
+    // with room to spare, because a static score is not a search score. Each
+    // pair is also run mirrored, which puts the good side behind the black
+    // pieces and catches a colour asymmetry.
+    struct Pair {
+        const char *feature;
+        const char *better;
+        const char *worse;
+    };
+    const Pair pairs[] = {
+        {"a rook on an open file",
+         "4k3/pp3ppp/8/8/8/8/PP3PPP/3RK3 w - - 0 1",
+         "4k3/pp3ppp/8/8/8/8/PP3PPP/4KR2 w - - 0 1"},
+        {"connected central pawns",
+         "4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1",
+         "4k3/8/8/8/3P3P/8/8/4K3 w - - 0 1"},
+        {"an active knight",
+         "4k3/pp3ppp/8/8/4N3/8/PP3PPP/4K3 w - - 0 1",
+         "4k3/pp3ppp/8/8/8/8/PP3PPP/N3K3 w - - 0 1"},
+    };
+
+    for (const Pair &pair : pairs) {
+        const QString feature = QString::fromLatin1(pair.feature);
+        const QString betterFen = QString::fromLatin1(pair.better);
+        const QString worseFen = QString::fromLatin1(pair.worse);
+        QVERIFY2(materialOf(betterFen) == materialOf(worseFen), qPrintable(feature));
+
+        Rules better;
+        Rules worse;
+        QVERIFY2(better.loadFen(betterFen), qPrintable(betterFen));
+        QVERIFY2(worse.loadFen(worseFen), qPrintable(worseFen));
+        const int direct = HeuristicEval::evaluateCentipawns(better) -
+                           HeuristicEval::evaluateCentipawns(worse);
+
+        Rules mirroredBetter;
+        Rules mirroredWorse;
+        QVERIFY2(mirroredBetter.loadFen(mirrorFen(betterFen)), qPrintable(betterFen));
+        QVERIFY2(mirroredWorse.loadFen(mirrorFen(worseFen)), qPrintable(worseFen));
+        // The good side plays Black in the mirrored pair, so the sign flips.
+        const int mirrored = HeuristicEval::evaluateCentipawns(mirroredWorse) -
+                             HeuristicEval::evaluateCentipawns(mirroredBetter);
+
+        QVERIFY2(direct >= 20, qPrintable(QStringLiteral("%1: %2")
+                                              .arg(feature)
+                                              .arg(direct)));
+        QVERIFY2(mirrored >= 20, qPrintable(QStringLiteral("%1 mirrored: %2")
+                                                .arg(feature)
+                                                .arg(mirrored)));
+    }
 }
 
 QTEST_MAIN(HeuristicEvalTest)
