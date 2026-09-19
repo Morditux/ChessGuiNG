@@ -193,6 +193,7 @@ private slots:
     void testResignAgainstEngine();
     void testDrawOffers();
     void testAnalysisSettings();
+    void testEvaluationBreakdownAndHeuristicHint();
 };
 
 void GameControllerTest::initTestCase() {
@@ -1476,6 +1477,38 @@ void GameControllerTest::testStoppingCancelsTheGameAudit() {
 
     controller.stopEngine();
     QFile::remove(scriptPath);
+}
+
+void GameControllerTest::testEvaluationBreakdownAndHeuristicHint() {
+    GameController controller;
+    QSignalSpy breakdownSpy(&controller,
+                            &GameController::evaluationBreakdownChanged);
+    QSignalSpy recommendedSpy(&controller,
+                              &GameController::recommendedMovePreviewChanged);
+
+    // Every evaluation update explains itself.
+    QVERIFY(controller.loadFen(QStringLiteral("4k3/8/8/8/8/8/P7/4K3 w - - 0 1")));
+    QVERIFY(breakdownSpy.count() > 0);
+
+    // Without an engine the recommended-move preview comes from the heuristic
+    // search of the live evaluation, and it is a legal move.
+    QVERIFY(!controller.isEngineConnected());
+    controller.setRecommendedMovePreviewEnabled(true);
+    QVERIFY(recommendedSpy.count() > 0);
+    const auto preview =
+        recommendedSpy.last().at(0).value<std::optional<Rules::Move>>();
+    QVERIFY(preview.has_value());
+    QVERIFY(controller.rules().isValidMove(*preview));
+
+    // Turning the preview off clears the arrow.
+    controller.setRecommendedMovePreviewEnabled(false);
+    QVERIFY(!recommendedSpy.last().at(0).value<std::optional<Rules::Move>>().has_value());
+
+    // A finished game has no hint to give.
+    controller.setRecommendedMovePreviewEnabled(true);
+    QVERIFY(controller.loadFen(QStringLiteral("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")));
+    QVERIFY(controller.rules().isGameOver());
+    QVERIFY(!recommendedSpy.last().at(0).value<std::optional<Rules::Move>>().has_value());
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

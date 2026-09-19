@@ -755,6 +755,7 @@ void GameController::setRecommendedMovePreviewEnabled(bool enabled) {
     }
     if (enabled) {
         startMovePreviewAnalysis();
+        updateHintPreview(HeuristicEval::search(rules_));
     }
 }
 
@@ -767,6 +768,24 @@ void GameController::updateEvaluation() {
         HeuristicEval::centipawnsToPercentage(result.centipawns));
     emit evaluationScoreChanged(
         UciParser::formatScore(result.centipawns, result.mateIn));
+    emit evaluationBreakdownChanged(HeuristicEval::evaluateBreakdown(rules_));
+    updateHintPreview(result);
+}
+
+void GameController::updateHintPreview(
+    const HeuristicEval::SearchResult &result) {
+    // The engine draws the recommended-move arrow whenever it is connected, so
+    // the heuristic only steps in without one. It reuses the search the live
+    // evaluation has just run, which therefore costs nothing extra.
+    if (!recommendedMovePreviewEnabled_ || isEngineConnected()) {
+        return;
+    }
+    if (rules_.isGameOver() || !result.bestMove.has_value() ||
+        !rules_.isValidMove(*result.bestMove)) {
+        emit recommendedMovePreviewChanged(std::nullopt);
+        return;
+    }
+    emit recommendedMovePreviewChanged(*result.bestMove);
 }
 
 bool GameController::canStartGameAudit() const {

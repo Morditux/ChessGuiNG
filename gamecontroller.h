@@ -106,6 +106,9 @@ public:
     void setComputerMovePreviewEnabled(bool enabled);
     void setRecommendedMovePreviewEnabled(bool enabled);
     void updateEvaluation();
+    // Falls back to the heuristic best move for the recommended-move preview
+    // when no engine is connected; the engine owns the preview whenever it is.
+    void updateHintPreview(const HeuristicEval::SearchResult &result);
 
     // Applies the limits used by the next analysis: a depth of 0 searches
     // without a depth limit and MultiPV is the number of principal variations.
@@ -195,6 +198,9 @@ signals:
     // "-M3"), so the UI can show a number next to the bar. Emitted from the
     // heuristic evaluator when no engine reports a score.
     void evaluationScoreChanged(const QString &scoreText);
+    // Contribution of every term of the heuristic evaluation, so the UI can
+    // explain the score it displays. Emitted with the evaluation.
+    void evaluationBreakdownChanged(const HeuristicEval::EvalBreakdown &breakdown);
     // Emitted whenever the whole-game curve gains or loses a point.
     void evaluationCurveChanged();
     void statusMessage(const QString &message);

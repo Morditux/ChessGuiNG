@@ -105,6 +105,7 @@ private slots:
     void testMainWindowAcceptsDroppedPgnFile();
     void testMainWindowRecognizesScreenshotWhenProvided();
     void testComputerGameDialogSettings();
+    void testMainWindowExplainsTheEvaluation();
 };
 
 void RulesTest::testFenStartPos() {
@@ -1248,6 +1249,27 @@ void RulesTest::testComputerGameDialogSettings() {
     QVERIFY(!customIncrement->isEnabled());
     QVERIFY(increment->isEnabled());
     QCOMPARE(dialog.settings().timeLimitMilliseconds, 300000LL);
+}
+
+void RulesTest::testMainWindowExplainsTheEvaluation() {
+    MainWindow window;
+
+    // The gauge carries the heuristic breakdown as its tooltip, naming the
+    // terms the evaluator knows about.
+    QVERIFY(window.pasteFen(QStringLiteral(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")));
+    const QString startTooltip = window.evaluationBar()->toolTip();
+    QVERIFY(!startTooltip.isEmpty());
+    QVERIFY(startTooltip.contains(QStringLiteral("Material:")));
+    QVERIFY(startTooltip.contains(QStringLiteral("Total:")));
+    QVERIFY(startTooltip.contains(QStringLiteral("Endgame mop-up:")));
+
+    // It follows the position: material dominates once a queen is on the board.
+    QVERIFY(window.pasteFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/K5Q1 w - - 0 1")));
+    const QString queenTooltip = window.evaluationBar()->toolTip();
+    QVERIFY2(queenTooltip.contains(QStringLiteral("+9.00")),
+             qPrintable(queenTooltip));
 }
 
 QTEST_MAIN(RulesTest)

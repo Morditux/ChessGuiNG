@@ -180,6 +180,10 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             [this](const QString &scoreText) {
                 evaluationBar_->setScoreText(scoreText);
             });
+    connect(gameController_, &GameController::evaluationBreakdownChanged, this,
+            [this](const HeuristicEval::EvalBreakdown &breakdown) {
+                evaluationBar_->setToolTip(evaluationBreakdownText(breakdown));
+            });
     connect(gameController_, &GameController::statusMessage, this, [this](const QString &message) {
         setActivityMessage(message);
     });
@@ -1095,6 +1099,32 @@ void MainWindow::syncEvaluationBarGeometry() {
 
     gaugeLayout_->setContentsMargins(
         0, squares.top(), 0, qMax(0, board_->height() - squares.bottom() - 1));
+}
+
+QString MainWindow::evaluationBreakdownText(
+    const HeuristicEval::EvalBreakdown &breakdown) const {
+    // The gauge only shows a number, so the tooltip breaks the heuristic score
+    // down into the terms that produced it.
+    const auto pawns = [](int centipawns) {
+        return QStringLiteral("%1%2")
+            .arg(centipawns >= 0 ? QStringLiteral("+") : QString())
+            .arg(centipawns / 100.0, 0, 'f', 2);
+    };
+    QStringList lines;
+    lines << tr("Material: %1").arg(pawns(breakdown.material));
+    lines << tr("Piece placement: %1").arg(pawns(breakdown.placement));
+    lines << tr("Pawn structure: %1").arg(pawns(breakdown.pawns));
+    lines << tr("Mobility: %1").arg(pawns(breakdown.mobility));
+    lines << tr("King safety: %1").arg(pawns(breakdown.kingSafety));
+    lines << tr("Threats: %1").arg(pawns(breakdown.threats));
+    lines << tr("Outposts: %1").arg(pawns(breakdown.outposts));
+    lines << tr("Bad bishops: %1").arg(pawns(breakdown.badBishops));
+    lines << tr("Connected rooks: %1").arg(pawns(breakdown.connectedRooks));
+    lines << tr("Endgame mop-up: %1").arg(pawns(breakdown.mopUp));
+    lines << tr("Tempo: %1").arg(pawns(breakdown.tempo));
+    lines << tr("In check: %1").arg(pawns(breakdown.inCheck));
+    lines << tr("Total: %1").arg(pawns(breakdown.total));
+    return lines.join(QChar('\n'));
 }
 
 void MainWindow::applyBoardOrientation() {

@@ -11,6 +11,7 @@
 #include <QWidget>
 
 #include "appconfig.h"
+#include "heuristiceval.h"
 #include "pgnannotations.h"
 #include "pgnfile.h"
 #include "rules.h"
@@ -206,6 +207,10 @@ private:
     // One annotation per ply, shared by the move list and the graph.
     [[nodiscard]] QVector<AuditAnnotation> auditAnnotationsByPly() const;
     [[nodiscard]] QString playerNameFor(Rules::Color color) const;
+    // Multi-line explanation of the heuristic score, shown as the gauge's
+    // tooltip.
+    [[nodiscard]] QString evaluationBreakdownText(
+        const HeuristicEval::EvalBreakdown &breakdown) const;
     void rememberExpandedHistorySizes();
     void setActivityMessage(const QString &message);
     [[nodiscard]] QString currentEngineName() const;
