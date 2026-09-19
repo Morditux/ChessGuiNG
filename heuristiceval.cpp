@@ -25,12 +25,6 @@ using ValueMap = std::array<std::array<int, 8>, 8>;
 
 constexpr int MateScore = HeuristicEval::MateScore;
 
-constexpr int PawnValue = 100;
-constexpr int KnightValue = 320;
-constexpr int BishopValue = 330;
-constexpr int RookValue = 500;
-constexpr int QueenValue = 900;
-
 constexpr int MaxPhase = 24;
 constexpr int NoKingRow = -1;
 constexpr int NoFile = -1;
@@ -39,72 +33,12 @@ constexpr int EmptyRow = 8;
 // capturing a defended piece.
 constexpr int KingAttackerValue = 100000;
 
-// All tunable weights live here so the evaluator can be calibrated without
-// hunting for magic numbers. Values are in centipawns unless a comment says
-// otherwise.
-struct EvalParams {
-    // Material.
-    int pawnValue = PawnValue;
-    int knightValue = KnightValue;
-    int bishopValue = BishopValue;
-    int rookValue = RookValue;
-    int queenValue = QueenValue;
-
-    // Side to move.
-    int tempoBonus = 10;
-    int inCheckPenalty = 50;
-
-    // Pawn structure.
-    int doubledPawnPenalty = 12;
-    int isolatedPawnPenalty = 15;
-    int supportedPawnBonus = 8;
-    int backwardPawnPenalty = 10;
-    int candidatePawnBonus = 8;
-    int candidatePawnRankBonus = 2;
-    int passedPawnBase = 12;
-    int passedPawnRankBonus = 6;
-    int passedPawnBlockedPenalty = 8;
-    int passedPawnControlledPenalty = 4;
-    int passedPawnRookBehind = 20;
-
-    // Mobility weights (middlegame, endgame).
-    int mobilityPawnMG = 1;
-    int mobilityPawnEG = 1;
-    int mobilityKnightMG = 4;
-    int mobilityKnightEG = 4;
-    int mobilityBishopMG = 4;
-    int mobilityBishopEG = 5;
-    int mobilityRookMG = 2;
-    int mobilityRookEG = 4;
-    int mobilityQueenMG = 1;
-    int mobilityQueenEG = 2;
-    int mobilityKingMG = 2;
-    int mobilityKingEG = 1;
-
-    // King safety.
-    int castledBonus = 15;
-    int castlingRightsBonus = 10;
-    int kingAttackPenalty = 12;
-    int kingShelterBonus = 8;
-    int openFileNearKingPenalty = 12;
-    int kingPawnStormPenalty = 6;
-
-    // Threats.
-    int hangingPieceDivisor = 8;
-    int cheapAttackerMargin = 50;
-    int cheapAttackerDivisor = 16;
-
-    // Piece specific.
-    int bishopPairMG = 30;
-    int bishopPairEG = 50;
-    int outpostKnight = 20;
-    int outpostBishop = 10;
-    int badBishopPenalty = 3;
-    int badBishopCap = 20;
-    int connectedRooksBonus = 15;
-};
-
-constexpr EvalParams P{};
+// The active weights, published through HeuristicEval::params(). The evaluator
+// reads them through this reference, so setParams() retunes every term at once
+// and the reference keeps pointing at the live object. EvalParams has a
+// constant initialiser, so this storage needs no dynamic initialisation.
+HeuristicEval::EvalParams activeParams;
+const HeuristicEval::EvalParams &P = activeParams;
 
 // Tables are indexed from the point of view of the relevant side:
 // index 0 is that side's home rank and index 7 its promotion rank.
@@ -236,11 +170,10 @@ struct BoardAnalysis {
     std::array<std::array<int, 2>, 2> pawnsOnSquareColour{};
     std::array<int, 2> bishopCounts{};
     std::array<int, 2> knightCounts{};
-    std::array<int, 2> minorCounts{};
     std::array<int, 2> rookCounts{};
     std::array<int, 2> queenCounts{};
-    // Bit 0 set when a bishop stands on a light square, bit 1 on a dark one.
-    std::array<int, 2> bishopSquareColours{};
+    // Bishops per square colour, indexed by colour then by (row + column) % 2.
+    std::array<std::array<int, 2>, 2> bishopSquareColourCounts{};
     int whiteKingRow = NoKingRow;
     int whiteKingColumn = -1;
     int blackKingRow = NoKingRow;
@@ -376,14 +309,12 @@ BoardAnalysis analyzeBoard(const Board &board) {
             }
             case Rules::PieceType::Bishop: {
                 ++analysis.bishopCounts[index];
-                ++analysis.minorCounts[index];
-                analysis.bishopSquareColours[index] |= 1 << ((row + column) % 2);
+                analysis.bishopSquareColourCounts[index][(row + column) % 2] += 1;
                 analysis.phase += 1;
                 break;
             }
             case Rules::PieceType::Knight: {
                 ++analysis.knightCounts[index];
-                ++analysis.minorCounts[index];
                 analysis.phase += 1;
                 break;
             }
@@ -649,10 +580,12 @@ int evaluateMaterialAndPlacement(const BoardAnalysis &analysis) {
                 piece.color == Rules::Color::White ? analysis.blackPawnCounts
                                                    : analysis.whitePawnCounts;
             if (ownPawns[piece.column] == 0) {
-                score += sign * (enemyPawns[piece.column] == 0 ? 20 : 10);
+                score += sign * (enemyPawns[piece.column] == 0
+                                     ? P.rookOpenFileBonus
+                                     : P.rookSemiOpenFileBonus);
             }
             if (relativeRank(piece.color, piece.row) == 7) {
-                score += sign * 20;
+                score += sign * P.rookSeventhRankBonus;
             }
         }
     }
@@ -808,7 +741,9 @@ int evaluatePawnStructure(const Board &board, const BoardAnalysis &analysis) {
             const int rank = relativeRank(piece.color, piece.row);
             int bonus = P.passedPawnBase + rank * P.passedPawnRankBonus;
             // Passed pawns grow in strength as the board empties out.
-            bonus = interpolate(bonus, bonus * 3 / 2, analysis.phase);
+            bonus = interpolate(
+                bonus, bonus * P.passedPawnEndgameScalePercent / 100,
+                analysis.phase);
 
             const int aheadRow = piece.row + direction;
             if (isInside(aheadRow, piece.column)) {
@@ -1064,9 +999,11 @@ int kingSafety(const Board &board, const BoardAnalysis &analysis,
             if (distance == 1) {
                 score += P.kingShelterBonus;
             } else if (distance == 2) {
-                score += P.kingShelterBonus * 3 / 4;
+                score += P.kingShelterBonus * P.kingShelterSecondRankPercent /
+                         100;
             } else {
-                score += P.kingShelterBonus / 2;
+                score += P.kingShelterBonus * P.kingShelterThirdRankPercent /
+                         100;
             }
         }
     }
@@ -1115,24 +1052,22 @@ int evaluateKingSafety(const Board &board, const BoardAnalysis &analysis,
            kingSafety(board, analysis, Rules::Color::Black, whiteAttacks);
 }
 
+// Delegates the material-draw decision to the rules engine so the score the UI
+// shows and the draws the game adjudicates can never drift apart. The board
+// pass already counted the material, so the rules engine only has to classify
+// it; `unforceable` covers the dead positions plus the material that cannot
+// force mate (a lone minor on each side, two knights against a bare king).
 bool isInsufficientMaterial(const BoardAnalysis &analysis) {
-    if (analysis.hasPawnOrMajor) {
-        return false;
+    Rules::MaterialCounts counts;
+    for (int colour = 0; colour < 2; ++colour) {
+        counts.knights[colour] = analysis.knightCounts[colour];
+        counts.evenSquaredBishops[colour] =
+            analysis.bishopSquareColourCounts[colour][0];
+        counts.oddSquaredBishops[colour] =
+            analysis.bishopSquareColourCounts[colour][1];
     }
-    // King plus at most one minor piece per side cannot force mate.
-    if (analysis.minorCounts[0] <= 1 && analysis.minorCounts[1] <= 1) {
-        return true;
-    }
-    // Two knights against a bare king cannot force checkmate either.
-    if (analysis.knightCounts[0] == 2 && analysis.minorCounts[0] == 2 &&
-        analysis.minorCounts[1] == 0) {
-        return true;
-    }
-    if (analysis.knightCounts[1] == 2 && analysis.minorCounts[1] == 2 &&
-        analysis.minorCounts[0] == 0) {
-        return true;
-    }
-    return false;
+    counts.hasPawnOrMajor = analysis.hasPawnOrMajor;
+    return Rules::classifyMaterialDraw(counts).unforceable;
 }
 
 // Returns true when opposite-coloured bishops with no other non-pawn material
@@ -1142,7 +1077,11 @@ bool isOppositeColourBishopEnding(const BoardAnalysis &analysis, int *num,
     if (analysis.bishopCounts[0] != 1 || analysis.bishopCounts[1] != 1) {
         return false;
     }
-    if (analysis.bishopSquareColours[0] == analysis.bishopSquareColours[1]) {
+    const bool whiteOnEvenSquares =
+        analysis.bishopSquareColourCounts[0][0] == 1;
+    const bool blackOnEvenSquares =
+        analysis.bishopSquareColourCounts[1][0] == 1;
+    if (whiteOnEvenSquares == blackOnEvenSquares) {
         return false;
     }
     if (analysis.knightCounts[0] != 0 || analysis.knightCounts[1] != 0 ||
@@ -1267,6 +1206,11 @@ struct SearchState {
     int history[2][64][64] = {};
     TtEntry *table = nullptr;
     quint64 tableMask = 0;
+    // Zobrist key of the position at each ply of the line being searched,
+    // used to recognise a repetition inside the search. The root position is
+    // seeded at index 0; quiescence is entered at the ply of the node that
+    // called it, hence the extra slot.
+    quint64 pathKeys[MaxSearchPly + 1]{};
 };
 
 quint64 packMove(const Rules::Move &move) {
@@ -1394,7 +1338,7 @@ MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
     if (target.has_value()) {
         ordering.gain += HeuristicEval::pieceValue(target->type);
     } else if (enPassant) {
-        ordering.gain += PawnValue;
+        ordering.gain += P.pawnValue;
     }
     if (move.promotion != Rules::PieceType::None) {
         ordering.gain += HeuristicEval::pieceValue(move.promotion);
@@ -1432,6 +1376,35 @@ int leafScore(const Rules &rules, bool inCheck) {
     return std::clamp(signFor(side) * white, -MaxEvalScore, MaxEvalScore);
 }
 
+// Defined further down; the draw test needs it to tell a checkmate from a
+// position that is merely in check when the fifty-move clock has run out.
+bool hasAnyLegalMove(const Rules &rules);
+
+// Draws that depend on the line that reached the position: the fifty-move rule
+// and a repetition of a position already met by the same side to move earlier
+// in the search. Such a node returns a draw score and is never stored in the
+// transposition table, because the value does not belong to the position
+// alone. The repetition scan uses the Zobrist keys of the current line, so the
+// game history before the search root is not consulted.
+bool isPathDraw(const Rules &rules, SearchState &state, int ply, bool inCheck) {
+    const quint64 key = rules.zobristKey();
+    state.pathKeys[ply] = key;
+
+    // A side that is checkmated is not rescued by the fifty-move rule, so the
+    // terminal test keeps priority: only a position with a legal move is a
+    // draw here.
+    if (rules.isFiftyMoveRule() && (!inCheck || hasAnyLegalMove(rules))) {
+        return true;
+    }
+
+    for (int previous = ply - 2; previous >= 0; previous -= 2) {
+        if (state.pathKeys[previous] == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Selects the not-yet-searched move with the highest ordering score and swaps
 // it into position `index`, keeping the parallel tactical/gain arrays aligned.
 void selectNextMove(Rules::Move *moves, int *scores, int index, int count,
@@ -1456,6 +1429,10 @@ int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
                SearchState &state) {
     const Rules::Color side = rules.currentPlayer();
     const bool inCheck = rules.isInCheck(side);
+
+    if (isPathDraw(rules, state, ply, inCheck)) {
+        return 0;
+    }
 
     int best = -SearchInfinity;
     if (!inCheck) {
@@ -1548,6 +1525,12 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
 
     const Rules::Color side = rules.currentPlayer();
     const bool inCheck = rules.isInCheck(side);
+
+    // A draw is worth nothing even when the classical score is huge, and its
+    // value is path dependent, so it never reaches the transposition table.
+    if (isPathDraw(rules, state, ply, inCheck)) {
+        return 0;
+    }
 
     const bool useTable = state.table != nullptr;
     const quint64 key = useTable ? rules.zobristKey() : 0;
@@ -1682,6 +1665,8 @@ RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
     SearchState state;
     state.table = table;
     state.tableMask = tableMask;
+    // The root position opens the repetition line every worker walks.
+    state.pathKeys[0] = root.zobristKey();
 
     RootResult result;
     for (const int index : indices) {
@@ -1901,15 +1886,27 @@ bool hasAnyLegalMove(const Rules &rules) {
 
 int HeuristicEval::pieceValue(Rules::PieceType type) {
     switch (type) {
-    case Rules::PieceType::Pawn:   return PawnValue;
-    case Rules::PieceType::Knight: return KnightValue;
-    case Rules::PieceType::Bishop: return BishopValue;
-    case Rules::PieceType::Rook:   return RookValue;
-    case Rules::PieceType::Queen:  return QueenValue;
+    case Rules::PieceType::Pawn:   return P.pawnValue;
+    case Rules::PieceType::Knight: return P.knightValue;
+    case Rules::PieceType::Bishop: return P.bishopValue;
+    case Rules::PieceType::Rook:   return P.rookValue;
+    case Rules::PieceType::Queen:  return P.queenValue;
     case Rules::PieceType::King:
     case Rules::PieceType::None:   return 0;
     }
     return 0;
+}
+
+const HeuristicEval::EvalParams &HeuristicEval::params() {
+    return activeParams;
+}
+
+void HeuristicEval::setParams(const EvalParams &params) {
+    activeParams = params;
+}
+
+void HeuristicEval::resetParams() {
+    activeParams = EvalParams{};
 }
 
 int HeuristicEval::evaluateCentipawns(const Rules &rules) {
@@ -1923,6 +1920,13 @@ int HeuristicEval::evaluateCentipawns(const Rules &rules) {
             return sideToMove == Rules::Color::White ? -MateScore : MateScore;
         }
         return 0; // Stalemate.
+    }
+
+    // A claimable draw scores exactly like a drawn position, whatever material
+    // still stands on the board. Checkmate was handled above and keeps
+    // priority, so a mate delivered on the last half-move is still a mate.
+    if (rules.isFiftyMoveRule() || rules.isThreefoldRepetition()) {
+        return 0;
     }
 
     const Board board = snapshotBoard(rules);
@@ -1953,6 +1957,11 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
         return result;
     }
     if (rules.isInsufficientMaterial()) {
+        return result;
+    }
+    // The root itself is drawn: every continuation keeps the draw, so there is
+    // nothing to search.
+    if (rules.isFiftyMoveRule() || rules.isThreefoldRepetition()) {
         return result;
     }
 

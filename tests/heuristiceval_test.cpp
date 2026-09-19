@@ -88,6 +88,9 @@ private slots:
     void testSearchSeesFreeCapture();
     void testSearchHandlesDeadDrawnPosition();
     void testSearchIsRepeatableSingleThreaded();
+    void testEvalParamsDrivePieceValues();
+    void testMaterialDrawsFollowRules();
+    void testFiftyMoveAndRepetitionDraws();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -493,6 +496,107 @@ void HeuristicEvalTest::testSearchIsRepeatableSingleThreaded() {
     if (first.mateIn.has_value()) {
         QCOMPARE(*first.mateIn, *second.mateIn);
     }
+}
+
+void HeuristicEvalTest::testEvalParamsDrivePieceValues() {
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/P7/4K3 w - - 0 1")));
+
+    HeuristicEval::EvalParams tuned = HeuristicEval::params();
+    tuned.pawnValue = 2 * HeuristicEval::params().pawnValue;
+    HeuristicEval::setParams(tuned);
+
+    const int tunedPawnValue = HeuristicEval::pieceValue(Rules::PieceType::Pawn);
+    const int tunedScore = HeuristicEval::evaluateCentipawns(rules);
+
+    // The parameters are process-wide, so the defaults must come back before
+    // any assertion can abort the test.
+    HeuristicEval::resetParams();
+    const int defaultPawnValue = HeuristicEval::pieceValue(Rules::PieceType::Pawn);
+    const int defaultScore = HeuristicEval::evaluateCentipawns(rules);
+
+    QCOMPARE(tunedPawnValue, 200);
+    QCOMPARE(defaultPawnValue, 100);
+    QVERIFY2(tunedScore > defaultScore,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(tunedScore)
+                            .arg(defaultScore)));
+}
+
+void HeuristicEvalTest::testMaterialDrawsFollowRules() {
+    // The evaluator delegates the material-draw test to the rules engine, so
+    // every dead position has to score zero. The two bishops on the same square
+    // colour used to be missed by the evaluator's own copy of the rule.
+    const QStringList deadPositions = {
+        QStringLiteral("4k3/8/8/8/8/8/8/K1B1B3 w - - 0 1"),
+        QStringLiteral("4k3/8/8/8/8/2b1B3/8/4K3 w - - 0 1"),
+        QStringLiteral("4k3/8/8/8/8/8/2N5/4K3 w - - 0 1"),
+        QStringLiteral("4k3/8/8/8/8/8/8/4K3 w - - 0 1"),
+    };
+
+    for (const QString &fen : deadPositions) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(fen), qPrintable(fen));
+        QVERIFY2(rules.isInsufficientMaterial(), qPrintable(fen));
+        QCOMPARE(HeuristicEval::evaluateCentipawns(rules), 0);
+        QCOMPARE(HeuristicEval::search(rules, 2, 2).centipawns, 0);
+    }
+
+    // The evaluator also treats material that cannot force mate as drawn, even
+    // though the game itself is not adjudicated by the rules engine.
+    Rules loneMinorEach;
+    QVERIFY(loneMinorEach.loadFen(
+        QStringLiteral("2b1k3/8/8/8/8/8/8/2B1K3 w - - 0 1")));
+    QVERIFY(!loneMinorEach.isInsufficientMaterial());
+    QCOMPARE(HeuristicEval::evaluateCentipawns(loneMinorEach), 0);
+
+    // Material that can still mate must not be swallowed by the draw test.
+    Rules twoBishopsOpposite;
+    QVERIFY(twoBishopsOpposite.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/8/KBB4b w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(twoBishopsOpposite) != 0);
+}
+
+void HeuristicEvalTest::testFiftyMoveAndRepetitionDraws() {
+    // White is a rook up, but the fifty-move clock has run out: the position is
+    // drawn and both the static score and the search have to say so.
+    Rules drawn;
+    QVERIFY(drawn.loadFen(QStringLiteral("4k3/8/8/8/8/8/8/R3K3 w - - 100 60")));
+    QVERIFY(drawn.isFiftyMoveRule());
+    QCOMPARE(HeuristicEval::evaluateCentipawns(drawn), 0);
+    QCOMPARE(HeuristicEval::search(drawn, 2, 2).centipawns, 0);
+    QVERIFY(!HeuristicEval::search(drawn, 2, 2).mateIn.has_value());
+
+    // One half-move earlier every quiet move runs the clock out, so the search
+    // must see the draw inside its horizon and stop counting the rook.
+    Rules nearly;
+    QVERIFY(nearly.loadFen(QStringLiteral("4k3/8/8/8/8/8/8/R3K3 w - - 99 60")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(nearly) > 400);
+    QCOMPARE(HeuristicEval::search(nearly, 2, 2).centipawns, 0);
+
+    // Capturing the pawn resets the clock, and that move is not a draw.
+    Rules captureResets;
+    QVERIFY(captureResets.loadFen(
+        QStringLiteral("4k3/8/8/p7/8/8/8/R3K3 w - - 99 60")));
+    QVERIFY(HeuristicEval::search(captureResets, 2, 2).centipawns > 300);
+
+    // Two shuffling knights with pawns on the board: the third occurrence of
+    // the same position is a draw, and both entry points must report it.
+    Rules repetition;
+    QVERIFY(repetition.loadFen(
+        QStringLiteral("4k1n1/6p1/8/8/8/8/8/1N2K3 w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(repetition) != 0);
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        QVERIFY(repetition.tryMove({7, 1}, {6, 3})); // Nb1-d2
+        QVERIFY(repetition.tryMove({0, 6}, {2, 5})); // Ng8-f6
+        QVERIFY(repetition.tryMove({6, 3}, {7, 1})); // Nd2-b1
+        QVERIFY(repetition.tryMove({2, 5}, {0, 6})); // Nf6-g8
+    }
+
+    QVERIFY(repetition.isThreefoldRepetition());
+    QCOMPARE(HeuristicEval::evaluateCentipawns(repetition), 0);
+    QCOMPARE(HeuristicEval::search(repetition, 2, 2).centipawns, 0);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

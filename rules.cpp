@@ -209,10 +209,45 @@ bool Rules::isDraw() const {
            isThreefoldRepetition() || isFiftyMoveRule();
 }
 
+Rules::MaterialDraw Rules::classifyMaterialDraw(const MaterialCounts &counts) {
+    MaterialDraw draw;
+    if (counts.hasPawnOrMajor) {
+        return draw;
+    }
+
+    const int evenBishops =
+        counts.evenSquaredBishops[0] + counts.evenSquaredBishops[1];
+    const int oddBishops =
+        counts.oddSquaredBishops[0] + counts.oddSquaredBishops[1];
+    const int bishops = evenBishops + oddBishops;
+    const int knights = counts.knights[0] + counts.knights[1];
+
+    if (knights == 0 && bishops == 0) {
+        draw.dead = true; // King versus king.
+    } else if (knights == 1 && bishops == 0) {
+        draw.dead = true; // King and knight versus king.
+    } else if (knights == 0 && bishops == 1) {
+        draw.dead = true; // King and bishop versus king.
+    } else if (knights == 0 && bishops == 2 &&
+               (evenBishops == 2 || oddBishops == 2)) {
+        draw.dead = true; // Only bishops confined to same-coloured squares.
+    }
+
+    const int whiteMinors = counts.knights[0] + counts.evenSquaredBishops[0] +
+                            counts.oddSquaredBishops[0];
+    const int blackMinors = counts.knights[1] + counts.evenSquaredBishops[1] +
+                            counts.oddSquaredBishops[1];
+    const bool loneMinorEach = whiteMinors <= 1 && blackMinors <= 1;
+    const bool twoKnightsAgainstBareKing =
+        (counts.knights[0] == 2 && whiteMinors == 2 && blackMinors == 0) ||
+        (counts.knights[1] == 2 && blackMinors == 2 && whiteMinors == 0);
+
+    draw.unforceable = draw.dead || loneMinorEach || twoKnightsAgainstBareKing;
+    return draw;
+}
+
 bool Rules::isInsufficientMaterial() const {
-    int knights = 0;
-    int evenSquaredBishops = 0;
-    int oddSquaredBishops = 0;
+    MaterialCounts counts;
 
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
@@ -221,15 +256,16 @@ bool Rules::isInsufficientMaterial() const {
                 continue;
             }
 
+            const int colour = colorIndex(square->color);
             switch (square->type) {
             case PieceType::Knight:
-                ++knights;
+                ++counts.knights[colour];
                 break;
             case PieceType::Bishop:
                 if ((row + column) % 2 == 0) {
-                    ++evenSquaredBishops;
+                    ++counts.evenSquaredBishops[colour];
                 } else {
-                    ++oddSquaredBishops;
+                    ++counts.oddSquaredBishops[colour];
                 }
                 break;
             default:
@@ -239,22 +275,7 @@ bool Rules::isInsufficientMaterial() const {
         }
     }
 
-    if (knights == 0 && evenSquaredBishops == 0 && oddSquaredBishops == 0) {
-        return true; // King versus king.
-    }
-    if (knights == 1 && evenSquaredBishops == 0 && oddSquaredBishops == 0) {
-        return true; // King and knight versus king.
-    }
-    if (knights == 0 && evenSquaredBishops + oddSquaredBishops == 1) {
-        return true; // King and bishop versus king.
-    }
-    if (knights == 0 &&
-        evenSquaredBishops + oddSquaredBishops == 2 &&
-        (evenSquaredBishops == 2 || oddSquaredBishops == 2)) {
-        return true; // Only bishops confined to same-colored squares.
-    }
-
-    return false;
+    return classifyMaterialDraw(counts).dead;
 }
 
 QString Rules::positionKey() const {

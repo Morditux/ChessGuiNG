@@ -120,6 +120,34 @@ public:
     [[nodiscard]] bool isFiftyMoveRule() const;
     [[nodiscard]] bool isDraw() const;
 
+    // Material-only description of a position, shared by the draw tests. The
+    // arrays are indexed by colour index (White = 0, Black = 1).
+    struct MaterialCounts {
+        int knights[2] = {0, 0};
+        int evenSquaredBishops[2] = {0, 0};
+        int oddSquaredBishops[2] = {0, 0};
+        bool hasPawnOrMajor = false;
+    };
+
+    // What the material on the board can still achieve. Both flags stay false
+    // as soon as a pawn, a rook or a queen is present.
+    struct MaterialDraw {
+        // FIDE dead position: no series of legal moves, however cooperative
+        // the defence, can deliver mate.
+        bool dead = false;
+        // Mate is possible only with the defender's help and cannot be forced
+        // (king and two knights against a king, a lone minor on each side).
+        // `dead` is a subset of it. The heuristic evaluator scores these as
+        // drawn; the game itself is still played out.
+        bool unforceable = false;
+    };
+
+    // Single source of truth for the material-draw rules: it is used by
+    // isInsufficientMaterial() and by the heuristic evaluator, which counts the
+    // material during its own board pass and must not grow a second, drifting
+    // copy of the rule.
+    [[nodiscard]] static MaterialDraw classifyMaterialDraw(const MaterialCounts &counts);
+
     [[nodiscard]] static bool isInside(Position position);
     [[nodiscard]] static QString toUci(Position from, Position to, PieceType promotion = PieceType::None);
     [[nodiscard]] static QString toUci(const Move &move);

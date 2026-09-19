@@ -79,6 +79,7 @@ private slots:
     void testToFenRoundTrip();
     void testFenClocks();
     void testInsufficientMaterial();
+    void testMaterialDrawClassification();
     void testThreefoldRepetition();
     void testCastlingRightsBreakRepetition();
     void testFiftyMoveRule();
@@ -272,6 +273,46 @@ void RulesTest::testInsufficientMaterial() {
     QVERIFY(!rules.isInsufficientMaterial());
     QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/2Q5/4K3 w - - 0 1")));
     QVERIFY(!rules.isInsufficientMaterial());
+}
+
+void RulesTest::testMaterialDrawClassification() {
+    // King versus king is dead and therefore also unforceable.
+    const Rules::MaterialCounts bare;
+    const Rules::MaterialDraw bareDraw = Rules::classifyMaterialDraw(bare);
+    QVERIFY(bareDraw.dead);
+    QVERIFY(bareDraw.unforceable);
+
+    // Two knights against a bare king cannot force mate, but mate is possible
+    // with the defender's help, so it is unforceable without being dead.
+    Rules::MaterialCounts twoKnights;
+    twoKnights.knights[0] = 2;
+    const Rules::MaterialDraw twoKnightsDraw =
+        Rules::classifyMaterialDraw(twoKnights);
+    QVERIFY(!twoKnightsDraw.dead);
+    QVERIFY(twoKnightsDraw.unforceable);
+
+    // A lone minor piece on each side is unforceable, whatever the square
+    // colours.
+    Rules::MaterialCounts loneMinorEach;
+    loneMinorEach.evenSquaredBishops[0] = 1;
+    loneMinorEach.oddSquaredBishops[1] = 1;
+    const Rules::MaterialDraw loneMinorDraw =
+        Rules::classifyMaterialDraw(loneMinorEach);
+    QVERIFY(!loneMinorDraw.dead);
+    QVERIFY(loneMinorDraw.unforceable);
+
+    // Two bishops of one side on opposite colours can mate.
+    Rules::MaterialCounts oppositeBishops;
+    oppositeBishops.evenSquaredBishops[0] = 1;
+    oppositeBishops.oddSquaredBishops[0] = 1;
+    QVERIFY(!Rules::classifyMaterialDraw(oppositeBishops).unforceable);
+
+    // Any pawn, rook or queen keeps the position playable.
+    Rules::MaterialCounts withPawn;
+    withPawn.hasPawnOrMajor = true;
+    const Rules::MaterialDraw pawnDraw = Rules::classifyMaterialDraw(withPawn);
+    QVERIFY(!pawnDraw.dead);
+    QVERIFY(!pawnDraw.unforceable);
 }
 
 void RulesTest::testPerft() {
