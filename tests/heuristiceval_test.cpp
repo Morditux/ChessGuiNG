@@ -95,6 +95,10 @@ private slots:
     void testFiftyMoveAndRepetitionDraws();
     void testEndgameMopUpDrivesTheKingToTheEdge();
     void testWrongColouredRookPawnIsDrawn();
+    void testEvalBreakdownExplainsTheScore();
+    void testSearchReportsBestMoveAndVariation();
+    void testSearchHonoursNodeLimit();
+    void testSearchHonoursCancellationAndDeadline();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -727,6 +731,155 @@ void HeuristicEvalTest::testWrongColouredRookPawnIsDrawn() {
     Rules rightH;
     QVERIFY(rightH.loadFen(QStringLiteral("7k/8/8/8/8/8/7P/K1B5 w - - 0 1")));
     QVERIFY(HeuristicEval::evaluateCentipawns(rightH) > 0);
+}
+
+void HeuristicEvalTest::testEvalBreakdownExplainsTheScore() {
+    // The breakdown's total is the score itself, whatever the position.
+    const QStringList fens = {
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+        QStringLiteral("r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9"),
+        QStringLiteral("4k3/8/8/8/8/8/8/4K3 w - - 0 1"),
+        QStringLiteral("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4"),
+    };
+    for (const QString &fen : fens) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(fen), qPrintable(fen));
+        const HeuristicEval::EvalBreakdown breakdown =
+            HeuristicEval::evaluateBreakdown(rules);
+        QCOMPARE(breakdown.total, HeuristicEval::evaluateCentipawns(rules));
+    }
+
+    // A king and queen against a bare king: the material is the whole story
+    // apart from the endgame mop-up, which the balanced opening does not get.
+    Rules queen;
+    QVERIFY(queen.loadFen(QStringLiteral("4k3/8/8/8/8/8/8/K5Q1 w - - 0 1")));
+    const HeuristicEval::EvalBreakdown queenBreakdown =
+        HeuristicEval::evaluateBreakdown(queen);
+    QCOMPARE(queenBreakdown.material, 900);
+    QVERIFY(queenBreakdown.mopUp > 0);
+
+    Rules opening;
+    const HeuristicEval::EvalBreakdown openingBreakdown =
+        HeuristicEval::evaluateBreakdown(opening);
+    QCOMPARE(openingBreakdown.material, 0);
+    QCOMPARE(openingBreakdown.mopUp, 0);
+    QCOMPARE(openingBreakdown.pawns, 0);
+
+    // Same two pawns, but side by side they are not isolated any more, which
+    // is visible in the pawn term alone.
+    Rules isolated;
+    QVERIFY(isolated.loadFen(QStringLiteral("4k3/8/8/8/8/8/P6P/4K3 w - - 0 1")));
+    Rules neighbouring;
+    QVERIFY(neighbouring.loadFen(
+        QStringLiteral("4k3/8/8/8/8/8/PP6/4K3 w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateBreakdown(isolated).pawns <
+            HeuristicEval::evaluateBreakdown(neighbouring).pawns);
+
+    // A hung piece shows up in the threat term.
+    Rules hanging;
+    QVERIFY(hanging.loadFen(
+        QStringLiteral("4k3/7p/8/4p3/3N4/8/P7/4K3 w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateBreakdown(hanging).threats < 0);
+
+    // A drawn position reports only a zero total.
+    Rules drawn;
+    QVERIFY(drawn.loadFen(QStringLiteral("4k3/8/8/8/8/8/8/4K3 w - - 0 1")));
+    QCOMPARE(HeuristicEval::evaluateBreakdown(drawn).total, 0);
+    QCOMPARE(HeuristicEval::evaluateBreakdown(drawn).material, 0);
+}
+
+void HeuristicEvalTest::testSearchReportsBestMoveAndVariation() {
+    // The opening report carries a legal move and the depth that was asked for.
+    Rules opening;
+    const auto openingResult = HeuristicEval::search(opening, 2, 2);
+    QVERIFY(!openingResult.aborted);
+    QCOMPARE(openingResult.depth, 2);
+    QVERIFY(openingResult.nodes > 0);
+    QVERIFY(openingResult.bestMove.has_value());
+    QVERIFY(opening.isValidMove(*openingResult.bestMove));
+    QVERIFY(!openingResult.principalVariation.empty());
+    QCOMPARE(openingResult.principalVariation.front(), *openingResult.bestMove);
+
+    // The mate in one is reported with its move.
+    Rules mateInOne;
+    QVERIFY(mateInOne.loadFen(QStringLiteral(
+        "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4")));
+    const auto mateResult = HeuristicEval::search(mateInOne, 2, 2);
+    QVERIFY(mateResult.mateIn.has_value());
+    QCOMPARE(*mateResult.mateIn, 1);
+    QVERIFY(mateResult.bestMove.has_value());
+    const Rules::Move expected{{3, 7}, {1, 5}, Rules::PieceType::None};
+    QCOMPARE(*mateResult.bestMove, expected);
+    QCOMPARE(mateResult.principalVariation.front(), expected);
+
+    // A deeper search reads the rest of the line back from the table, and every
+    // move of it is legal in the position it is played from.
+    Rules middlegame;
+    QVERIFY(middlegame.loadFen(QStringLiteral(
+        "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
+    const auto deepResult = HeuristicEval::search(middlegame, 4, 2);
+    QVERIFY(!deepResult.aborted);
+    QCOMPARE(deepResult.depth, 4);
+    QVERIFY(deepResult.bestMove.has_value());
+    QVERIFY(deepResult.principalVariation.size() >= 2);
+
+    Rules replay = middlegame.detachedCopy();
+    for (const Rules::Move &move : deepResult.principalVariation) {
+        QVERIFY2(replay.isValidMove(move), qPrintable(Rules::toUci(move)));
+        Rules::Undo undo;
+        QVERIFY(replay.makeMove(move, undo));
+    }
+}
+
+void HeuristicEvalTest::testSearchHonoursNodeLimit() {
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral(
+        "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
+
+    HeuristicEval::setSearchThreads(1);
+    HeuristicEval::SearchLimits limits;
+    limits.maxNodes = 20000;
+    const auto limited = HeuristicEval::search(rules, 6, 2, limits);
+    HeuristicEval::setSearchThreads(0);
+
+    QVERIFY(limited.aborted);
+    QVERIFY(limited.depth < 6);
+    QVERIFY(limited.depth >= 1);
+    QVERIFY(limited.nodes <= 20000 + 1024);
+    QVERIFY(limited.bestMove.has_value());
+
+    // The same search without a budget runs to the end.
+    const auto full = HeuristicEval::search(rules, 4, 2);
+    QVERIFY(!full.aborted);
+    QCOMPARE(full.depth, 4);
+}
+
+void HeuristicEvalTest::testSearchHonoursCancellationAndDeadline() {
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral(
+        "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
+
+    // A cancellation that is already pending stops the search before it does
+    // any work at all.
+    int polls = 0;
+    HeuristicEval::SearchLimits cancelled;
+    cancelled.shouldStop = [&polls] {
+        ++polls;
+        return true;
+    };
+    const auto cancelledResult = HeuristicEval::search(rules, 6, 2, cancelled);
+    // Every root worker asks once, and the first answer stops them all.
+    QVERIFY(polls >= 1);
+    QVERIFY(cancelledResult.aborted);
+    QCOMPARE(cancelledResult.depth, 0);
+    QVERIFY(!cancelledResult.bestMove.has_value());
+
+    // A deadline of a millisecond cannot let a depth eight search finish.
+    HeuristicEval::SearchLimits deadline;
+    deadline.maxMilliseconds = 1;
+    const auto timedOut = HeuristicEval::search(rules, 8, 2, deadline);
+    QVERIFY(timedOut.aborted);
+    QVERIFY(timedOut.depth < 8);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

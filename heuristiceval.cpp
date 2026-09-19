@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
@@ -601,13 +602,21 @@ int pieceMobility(const Board &board, const PieceOnBoard &piece,
     return moves;
 }
 
-TaperedScore evaluateMaterialAndPlacement(const BoardAnalysis &analysis) {
+TaperedScore evaluateMaterial(const BoardAnalysis &analysis) {
+    TaperedScore score;
+    for (int index = 0; index < analysis.pieceCount; ++index) {
+        const PieceOnBoard &piece = analysis.pieces[index];
+        score += signFor(piece.color) *
+                 bothPhases(HeuristicEval::pieceValue(piece.type));
+    }
+    return score;
+}
+
+TaperedScore evaluatePlacement(const BoardAnalysis &analysis) {
     TaperedScore score;
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         const int sign = signFor(piece.color);
-        score += sign * bothPhases(HeuristicEval::pieceValue(piece.type));
-
         const int square = relativeSquare(piece.color, piece.row, piece.column);
         if (piece.type == Rules::PieceType::King) {
             score += sign * TaperedScore{KingMiddleGamePST[square],
@@ -1301,7 +1310,8 @@ bool isWrongColouredRookPawnEnding(const BoardAnalysis &analysis) {
 // terminal test (checkmate, stalemate, insufficient material beyond the quick
 // board check): the search handles terminals itself, so a leaf can skip the
 // expensive legal-move generation they would need.
-int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck) {
+int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
+                  HeuristicEval::EvalBreakdown *breakdown) {
     const BoardAnalysis analysis = analyzeBoard(board);
     if (isInsufficientMaterial(analysis)) {
         return 0;
@@ -1314,25 +1324,60 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck) {
     AttackInfo attacksByBlack;
     buildAttackInfo(board, attacksByWhite, attacksByBlack);
 
-    TaperedScore score = evaluateMaterialAndPlacement(analysis);
-    score += evaluatePawnStructure(board, analysis);
-    score += evaluateMobility(board, analysis, attacksByWhite.pawnSquares,
-                              attacksByBlack.pawnSquares);
-    score += evaluateKingSafety(board, analysis, attacksByWhite.squares,
-                                attacksByBlack.squares);
-    score += evaluateThreats(analysis, attacksByWhite, attacksByBlack);
-    score += evaluateOutposts(analysis, attacksByWhite, attacksByBlack);
-    score += evaluateBadBishops(analysis);
-    score += evaluateConnectedRooks(board, analysis);
-    score += evaluateEndgameMopUp(analysis);
-    score += (sideToMove == Rules::Color::White ? 1 : -1) *
-             bothPhases(P.tempoBonus);
+    // Every term is computed once, both for the total and for the breakdown,
+    // and tapered at the end so that the terms weigh in the phase together.
+    const TaperedScore material = evaluateMaterial(analysis);
+    const TaperedScore placement = evaluatePlacement(analysis);
+    const TaperedScore pawns = evaluatePawnStructure(board, analysis);
+    const TaperedScore mobility =
+        evaluateMobility(board, analysis, attacksByWhite.pawnSquares,
+                         attacksByBlack.pawnSquares);
+    const TaperedScore kingSafety =
+        evaluateKingSafety(board, analysis, attacksByWhite.squares,
+                           attacksByBlack.squares);
+    const TaperedScore threats =
+        evaluateThreats(analysis, attacksByWhite, attacksByBlack);
+    const TaperedScore outposts =
+        evaluateOutposts(analysis, attacksByWhite, attacksByBlack);
+    const TaperedScore badBishops = evaluateBadBishops(analysis);
+    const TaperedScore connectedRooks = evaluateConnectedRooks(board, analysis);
+    const TaperedScore mopUp = evaluateEndgameMopUp(analysis);
+    const TaperedScore tempo =
+        (sideToMove == Rules::Color::White ? 1 : -1) * bothPhases(P.tempoBonus);
+    const TaperedScore inCheckPenalty =
+        inCheck ? -signFor(sideToMove) * bothPhases(P.inCheckPenalty)
+                : TaperedScore{};
 
-    if (inCheck) {
-        score -= signFor(sideToMove) * bothPhases(P.inCheckPenalty);
-    }
+    TaperedScore score = material;
+    score += placement;
+    score += pawns;
+    score += mobility;
+    score += kingSafety;
+    score += threats;
+    score += outposts;
+    score += badBishops;
+    score += connectedRooks;
+    score += mopUp;
+    score += tempo;
+    score += inCheckPenalty;
 
     int value = taperedValue(score, analysis.phase);
+
+    if (breakdown != nullptr) {
+        breakdown->material = taperedValue(material, analysis.phase);
+        breakdown->placement = taperedValue(placement, analysis.phase);
+        breakdown->pawns = taperedValue(pawns, analysis.phase);
+        breakdown->mobility = taperedValue(mobility, analysis.phase);
+        breakdown->kingSafety = taperedValue(kingSafety, analysis.phase);
+        breakdown->threats = taperedValue(threats, analysis.phase);
+        breakdown->outposts = taperedValue(outposts, analysis.phase);
+        breakdown->badBishops = taperedValue(badBishops, analysis.phase);
+        breakdown->connectedRooks =
+            taperedValue(connectedRooks, analysis.phase);
+        breakdown->mopUp = taperedValue(mopUp, analysis.phase);
+        breakdown->tempo = taperedValue(tempo, analysis.phase);
+        breakdown->inCheck = taperedValue(inCheckPenalty, analysis.phase);
+    }
 
     int scaleNum = 1;
     int scaleDen = 1;
@@ -1340,6 +1385,9 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck) {
         value = value * scaleNum / scaleDen;
     }
 
+    if (breakdown != nullptr) {
+        breakdown->total = value;
+    }
     return value;
 }
 
@@ -1465,17 +1513,82 @@ private:
 // history are per root worker so that their effect stays out of the result;
 // the shared table only ever returns exact bounds, so the value does not
 // depend on thread scheduling either.
+// Everything a search needs to enforce its limits. The deadline is resolved
+// once, and `limitReached` lets the root workers stop each other as soon as one
+// of them spends the budget.
+struct SearchControl {
+    const HeuristicEval::SearchLimits *limits = nullptr;
+    std::atomic<bool> *limitReached = nullptr;
+    std::chrono::steady_clock::time_point deadline{};
+    bool hasDeadline = false;
+    // Nodes the completed iterations already spent, so that the node budget
+    // covers the whole call and not each iteration on its own.
+    int nodesAlreadySearched = 0;
+};
+
 struct SearchState {
     Rules::Move killers[MaxSearchPly][2]{};
     int history[2][64][64] = {};
     TtEntry *table = nullptr;
     quint64 tableMask = 0;
+    // Limit tracking. The node counter always runs so that a search without
+    // limits still reports the work it did; `control` is null in that case.
+    const SearchControl *control = nullptr;
+    int nodes = 0;
+    bool stopped = false;
     // Zobrist key of the position at each ply of the line being searched,
     // used to recognise a repetition inside the search. The root position is
     // seeded at index 0; quiescence is entered at the ply of the node that
     // called it, hence the extra slot.
     quint64 pathKeys[MaxSearchPly + 1]{};
 };
+
+// The clock and the cancellation callback cost more than a counter, so they are
+// only consulted every this many nodes.
+constexpr int LimitsPollInterval = 1024;
+
+// Counts the node and reports whether the search has to stop now. The first
+// worker to spend the budget tells the others through the shared flag.
+bool limitsReached(SearchState &state) {
+    if (state.stopped) {
+        return true;
+    }
+    ++state.nodes;
+
+    const SearchControl *control = state.control;
+    if (control == nullptr) {
+        return false;
+    }
+    if (control->limitReached != nullptr &&
+        control->limitReached->load(std::memory_order_relaxed)) {
+        state.stopped = true;
+        return true;
+    }
+
+    const HeuristicEval::SearchLimits *limits = control->limits;
+    const bool nodeBudgetSpent =
+        limits != nullptr && limits->maxNodes > 0 &&
+        control->nodesAlreadySearched + state.nodes >= limits->maxNodes;
+    // The first node is polled too, so a cancellation that is already pending
+    // stops the search before it does any work.
+    const bool pollNow =
+        state.nodes == 1 || (state.nodes % LimitsPollInterval) == 0;
+    const bool timedOut =
+        pollNow && control->hasDeadline &&
+        std::chrono::steady_clock::now() >= control->deadline;
+    const bool cancelled =
+        pollNow && limits != nullptr && limits->shouldStop &&
+        limits->shouldStop();
+    if (!nodeBudgetSpent && !timedOut && !cancelled) {
+        return false;
+    }
+
+    state.stopped = true;
+    if (control->limitReached != nullptr) {
+        control->limitReached->store(true, std::memory_order_relaxed);
+    }
+    return true;
+}
 
 quint64 packMove(const Rules::Move &move) {
     if (move.from.row < 0) {
@@ -1653,7 +1766,7 @@ MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
 int leafScore(const Rules &rules, bool inCheck) {
     const Rules::Color side = rules.currentPlayer();
     const Board board = snapshotBoard(rules);
-    const int white = evaluateBoard(board, side, inCheck);
+    const int white = evaluateBoard(board, side, inCheck, nullptr);
     return std::clamp(signFor(side) * white, -MaxEvalScore, MaxEvalScore);
 }
 
@@ -1708,6 +1821,10 @@ void selectNextMove(Rules::Move *moves, int *scores, int index, int count,
 
 int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
                SearchState &state) {
+    if (limitsReached(state)) {
+        return 0;
+    }
+
     const Rules::Color side = rules.currentPlayer();
     const bool inCheck = rules.isInCheck(side);
 
@@ -1802,6 +1919,10 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
             int ply, SearchState &state) {
     if (depth <= 0 || ply >= MaxSearchPly) {
         return quiescence(rules, quiescenceDepth, alpha, beta, ply, state);
+    }
+
+    if (limitsReached(state)) {
+        return 0;
     }
 
     const Rules::Color side = rules.currentPlayer();
@@ -1917,7 +2038,9 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         return futileNode ? staticEval : 0;
     }
 
-    if (useTable) {
+    // A value computed after a limit interrupted the subtree is not a value of
+    // this position, so it never reaches the table.
+    if (useTable && !state.stopped) {
         const int flag = best <= alphaOriginal
                              ? TtUpper
                              : (best >= beta ? TtLower : TtExact);
@@ -1933,6 +2056,8 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
 // maximum does not depend on thread scheduling.
 struct RootResult {
     int score = -SearchInfinity;
+    int nodes = 0;
+    bool aborted = false;
     Rules::Move move{};
 };
 
@@ -1941,17 +2066,18 @@ RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
                            int quiescenceDepth, int alpha, int beta,
                            std::atomic<int> &sharedAlpha,
                            std::atomic<bool> &stop, TtEntry *table,
-                           quint64 tableMask) {
+                           quint64 tableMask, const SearchControl *control) {
     Rules root = rules.detachedCopy();
     SearchState state;
     state.table = table;
     state.tableMask = tableMask;
+    state.control = control;
     // The root position opens the repetition line every worker walks.
     state.pathKeys[0] = root.zobristKey();
 
     RootResult result;
     for (const int index : indices) {
-        if (stop.load(std::memory_order_relaxed)) {
+        if (stop.load(std::memory_order_relaxed) || state.stopped) {
             break;
         }
         const Rules::Move move = moves[index];
@@ -1979,6 +2105,8 @@ RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
             break;
         }
     }
+    result.nodes = state.nodes;
+    result.aborted = state.stopped;
     return result;
 }
 
@@ -2127,7 +2255,7 @@ private:
 RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
                               int moveCount, int depth, int quiescenceDepth,
                               int alpha, int beta, TtEntry *table,
-                              quint64 tableMask) {
+                              quint64 tableMask, const SearchControl *control) {
     // The worker budget is decided before the pool exists, so a search that
     // does not need threads never creates any.
     const int workers = std::min(rootWorkerLimit(), std::min(moveCount, 16));
@@ -2142,7 +2270,7 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
         }
         return searchRootChunk(rules, moves, indices, depth, quiescenceDepth,
                                alpha, beta, sharedAlpha, stop, table,
-                               tableMask);
+                               tableMask, control);
     }
 
     SearchPool &pool = SearchPool::instance();
@@ -2153,17 +2281,21 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
     std::vector<RootResult> results(static_cast<std::size_t>(workers));
 
     pool.run(workers, [&rules, moves, &chunks, &results, depth, quiescenceDepth,
-                       alpha, beta, &sharedAlpha, &stop, table,
-                       tableMask](int worker) {
+                       alpha, beta, &sharedAlpha, &stop, table, tableMask,
+                       control](int worker) {
         results[static_cast<std::size_t>(worker)] = searchRootChunk(
             rules, moves, chunks[static_cast<std::size_t>(worker)], depth,
-            quiescenceDepth, alpha, beta, sharedAlpha, stop, table, tableMask);
+            quiescenceDepth, alpha, beta, sharedAlpha, stop, table, tableMask,
+            control);
     });
 
     RootResult best;
     for (const RootResult &result : results) {
+        best.nodes += result.nodes;
+        best.aborted = best.aborted || result.aborted;
         if (result.score > best.score) {
-            best = result;
+            best.score = result.score;
+            best.move = result.move;
         }
     }
     return best;
@@ -2185,6 +2317,53 @@ bool hasAnyLegalMove(const Rules &rules) {
         }
     }
     return false;
+}
+
+// Longest line read back from the transposition table.
+constexpr int MaxPvPlies = 16;
+
+// Best line the transposition table knows after `firstMove`. The table stores
+// the best move of every position it searched, so the line is read back move by
+// move from the root; a move that is not legal in the position ends the line.
+// Without a table the caller keeps the root move alone.
+std::vector<Rules::Move> extractPrincipalVariation(const Rules &rules,
+                                                   const Rules::Move &firstMove,
+                                                   TtEntry *table,
+                                                   quint64 tableMask) {
+    std::vector<Rules::Move> line;
+    if (firstMove.from.row < 0) {
+        return line;
+    }
+    line.push_back(firstMove);
+    if (table == nullptr) {
+        return line;
+    }
+
+    Rules position = rules.detachedCopy();
+    Rules::Undo undo;
+    if (!position.makeMove(firstMove, undo)) {
+        return line;
+    }
+
+    SearchState state;
+    state.table = table;
+    state.tableMask = tableMask;
+    for (int ply = 1; ply < MaxPvPlies; ++ply) {
+        Rules::Move move{};
+        bool hasMove = false;
+        int value = 0;
+        // A depth of zero never cuts off, so the probe only fills the move.
+        probeTable(state, position.zobristKey(), ply, 0, -SearchInfinity,
+                   SearchInfinity, move, hasMove, value);
+        if (!hasMove || !position.isValidMove(move)) {
+            break;
+        }
+        if (!position.makeMove(move, undo)) {
+            break;
+        }
+        line.push_back(move);
+    }
+    return line;
 }
 
 } // namespace
@@ -2231,34 +2410,49 @@ void HeuristicEval::clearSearchCache() {
 }
 
 int HeuristicEval::evaluateCentipawns(const Rules &rules) {
-    // Only the side to move can legally be checkmated or stalemated. One
-    // check test and one legal-move scan replace the two isInCheck calls and
-    // the full hasLegalMove of isCheckmate()+isStalemate().
+    return evaluateBreakdown(rules).total;
+}
+
+HeuristicEval::EvalBreakdown HeuristicEval::evaluateBreakdown(const Rules &rules) {
+    EvalBreakdown breakdown;
+
+    // Only the side to move can legally be checkmated or stalemated. One check
+    // test and one legal-move scan replace the two isInCheck calls and the full
+    // hasLegalMove of isCheckmate()+isStalemate().
     const Rules::Color sideToMove = rules.currentPlayer();
     const bool inCheck = rules.isInCheck(sideToMove);
     if (!hasAnyLegalMove(rules)) {
         if (inCheck) {
-            return sideToMove == Rules::Color::White ? -MateScore : MateScore;
+            breakdown.total =
+                sideToMove == Rules::Color::White ? -MateScore : MateScore;
         }
-        return 0; // Stalemate.
+        return breakdown; // Stalemate leaves the total at zero.
     }
 
     // A claimable draw scores exactly like a drawn position, whatever material
     // still stands on the board. Checkmate was handled above and keeps
     // priority, so a mate delivered on the last half-move is still a mate.
     if (rules.isFiftyMoveRule() || rules.isThreefoldRepetition()) {
-        return 0;
+        return breakdown;
     }
 
     const Board board = snapshotBoard(rules);
-    const int score = evaluateBoard(board, sideToMove, inCheck);
+    evaluateBoard(board, sideToMove, inCheck, &breakdown);
 
     // Reserve MateScore exclusively for actual checkmates.
-    return std::clamp(score, -MateScore + 1, MateScore - 1);
+    breakdown.total =
+        std::clamp(breakdown.total, -MateScore + 1, MateScore - 1);
+    return breakdown;
 }
 
 HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
                                                  int quiescenceDepth) {
+    return search(rules, depth, quiescenceDepth, SearchLimits{});
+}
+
+HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
+                                                 int quiescenceDepth,
+                                                 const SearchLimits &limits) {
     SearchResult result;
 
     const Rules::Color side = rules.currentPlayer();
@@ -2311,11 +2505,29 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
         tableMask = shared.mask();
     }
 
+    // A control block is only built when there is a limit to enforce, so an
+    // unlimited search pays nothing for the feature beyond the node counter.
+    std::atomic<bool> limitReached{false};
+    SearchControl controlStorage;
+    const SearchControl *control = nullptr;
+    if (limits.maxNodes > 0 || limits.maxMilliseconds > 0 || limits.shouldStop) {
+        controlStorage.limits = &limits;
+        controlStorage.limitReached = &limitReached;
+        if (limits.maxMilliseconds > 0) {
+            controlStorage.hasDeadline = true;
+            controlStorage.deadline =
+                std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(limits.maxMilliseconds);
+        }
+        control = &controlStorage;
+    }
+
     // Iterative deepening: each iteration reorders the root moves with the
     // previous best and fills the table for the next one. A narrow aspiration
     // window around the previous score is widened until it contains the value.
     constexpr int AspirationDelta = 200;
     int best = 0;
+    bool completed = false;
     Rules::Move bestMove{};
     const int targetDepth = std::max(0, depth);
     // Re-searching every shallower depth only pays for itself from depth 4 on;
@@ -2341,9 +2553,17 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
                     }
                 }
             }
+            if (control != nullptr) {
+                controlStorage.nodesAlreadySearched = result.nodes;
+            }
             rootResult = parallelRootSearch(rules, moves, moveCount, iteration,
                                             quiescenceDepth, alpha, beta,
-                                            table, tableMask);
+                                            table, tableMask, control);
+            result.nodes += rootResult.nodes;
+            if (rootResult.aborted) {
+                result.aborted = true;
+                break;
+            }
             if (rootResult.score <= alpha) {
                 beta = (alpha + beta) / 2;
                 alpha = std::max(rootResult.score - delta, -SearchInfinity);
@@ -2358,13 +2578,19 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
             break;
         }
 
+        if (result.aborted) {
+            break;
+        }
+
         best = rootResult.score;
         bestMove = rootResult.move;
+        completed = true;
+        result.depth = iteration;
     }
 
-    if (best == -SearchInfinity) {
-        // The terminal tests already rejected checkmate and stalemate, so this
-        // is a dead position rather than a mate.
+    if (!completed) {
+        // A limit stopped even the first iteration: there is no score and no
+        // move to report, so the caller only learns that it was cut short.
         return result;
     }
 
@@ -2383,6 +2609,12 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
     } else {
         const int whiteScore = signFor(side) * best;
         result.centipawns = std::clamp(whiteScore, -MaxEvalScore, MaxEvalScore);
+    }
+
+    if (bestMove.from.row >= 0) {
+        result.bestMove = bestMove;
+        result.principalVariation =
+            extractPrincipalVariation(rules, bestMove, table, tableMask);
     }
     return result;
 }
@@ -2404,6 +2636,3 @@ double HeuristicEval::evaluateDisplayPercentage(const Rules &rules) {
     return centipawnsToPercentage(static_cast<double>(evaluateCentipawns(rules)));
 }
 
-double HeuristicEval::evaluate(const Rules &rules) {
-    return evaluateDisplayPercentage(rules);
-}

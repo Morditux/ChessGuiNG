@@ -5,7 +5,9 @@
 #ifndef CHESSGUI_HEURISTIC_EVAL_H
 #define CHESSGUI_HEURISTIC_EVAL_H
 
+#include <functional>
 #include <optional>
+#include <vector>
 
 #include "rules.h"
 
@@ -139,12 +141,56 @@ public:
     // not run while a search is in flight on another thread.
     static void clearSearchCache();
 
+    // Limits a search has to respect. Zero disables the matching limit, and
+    // `shouldStop` lets a caller cancel a search from another thread; it is
+    // polled while the search runs.
+    struct SearchLimits {
+        int maxNodes = 0;
+        int maxMilliseconds = 0;
+        std::function<bool()> shouldStop;
+    };
+
+    // Per-term contributions of the classical evaluation, from White's
+    // perspective and already tapered with the phase. It is what the UI can
+    // show to explain a score, and what a test can use to pin one term without
+    // the others. The terms do not sum to `total` when a draw scaling applies.
+    struct EvalBreakdown {
+        int material = 0;
+        int placement = 0;
+        int pawns = 0;
+        int mobility = 0;
+        int kingSafety = 0;
+        int threats = 0;
+        int outposts = 0;
+        int badBishops = 0;
+        int connectedRooks = 0;
+        int mopUp = 0;
+        int tempo = 0;
+        int inCheck = 0;
+        // Final score, i.e. what evaluateCentipawns() returns for the same
+        // position: `±MateScore` for a checkmate and zero for a draw.
+        int total = 0;
+    };
+
     // Outcome of a shallow search around the classical evaluation. The score
     // is always from White's perspective; mateIn is in full moves, positive
     // when White delivers mate.
     struct SearchResult {
         int centipawns = 0;
         std::optional<int> mateIn;
+        // Best root move, when at least one legal move was searched.
+        std::optional<Rules::Move> bestMove;
+        // Best line found, starting with `bestMove`. After the first move it is
+        // read back from the transposition table, so it is a best-effort line
+        // and holds only the root move when the search ran without a table
+        // (depth below 3).
+        std::vector<Rules::Move> principalVariation;
+        // Deepest iteration the search completed.
+        int depth = 0;
+        // Nodes visited by this call, main search and quiescence.
+        int nodes = 0;
+        // True when a limit stopped the search before it reached `depth`.
+        bool aborted = false;
     };
 
     // Evaluates the position from White's perspective in centipawns
@@ -152,6 +198,10 @@ public:
     // worth exactly zero: stalemate, material the rules engine calls
     // insufficient, the fifty-move rule and threefold repetition.
     [[nodiscard]] static int evaluateCentipawns(const Rules &rules);
+
+    // Same evaluation, with the contribution of every term. A terminal or
+    // drawn position reports only `total`.
+    [[nodiscard]] static EvalBreakdown evaluateBreakdown(const Rules &rules);
 
     // Classical evaluation refined by a short alpha-beta search with a
     // quiescence extension. `depth` counts the plies searched before the
@@ -165,12 +215,15 @@ public:
     [[nodiscard]] static SearchResult search(const Rules &rules, int depth = 2,
                                              int quiescenceDepth = 2);
 
+    // The same search under explicit limits, which stop it early; the result
+    // then keeps the last iteration that completed and reports `aborted`.
+    [[nodiscard]] static SearchResult search(const Rules &rules, int depth,
+                                             int quiescenceDepth,
+                                             const SearchLimits &limits);
+
     // Converts the centipawn score into a display percentage for White.
     // This is a display proxy, not a proven win probability.
     [[nodiscard]] static double evaluateDisplayPercentage(const Rules &rules);
-
-    // Convenience evaluation for EvaluationBar.
-    [[nodiscard]] static double evaluate(const Rules &rules);
 
     // Converts a centipawn score to a display percentage in [0.0, 100.0].
     [[nodiscard]] static double centipawnsToPercentage(double cp);
