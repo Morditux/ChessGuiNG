@@ -200,6 +200,10 @@ public:
     // synchronous pass already filled in.
     void cancelEvaluationCurve();
     [[nodiscard]] bool isEvaluationCurveComputing() const;
+    // Points at the head of the curve the background analysis has already
+    // scored; the UI draws the rest as provisional. Negative when nothing is
+    // running, which means every point is settled.
+    [[nodiscard]] int evaluationCurveAnalysedCount() const;
 
     // Depth of the heuristic search behind the live evaluation and the
     // whole-game curve.
@@ -382,6 +386,7 @@ private:
     quint64 curveRequestId_ = 0;
     quint64 evaluationRequestId_ = 0;
     bool curveComputing_ = false;
+    int curveAnalysedCount_ = 0;
     int curveCompleted_ = 0;
     int curveTotal_ = 0;
     // Curve points the heuristic produced, and the ones the engine refined;

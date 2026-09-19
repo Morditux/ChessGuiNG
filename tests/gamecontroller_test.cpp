@@ -1558,10 +1558,20 @@ void GameControllerTest::testEvaluationCurveIsComputedInTheBackground() {
     QSignalSpy curveSpy(&controller, &GameController::evaluationCurveChanged);
 
     int progressiveChanges = 0;
+    int deepestAnalysedWhileComputing = 0;
     connect(&controller, &GameController::evaluationCurveChanged, &controller,
             [&controller, &progressiveChanges] {
                 if (controller.isEvaluationCurveComputing()) {
                     ++progressiveChanges;
+                }
+            });
+    connect(&controller, &GameController::evaluationCurveProgressChanged,
+            &controller,
+            [&controller, &deepestAnalysedWhileComputing](int, int) {
+                if (controller.isEvaluationCurveComputing()) {
+                    deepestAnalysedWhileComputing = qMax(
+                        deepestAnalysedWhileComputing,
+                        controller.evaluationCurveAnalysedCount());
                 }
             });
 
@@ -1573,6 +1583,10 @@ void GameControllerTest::testEvaluationCurveIsComputedInTheBackground() {
     QCOMPARE(controller.evaluationCurve().size(), expectedPoints);
     QVERIFY(progressSpy.count() > 0);
     QCOMPARE(progressSpy.first().at(1).toInt(), expectedPoints);
+    // The whole curve is provisional until the analysis has walked it, which
+    // is what the graph shows by fading the tail.
+    QCOMPARE(controller.evaluationCurveAnalysedCount(), 0);
+    QVERIFY(controller.isEvaluationCurveComputing());
 
     // Every point the worker scores is published on the spot, so the graph
     // follows the analysis and never shows an out-of-range value on the way.
@@ -1593,6 +1607,11 @@ void GameControllerTest::testEvaluationCurveIsComputedInTheBackground() {
         QVERIFY(value >= 0.0 && value <= 100.0);
     }
     QVERIFY(allInRange);
+    // The analysis visibly advanced while it was running, and everything is
+    // settled once it is over.
+    QVERIFY(deepestAnalysedWhileComputing > 0);
+    QCOMPARE(controller.evaluationCurveAnalysedCount(), -1);
+
     // The graph was refreshed while the worker was still walking the curve, not
     // only when the whole line landed.
     QVERIFY2(progressiveChanges > 0,
@@ -1632,8 +1651,10 @@ void GameControllerTest::testEvaluationCurveCanBeCancelled() {
     controller.cancelEvaluationCurve();
     QTRY_VERIFY_WITH_TIMEOUT(!controller.isEvaluationCurveComputing(),
                              WaitTimeout);
-    // The cancelled computation leaves the instant curve in place.
+    // The cancelled computation leaves the instant curve in place, and the
+    // graph goes back to drawing it in full.
     QCOMPARE(controller.evaluationCurve(), staticCurve);
+    QCOMPARE(controller.evaluationCurveAnalysedCount(), -1);
     HeuristicEval::setSearchThreads(0);
 }
 

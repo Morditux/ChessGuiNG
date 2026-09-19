@@ -29,6 +29,13 @@ public:
     [[nodiscard]] const QVector<double> &evaluations() const;
     void setEvaluations(const QVector<double> &percentages);
 
+    // How many points at the head of the curve the background analysis has
+    // already scored; the rest is drawn faded, so the curve visibly sharpens
+    // while the analysis walks the game. A negative value (the default) means
+    // every point is settled.
+    [[nodiscard]] int analysedCount() const;
+    void setAnalysedCount(int count);
+
     [[nodiscard]] int currentPly() const;
     void setCurrentPly(int ply);
 
@@ -59,6 +66,7 @@ private:
     QVector<double> evaluations_;
     QVector<AuditAnnotation> auditAnnotations_;
     int currentPly_ = 0;
+    int analysedCount_ = -1;
 
     QColor whiteColor_ = QColor("#ffffff");
     QColor blackColor_ = QColor("#312e2b");

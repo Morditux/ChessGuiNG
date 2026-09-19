@@ -34,12 +34,31 @@ const QVector<double> &EvaluationGraph::evaluations() const {
     return evaluations_;
 }
 
+int EvaluationGraph::analysedCount() const {
+    return analysedCount_;
+}
+
+void EvaluationGraph::setAnalysedCount(int count) {
+    const int bounded =
+        count < 0 ? -1
+                  : qMin(count, static_cast<int>(evaluations_.size()));
+    if (analysedCount_ == bounded) {
+        return;
+    }
+    analysedCount_ = bounded;
+    update();
+}
+
 void EvaluationGraph::setEvaluations(const QVector<double> &percentages) {
     if (evaluations_ == percentages) {
         return;
     }
     evaluations_ = percentages;
     currentPly_ = qBound(0, currentPly_, qMax(0, evaluations_.size() - 1));
+    if (analysedCount_ >= 0) {
+        analysedCount_ =
+            qMin(analysedCount_, static_cast<int>(evaluations_.size()));
+    }
     update();
 }
 
@@ -184,28 +203,70 @@ void EvaluationGraph::paintEvent(QPaintEvent *event) {
                                 : QRectF(plot.left(), midY, plot.width(),
                                          plot.bottom() - midY);
         painter.save();
-        painter.setClipRect(half);
+        // Intersect, so a caller can restrict the band to the analysed part of
+        // the curve and still get the equilibrium split.
+        painter.setClipRect(half, Qt::IntersectClip);
         painter.setPen(Qt::NoPen);
         painter.setBrush(color);
         painter.drawPolygon(band);
         painter.restore();
     };
 
+    const int settled = analysedCount_ < 0
+                            ? count
+                            : qBound(0, analysedCount_, count);
+
+    // Everything the static pass filled in is drawn faded first; the analysed
+    // prefix is then painted over it at full strength.
+    if (settled < count) {
+        QColor pendingWhite = whiteColor_;
+        QColor pendingBlack = blackColor_;
+        pendingWhite.setAlpha(90);
+        pendingBlack.setAlpha(90);
+        fillBand(pendingWhite, true);
+        fillBand(pendingBlack, false);
+    }
+
+    const QRectF settledRect(plot.left(), plot.top(),
+                             settled > 0 ? xAtPly(settled - 1) - plot.left()
+                                         : 0.0,
+                             plot.height());
+    if (settled < count) {
+        painter.save();
+        painter.setClipRect(settledRect, Qt::IntersectClip);
+    }
     fillBand(whiteColor_, true);
     fillBand(blackColor_, false);
+    if (settled < count) {
+        painter.restore();
+    }
 
     // Equilibrium line.
     painter.setPen(QPen(QColor(128, 128, 128, 160), 1.0, Qt::DashLine));
     painter.drawLine(QPointF(plot.left(), midY), QPointF(plot.right(), midY));
 
-    // Curve outline and frame.
+    // Curve outline and frame: the unanalysed tail is faded, the analysed
+    // prefix is drawn on top of it.
+    if (settled < count) {
+        QColor pendingBorder = borderColor_;
+        pendingBorder.setAlpha(80);
+        painter.setPen(QPen(pendingBorder, 1.0));
+        painter.drawPolyline(curve);
+        painter.save();
+        painter.setClipRect(settledRect, Qt::IntersectClip);
+    }
     painter.setPen(QPen(borderColor_, 1.0));
     painter.drawPolyline(curve);
+    if (settled < count) {
+        painter.restore();
+    }
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(plot);
 
     // Blunders and mistakes reported by the game audit.
-    for (int ply = 1; ply < auditAnnotations_.size() && ply < count; ++ply) {
+    for (int ply = 1; ply < auditAnnotations_.size() && ply < count &&
+                     ply < settled;
+         ++ply) {
         const AuditAnnotation &annotation = auditAnnotations_.at(ply);
         if (!annotation.isValid()) {
             continue;

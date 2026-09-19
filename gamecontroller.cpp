@@ -1059,8 +1059,11 @@ void GameController::requestEvaluationCurve() {
     rebuildMergedCurve();
 
     curveComputing_ = true;
-    curveCompleted_ = heuristicCurve_.size();
+    curveCompleted_ = 0;
     curveTotal_ = heuristicCurve_.size();
+    // Only the static pass has run so far: the graph draws it as provisional
+    // and sharpens it as the worker reports the points it has scored.
+    curveAnalysedCount_ = 0;
     emit evaluationCurveProgressChanged(curveCompleted_, curveTotal_);
     emit curveComputeRequested(requestId, initialFen_, uciMoves_,
                                evaluationDepth_, 2);
@@ -1074,6 +1077,10 @@ void GameController::cancelEvaluationCurve() {
 
 bool GameController::isEvaluationCurveComputing() const {
     return curveComputing_;
+}
+
+int GameController::evaluationCurveAnalysedCount() const {
+    return curveAnalysedCount_;
 }
 
 void GameController::computeStaticCurve() {
@@ -1118,6 +1125,9 @@ void GameController::truncateCurve(int size) {
     if (evaluationCurve_.size() > bounded) {
         evaluationCurve_.resize(bounded);
     }
+    if (curveAnalysedCount_ >= 0) {
+        curveAnalysedCount_ = qMin(curveAnalysedCount_, bounded);
+    }
     for (auto it = engineCurvePoints_.begin(); it != engineCurvePoints_.end();) {
         if (it.key() >= bounded) {
             it = engineCurvePoints_.erase(it);
@@ -1155,6 +1165,7 @@ void GameController::onCurveProgress(quint64 requestId, int completed,
     }
     curveCompleted_ = completed;
     curveTotal_ = total;
+    curveAnalysedCount_ = qMin(completed, heuristicCurve_.size());
     emit evaluationCurveProgressChanged(completed, total);
 }
 
@@ -1178,6 +1189,9 @@ void GameController::onCurveReady(quint64 requestId,
         heuristicCurve_ = curve;
         rebuildMergedCurve();
     }
+    curveCompleted_ = heuristicCurve_.size();
+    curveTotal_ = heuristicCurve_.size();
+    curveAnalysedCount_ = -1;
     emit evaluationCurveProgressChanged(curveTotal_, curveTotal_);
 }
 
@@ -1186,7 +1200,10 @@ void GameController::onCurveCancelled(quint64 requestId) {
         return;
     }
     curveComputing_ = false;
-    emit evaluationCurveProgressChanged(curveCompleted_, curveTotal_);
+    // The cancelled pass leaves the instant static values, which are then the
+    // whole curve.
+    curveAnalysedCount_ = -1;
+    emit evaluationCurveProgressChanged(curveTotal_, curveTotal_);
 }
 
 QString GameController::formattedCommentAt(int ply) const {
@@ -1890,6 +1907,7 @@ bool GameController::recordMove(const Rules::Move &move) {
     // keeps up with the game without blocking on a search.
     heuristicCurve_.append(HeuristicEval::centipawnsToPercentage(
         static_cast<double>(HeuristicEval::evaluateCentipawns(rules_))));
+    curveAnalysedCount_ = -1;
     rebuildMergedCurve();
 
     refreshMoveHistory();

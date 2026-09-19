@@ -28,6 +28,7 @@
 #include "chessboard.h"
 #include "computergamedialog.h"
 #include "evaluationbar.h"
+#include "evaluationgraph.h"
 #include "gamecontroller.h"
 #include "mainwindow.h"
 #include "movelistwidget.h"
@@ -1330,6 +1331,20 @@ void RulesTest::testMainWindowSettingsMenu() {
     QVERIFY(cancelCurve != nullptr);
     QVERIFY(!curveProgress->isVisible());
     QVERIFY(!cancelCurve->isVisible());
+
+    // The background curve tells the graph how far it got: a freshly loaded
+    // game is drawn as provisional until the analysis has walked it.
+    window.gameController()->setEvaluationDepth(3);
+    QVERIFY(window.gameController()->loadPgn(QStringLiteral(
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 *")));
+    auto *curveGraph = window.findChild<EvaluationGraph *>();
+    QVERIFY(curveGraph != nullptr);
+    QVERIFY(curveGraph->evaluations().size() > 1);
+    QVERIFY(curveGraph->analysedCount() >= 0);
+    QVERIFY(curveGraph->analysedCount() < curveGraph->evaluations().size());
+    QTRY_VERIFY_WITH_TIMEOUT(curveGraph->analysedCount() == -1, 5000);
+    window.gameController()->setEvaluationDepth(
+        HeuristicEval::DefaultSearchDepth);
 
     // A reopened window restores them, and the evaluator settings survive too.
     HeuristicEval::EvalParams tuned = HeuristicEval::params();

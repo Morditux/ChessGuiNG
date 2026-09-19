@@ -170,6 +170,10 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
     });
     connect(gameController_, &GameController::evaluationCurveChanged, this, [this] {
         evaluationGraph_->setEvaluations(gameController_->evaluationCurve());
+        // How much of it the background analysis has already scored, so the
+        // graph can draw the rest as provisional.
+        evaluationGraph_->setAnalysedCount(
+            gameController_->evaluationCurveAnalysedCount());
     });
     connect(evaluationGraph_, &EvaluationGraph::plySelected, this, [this](int ply) {
         gameController_->goToMove(ply);
@@ -1182,6 +1186,8 @@ void MainWindow::refreshEvaluationGraph() {
     }
 
     evaluationGraph_->setEvaluations(gameController_->evaluationCurve());
+    evaluationGraph_->setAnalysedCount(
+        gameController_->evaluationCurveAnalysedCount());
     evaluationGraph_->setCurrentPly(gameController_->moveCursor());
     evaluationGraph_->setAuditAnnotations(auditAnnotationsByPly());
 }
@@ -1957,6 +1963,12 @@ void MainWindow::updateCurveProgress(int completed, int total) {
         return;
     }
     const bool running = gameController_->isEvaluationCurveComputing() && total > 1;
+
+    // The graph follows every step, including the final one that settles the
+    // whole curve and hides the progress bar again.
+    evaluationGraph_->setAnalysedCount(
+        gameController_->evaluationCurveAnalysedCount());
+
     curveProgressBar_->setVisible(running);
     cancelCurveButton_->setVisible(running);
     if (!running) {

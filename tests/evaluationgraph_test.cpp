@@ -12,6 +12,7 @@ class EvaluationGraphTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void testAnalysedCount();
     void testDefaults();
     void testEvaluations();
     void testCurrentPly();
@@ -144,6 +145,54 @@ void EvaluationGraphTest::testRendering() {
     const QImage level = pixmap.toImage();
     QCOMPARE(level.pixelColor(20, 20), QColor("#f7f3eb"));
     QCOMPARE(level.pixelColor(20, 60), QColor("#f7f3eb"));
+
+    // The points the background analysis has not scored yet are drawn faded,
+    // so the curve visibly sharpens as the analysis walks the game.
+    graph.setAnalysedCount(-1);
+    graph.setEvaluations({90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0, 90.0});
+    graph.render(&pixmap);
+    const QImage settled = pixmap.toImage();
+
+    graph.setAnalysedCount(4);
+    graph.render(&pixmap);
+    const QImage partial = pixmap.toImage();
+    QVERIFY(settled != partial);
+
+    // The settled half keeps the solid band, the pending half is washed out.
+    const QColor settledLeft = partial.pixelColor(20, 20);
+    const QColor pendingRight = partial.pixelColor(180, 20);
+    QCOMPARE(settledLeft, QColor("#ffffff"));
+    QVERIFY(pendingRight != settledLeft);
+    QVERIFY(qAbs(pendingRight.red() - 0xf7) <
+            qAbs(pendingRight.red() - 0xff));
+
+    // With nothing left to analyse the curve is solid again.
+    graph.setAnalysedCount(-1);
+    graph.render(&pixmap);
+    QCOMPARE(pixmap.toImage(), settled);
+}
+
+void EvaluationGraphTest::testAnalysedCount() {
+    EvaluationGraph graph;
+
+    // Everything is settled until a caller says otherwise.
+    graph.setEvaluations({50.0, 60.0, 45.0, 40.0});
+    QCOMPARE(graph.analysedCount(), -1);
+
+    graph.setAnalysedCount(2);
+    QCOMPARE(graph.analysedCount(), 2);
+
+    // Never more than the points the curve has.
+    graph.setAnalysedCount(99);
+    QCOMPARE(graph.analysedCount(), 4);
+
+    // Shrinking the curve clamps it as well.
+    graph.setEvaluations({50.0, 60.0});
+    QCOMPARE(graph.analysedCount(), 2);
+
+    // A negative count means the whole curve is settled again.
+    graph.setAnalysedCount(-1);
+    QCOMPARE(graph.analysedCount(), -1);
 }
 
 QTEST_MAIN(EvaluationGraphTest)
