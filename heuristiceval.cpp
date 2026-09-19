@@ -1197,6 +1197,65 @@ struct TtEntry {
     std::atomic<quint64> data{0};
 };
 
+// Persistent transposition table shared by every search and every root worker.
+// It grows with the deepest search it has seen and is then reused, so a search
+// no longer allocates and zero-initialises a table of its own; the entries are
+// keyed by the Zobrist key and a probe only trusts them up to their depth, so
+// keeping them across searches is safe. Growth retires the old buffer instead
+// of freeing it, because a search running on another thread may still be
+// reading it; the retired buffers are bounded by the three table sizes.
+class TranspositionTable {
+public:
+    static TranspositionTable &instance() {
+        static TranspositionTable table;
+        return table;
+    }
+
+    [[nodiscard]] TtEntry *data() const {
+        return table_.get();
+    }
+
+    [[nodiscard]] quint64 mask() const {
+        return mask_;
+    }
+
+    // Grows the table to at least 1 << bits entries. A call that asks for a
+    // smaller table keeps the current one, and the new storage is zeroed by
+    // its own construction.
+    void ensureSize(int bits) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (table_ != nullptr && bits_ >= bits) {
+            return;
+        }
+        std::unique_ptr<TtEntry[]> table =
+            std::make_unique<TtEntry[]>(std::size_t{1} << bits);
+        if (table_ != nullptr) {
+            retired_.push_back(std::move(table_));
+        }
+        table_ = std::move(table);
+        bits_ = bits;
+        mask_ = (quint64{1} << bits) - 1;
+    }
+
+    // Drops every entry. Like HeuristicEval::setParams(), this must not run
+    // while a search is in flight on another thread.
+    void clear() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        table_.reset();
+        bits_ = 0;
+        mask_ = 0;
+    }
+
+private:
+    TranspositionTable() = default;
+
+    std::mutex mutex_;
+    std::unique_ptr<TtEntry[]> table_;
+    std::vector<std::unique_ptr<TtEntry[]>> retired_;
+    quint64 mask_ = 0;
+    int bits_ = 0;
+};
+
 // Heuristic move ordering state and a pointer to the table. Killers and
 // history are per root worker so that their effect stays out of the result;
 // the shared table only ever returns exact bounds, so the value does not
@@ -1301,6 +1360,23 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
         return;
     }
     TtEntry &entry = state.table[key & state.tableMask];
+
+    // Depth-preferred replacement: a shallow entry must not evict a deeper one
+    // from the slot, since the deeper bound is the valuable one. The key is
+    // read twice around the payload so that a torn write by another worker is
+    // treated as an empty slot rather than as a depth.
+    const quint64 storedKey = entry.key.load(std::memory_order_acquire);
+    if (storedKey == key) {
+        const quint64 storedData = entry.data.load(std::memory_order_acquire);
+        if (entry.key.load(std::memory_order_acquire) == storedKey) {
+            const int storedDepth =
+                static_cast<int>((storedData >> 32) & 0xFF);
+            if (storedDepth > depth) {
+                return;
+            }
+        }
+    }
+
     // Store the payload before the key so that a reader which sees the new key
     // also sees the matching payload.
     entry.key.store(0, std::memory_order_release);
@@ -1701,9 +1777,38 @@ RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
     return result;
 }
 
+// Upper bound on the number of root workers. Zero means "derive it from the
+// hardware and the environment"; a positive value is the explicit cap set by
+// HeuristicEval::setSearchThreads(), which is what makes a search deterministic
+// regardless of the pool's actual size.
+std::atomic<int> searchThreadOverride{0};
+
+// Threads a search may use by default. CHESSGUI_EVAL_THREADS is read on every
+// call, so the value can be changed between searches.
+int hardwareThreads() {
+    unsigned count = std::thread::hardware_concurrency();
+    if (const char *overrideThreads = std::getenv("CHESSGUI_EVAL_THREADS")) {
+        const int requested = std::atoi(overrideThreads);
+        if (requested > 0) {
+            count = static_cast<unsigned>(requested);
+        }
+    }
+    return static_cast<int>(std::min(count == 0 ? 1u : count, 16u));
+}
+
+int rootWorkerLimit() {
+    const int requested = searchThreadOverride.load(std::memory_order_relaxed);
+    if (requested > 0) {
+        return std::min(requested, 16);
+    }
+    return hardwareThreads();
+}
+
 // A small persistent pool. Iterative deepening runs several searches in a row,
 // so creating and joining threads per iteration used to dominate the shallow
-// ones; the pool is created once and reused.
+// ones; the pool is created once and reused. It is created on the first search
+// that actually wants more than one worker, so a shallow evaluation never pays
+// for the threads.
 class SearchPool {
 public:
     static SearchPool &instance() {
@@ -1745,14 +1850,7 @@ public:
 
 private:
     SearchPool() {
-        unsigned count = std::thread::hardware_concurrency();
-        if (const char *overrideThreads = std::getenv("CHESSGUI_EVAL_THREADS")) {
-            const int requested = std::atoi(overrideThreads);
-            if (requested > 0) {
-                count = static_cast<unsigned>(requested);
-            }
-        }
-        count = std::min(count == 0 ? 1u : count, 16u);
+        const unsigned count = static_cast<unsigned>(hardwareThreads());
         threads_.reserve(count);
         for (unsigned i = 0; i < count; ++i) {
             threads_.emplace_back([this] { workerLoop(); });
@@ -1825,8 +1923,9 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
                               int moveCount, int depth, int quiescenceDepth,
                               int alpha, int beta, TtEntry *table,
                               quint64 tableMask) {
-    SearchPool &pool = SearchPool::instance();
-    int workers = std::min(pool.size(), std::min(moveCount, 16));
+    // The worker budget is decided before the pool exists, so a search that
+    // does not need threads never creates any.
+    const int workers = std::min(rootWorkerLimit(), std::min(moveCount, 16));
 
     std::atomic<int> sharedAlpha{alpha};
     std::atomic<bool> stop{false};
@@ -1841,6 +1940,7 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
                                tableMask);
     }
 
+    SearchPool &pool = SearchPool::instance();
     std::vector<std::vector<int>> chunks(static_cast<std::size_t>(workers));
     for (int i = 0; i < moveCount; ++i) {
         chunks[static_cast<std::size_t>(i % workers)].push_back(i);
@@ -1903,10 +2003,26 @@ const HeuristicEval::EvalParams &HeuristicEval::params() {
 
 void HeuristicEval::setParams(const EvalParams &params) {
     activeParams = params;
+    // Every cached score was computed with the previous weights.
+    TranspositionTable::instance().clear();
 }
 
 void HeuristicEval::resetParams() {
     activeParams = EvalParams{};
+    TranspositionTable::instance().clear();
+}
+
+void HeuristicEval::setSearchThreads(int threads) {
+    searchThreadOverride.store(threads > 0 ? std::min(threads, 16) : 0,
+                               std::memory_order_relaxed);
+}
+
+int HeuristicEval::searchThreads() {
+    return rootWorkerLimit();
+}
+
+void HeuristicEval::clearSearchCache() {
+    TranspositionTable::instance().clear();
 }
 
 int HeuristicEval::evaluateCentipawns(const Rules &rules) {
@@ -1977,15 +2093,17 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
         selectNextMove(moves, scores, i, moveCount);
     }
 
-    // One table is shared by every iteration and every root worker. Its size
-    // grows with the target depth so a shallow search does not pay for a large
-    // zero-initialisation.
-    std::unique_ptr<TtEntry[]> table;
+    // One table is shared by every iteration, every root worker and every
+    // search. It is grown to the size the target depth asks for and then kept,
+    // so only the first deep search pays for the storage.
+    TtEntry *table = nullptr;
     quint64 tableMask = 0;
     if (depth >= 3) {
         const int bits = depth >= 5 ? 18 : (depth >= 4 ? 16 : 15);
-        table = std::make_unique<TtEntry[]>(std::size_t{1} << bits);
-        tableMask = (quint64{1} << bits) - 1;
+        TranspositionTable &shared = TranspositionTable::instance();
+        shared.ensureSize(bits);
+        table = shared.data();
+        tableMask = shared.mask();
     }
 
     // Iterative deepening: each iteration reorders the root moves with the
@@ -2020,7 +2138,7 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
             }
             rootResult = parallelRootSearch(rules, moves, moveCount, iteration,
                                             quiescenceDepth, alpha, beta,
-                                            table.get(), tableMask);
+                                            table, tableMask);
             if (rootResult.score <= alpha) {
                 beta = (alpha + beta) / 2;
                 alpha = std::max(rootResult.score - delta, -SearchInfinity);

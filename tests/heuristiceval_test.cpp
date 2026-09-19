@@ -88,6 +88,8 @@ private slots:
     void testSearchSeesFreeCapture();
     void testSearchHandlesDeadDrawnPosition();
     void testSearchIsRepeatableSingleThreaded();
+    void testSearchThreadCap();
+    void testSearchCacheIsReusedConsistently();
     void testEvalParamsDrivePieceValues();
     void testMaterialDrawsFollowRules();
     void testFiftyMoveAndRepetitionDraws();
@@ -479,23 +481,93 @@ void HeuristicEvalTest::testSearchHandlesDeadDrawnPosition() {
 
 void HeuristicEvalTest::testSearchIsRepeatableSingleThreaded() {
     // A single-threaded search has no dependence on scheduling, so two runs
-    // must be bit-identical. (The parallel search shares its alpha and table
-    // across workers, so late-move reductions can make its exact value depend
-    // on thread timing; that is only exercised here for repeatability.)
+    // must be bit-identical. The thread cap is what makes it single-threaded,
+    // and it works even when the worker pool already exists, which the
+    // CHESSGUI_EVAL_THREADS environment variable could not guarantee.
     Rules rules;
     QVERIFY(rules.loadFen(QStringLiteral(
         "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
 
-    qputenv("CHESSGUI_EVAL_THREADS", "1");
+    HeuristicEval::setSearchThreads(1);
     const auto first = HeuristicEval::search(rules, 4, 2);
     const auto second = HeuristicEval::search(rules, 4, 2);
-    qunsetenv("CHESSGUI_EVAL_THREADS");
+    HeuristicEval::setSearchThreads(0);
 
     QCOMPARE(first.centipawns, second.centipawns);
     QCOMPARE(first.mateIn.has_value(), second.mateIn.has_value());
     if (first.mateIn.has_value()) {
         QCOMPARE(*first.mateIn, *second.mateIn);
     }
+}
+
+void HeuristicEvalTest::testSearchThreadCap() {
+    // Zero means "derive it from the hardware"; a positive value caps the root
+    // workers and one makes the search single-threaded.
+    HeuristicEval::setSearchThreads(0);
+    QVERIFY(HeuristicEval::searchThreads() >= 1);
+
+    HeuristicEval::setSearchThreads(3);
+    QCOMPARE(HeuristicEval::searchThreads(), 3);
+
+    HeuristicEval::setSearchThreads(1);
+    QCOMPARE(HeuristicEval::searchThreads(), 1);
+
+    // A single-worker search must still find a mate.
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral(
+        "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4")));
+    const auto result = HeuristicEval::search(rules, 3, 2);
+    HeuristicEval::setSearchThreads(0);
+
+    QVERIFY(result.mateIn.has_value());
+    QCOMPARE(*result.mateIn, 1);
+}
+
+void HeuristicEvalTest::testSearchCacheIsReusedConsistently() {
+    // The transposition table now survives from one search to the next, so a
+    // warm search must return exactly what the cold one did: deeper entries are
+    // keyed by the position and only reused up to their depth.
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral(
+        "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
+
+    HeuristicEval::setSearchThreads(1);
+    HeuristicEval::clearSearchCache();
+    const auto cold = HeuristicEval::search(rules, 5, 2);
+    const auto warm = HeuristicEval::search(rules, 5, 2);
+
+    // A different position in between must not disturb the stored bounds.
+    Rules other;
+    QVERIFY(other.loadFen(QStringLiteral(
+        "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")));
+    const auto otherResult = HeuristicEval::search(other, 4, 2);
+    QVERIFY(!otherResult.mateIn.has_value());
+    const auto warmAgain = HeuristicEval::search(rules, 5, 2);
+    HeuristicEval::clearSearchCache();
+    HeuristicEval::setSearchThreads(0);
+
+    QCOMPARE(warm.centipawns, cold.centipawns);
+    QCOMPARE(warmAgain.centipawns, cold.centipawns);
+    QCOMPARE(warm.mateIn.has_value(), cold.mateIn.has_value());
+    if (cold.mateIn.has_value()) {
+        QCOMPARE(*warm.mateIn, *cold.mateIn);
+        QCOMPARE(*warmAgain.mateIn, *cold.mateIn);
+    }
+
+    // Mate scores survive the table too, adjusted for the distance.
+    Rules mateInOne;
+    QVERIFY(mateInOne.loadFen(QStringLiteral(
+        "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4")));
+    HeuristicEval::clearSearchCache();
+    const auto mateCold = HeuristicEval::search(mateInOne, 5, 2);
+    const auto mateWarm = HeuristicEval::search(mateInOne, 5, 2);
+    HeuristicEval::clearSearchCache();
+
+    QVERIFY(mateCold.mateIn.has_value());
+    QCOMPARE(*mateCold.mateIn, 1);
+    QCOMPARE(mateWarm.centipawns, mateCold.centipawns);
+    QVERIFY(mateWarm.mateIn.has_value());
+    QCOMPARE(*mateWarm.mateIn, 1);
 }
 
 void HeuristicEvalTest::testEvalParamsDrivePieceValues() {

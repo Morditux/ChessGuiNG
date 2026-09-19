@@ -89,10 +89,25 @@ public:
     };
 
     // Active weights. Configure them before starting a search: reading is not
-    // synchronised against a concurrent setParams() call.
+    // synchronised against a concurrent setParams() call. Replacing the weights
+    // also drops the cached search results, which were computed with them.
     [[nodiscard]] static const EvalParams &params();
     static void setParams(const EvalParams &params);
     static void resetParams();
+
+    // Upper bound on the root workers a search may use. Zero (the default)
+    // derives the number from the hardware and the CHESSGUI_EVAL_THREADS
+    // environment variable, one disables the parallel search so its result no
+    // longer depends on thread scheduling, and any larger value caps the
+    // parallelism without creating more threads than the pool has.
+    static void setSearchThreads(int threads);
+    [[nodiscard]] static int searchThreads();
+
+    // Drops the persistent transposition table that `search()` reuses between
+    // calls. setParams() and resetParams() already do this; it is exposed so a
+    // benchmark can compare a cold search with a warm one. Like them, it must
+    // not run while a search is in flight on another thread.
+    static void clearSearchCache();
 
     // Outcome of a shallow search around the classical evaluation. The score
     // is always from White's perspective; mateIn is in full moves, positive
