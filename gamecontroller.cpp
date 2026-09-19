@@ -23,6 +23,9 @@ namespace {
     // An engine is assumed to accept a draw offer while it is not ahead by
     // more than half a pawn in the current position.
     constexpr int DrawAcceptanceThresholdCp = 50;
+    // Time the heuristic search behind that decision may take: the answer is
+    // needed now, and a deep evaluation setting must not freeze the interface.
+    constexpr int DrawDecisionBudgetMs = 50;
 }
 
 GameController::GameController(QObject *parent)
@@ -805,9 +808,13 @@ void GameController::refreshEvaluation() {
 }
 
 // Centipawns of the heuristic search at the configured evaluation depth, used
-// where only the score (and not the mate distance) is needed.
+// where only the score (and not the mate distance) is needed. The caller has to
+// answer now (the draw offer), so a short time budget keeps a deep setting from
+// freezing the interface; the search then reports its best completed depth.
 int GameController::evaluationCentipawns(const Rules &rules) const {
-    return HeuristicEval::search(rules, evaluationDepth_).centipawns;
+    HeuristicEval::SearchLimits limits;
+    limits.maxMilliseconds = DrawDecisionBudgetMs;
+    return HeuristicEval::search(rules, evaluationDepth_, 2, limits).centipawns;
 }
 
 void GameController::updateEvaluation() {

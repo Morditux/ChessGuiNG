@@ -92,6 +92,7 @@ private slots:
     void testSearchCacheIsReusedConsistently();
     void testEvaluationCacheIsTransparent();
     void testEvaluationCacheFollowsTheParams();
+    void testReferenceScores();
     void testEvalParamsDrivePieceValues();
     void testMaterialDrawsFollowRules();
     void testFiftyMoveAndRepetitionDraws();
@@ -930,6 +931,39 @@ void HeuristicEvalTest::testEvaluationCacheFollowsTheParams() {
     QVERIFY2(tunedScore > before,
              qPrintable(QStringLiteral("%1 vs %2").arg(tunedScore).arg(before)));
     QCOMPARE(restored, before);
+}
+
+void HeuristicEvalTest::testReferenceScores() {
+    // The exact score of a spread of positions, so that a refactor of the
+    // evaluation cannot change it silently. The values were taken from the
+    // implementation and have to be updated on purpose when a weight or a term
+    // really changes.
+    struct Reference {
+        const char *fen;
+        int centipawns;
+    };
+    const Reference references[] = {
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 10},
+        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -32},
+        {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
+         -HeuristicEval::MateScore},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -42},
+        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 154},
+        {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 200},
+        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 142},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 292},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 138},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -62},
+        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 288},
+    };
+
+    for (const Reference &reference : references) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(reference.fen)),
+                 reference.fen);
+        QCOMPARE(HeuristicEval::evaluateCentipawns(rules), reference.centipawns);
+    }
 }
 
 QTEST_MAIN(HeuristicEvalTest)

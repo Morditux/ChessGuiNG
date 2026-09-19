@@ -223,7 +223,8 @@ public:
         int quiescenceDepth = 2);
 
     // The same search under explicit limits, which stop it early; the result
-    // then keeps the last iteration that completed and reports `aborted`.
+    // then keeps the last iteration that completed and reports `aborted`. A
+    // depth above the search horizon is clamped to it rather than refused.
     [[nodiscard]] static SearchResult search(const Rules &rules, int depth,
                                              int quiescenceDepth,
                                              const SearchLimits &limits);

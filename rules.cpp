@@ -73,7 +73,7 @@ void Rules::reset() {
     recomputeKingPositions();
     recomputeHash();
     repetitionHistory_.clear();
-    repetitionHistory_.push_back(positionKey());
+    repetitionHistory_.push_back(repetitionKey());
 }
 
 std::optional<Rules::Piece> Rules::pieceAt(Position position) const {
@@ -140,7 +140,7 @@ bool Rules::tryMove(const Move &move) {
     hash_ ^= zobristSideKey();
     hash_ ^= enPassantHash();
     if (trackRepetition_) {
-        repetitionHistory_.push_back(positionKey());
+        repetitionHistory_.push_back(repetitionKey());
     }
     return true;
 }
@@ -191,7 +191,7 @@ bool Rules::isThreefoldRepetition() const {
         return false;
     }
 
-    const QString currentKey = positionKey();
+    const quint64 currentKey = repetitionKey();
     return std::count(repetitionHistory_.begin(), repetitionHistory_.end(),
                       currentKey) >= 3;
 }
@@ -278,18 +278,14 @@ bool Rules::isInsufficientMaterial() const {
     return classifyMaterialDraw(counts).dead;
 }
 
-QString Rules::positionKey() const {
-    QStringList fields = toFen().split(QChar(' '));
-    if (fields.size() < 4) {
-        return toFen();
-    }
-
+quint64 Rules::repetitionKey() const {
     // FIDE repetition compares the same legal moves: an en passant target is
-    // only part of the position when the capture is actually available.
-    if (!enPassantCaptureAvailable()) {
-        fields[3] = QStringLiteral("-");
+    // only part of the position when the capture is actually available, and the
+    // key follows the same rule by dropping its contribution.
+    if (enPassantCaptureAvailable()) {
+        return hash_;
     }
-    return fields.mid(0, 4).join(QChar(' '));
+    return hash_ ^ enPassantHash();
 }
 
 bool Rules::enPassantCaptureAvailable() const {
@@ -953,7 +949,7 @@ bool Rules::loadFen(const QString &fen) {
     kingPosition_[1] = blackKing;
     recomputeHash();
     repetitionHistory_.clear();
-    repetitionHistory_.push_back(positionKey());
+    repetitionHistory_.push_back(repetitionKey());
     return true;
 }
 
@@ -1599,6 +1595,9 @@ Rules Rules::detachedCopy() const {
 int Rules::generatePseudoLegalMoves(Move *moves, int capacity) const {
     int count = 0;
     const auto add = [&](const Move &move) {
+        // The callers size their buffers for the worst case; a debug build
+        // should shout rather than silently drop moves.
+        Q_ASSERT(count < capacity);
         if (count < capacity) {
             moves[count++] = move;
         }
@@ -1871,7 +1870,7 @@ bool Rules::makeMove(const Move &move, Undo &undo) {
     hash_ ^= enPassantHash();
 
     if (trackRepetition_) {
-        repetitionHistory_.push_back(positionKey());
+        repetitionHistory_.push_back(repetitionKey());
         undo.pushedRepetition = true;
     }
 

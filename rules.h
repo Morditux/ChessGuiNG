@@ -176,7 +176,8 @@ private:
     int fullmoveNumber_ = 1;
     bool trackRepetition_ = true;
     quint64 hash_ = 0;
-    std::vector<QString> repetitionHistory_;
+    // Zobrist keys of the repetition-relevant positions, newest last.
+    std::vector<quint64> repetitionHistory_;
     // Cached king squares indexed by Color (White = 0, Black = 1), kept in
     // sync by applyMoveUnchecked/unmakeMove so isInCheck never scans the board.
     std::array<Position, 2> kingPosition_{{{-1, -1}, {-1, -1}}};
@@ -189,7 +190,9 @@ private:
     [[nodiscard]] static Color opposite(Color color);
     [[nodiscard]] static int colorIndex(Color color);
     void recomputeKingPositions();
-    [[nodiscard]] QString positionKey() const;
+    // Zobrist key of the position as the repetition rule sees it: the en
+    // passant target only counts when the capture is actually available.
+    [[nodiscard]] quint64 repetitionKey() const;
     // Zobrist contributions recomputed from the board; `hash_` is updated
     // incrementally on every move.
     void recomputeHash();

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -192,6 +193,10 @@ struct BoardAnalysis {
     int pieceCount = 0;
     std::array<int, 8> whitePawnCounts{};
     std::array<int, 8> blackPawnCounts{};
+    // Bit `row` of a file's mask is set when a pawn of that colour stands on
+    // that row, which turns "pawns ahead of this square" into a mask test.
+    std::array<quint8, 8> whitePawnRows{};
+    std::array<quint8, 8> blackPawnRows{};
     // Least advanced pawn per file: greatest row for White (-1 when empty),
     // smallest row for Black (8 when empty).
     std::array<int, 8> whiteRearRows{};
@@ -228,6 +233,9 @@ struct AttackInfo {
     AttackMap pawnSquares{};
     // Cheapest attacker value per square (0 when the square is not attacked).
     ValueMap cheapest{};
+    // Mobility of this colour's pieces, already weighted with the tapered
+    // per-piece weights: the attack walk is the same walk that counts it.
+    TaperedScore mobility{};
 };
 
 constexpr int signFor(Rules::Color color) {
@@ -338,12 +346,14 @@ BoardAnalysis analyzeBoard(const Board &board) {
                 ++analysis.pawnsOnSquareColour[index][squareColour];
                 if (piece->color == Rules::Color::White) {
                     ++analysis.whitePawnCounts[column];
+                    analysis.whitePawnRows[column] |= static_cast<quint8>(1 << row);
                     analysis.whiteRearRows[column] =
                         std::max(analysis.whiteRearRows[column], row);
                     analysis.whiteFrontRows[column] =
                         std::min(analysis.whiteFrontRows[column], row);
                 } else {
                     ++analysis.blackPawnCounts[column];
+                    analysis.blackPawnRows[column] |= static_cast<quint8>(1 << row);
                     analysis.blackRearRows[column] =
                         std::min(analysis.blackRearRows[column], row);
                     analysis.blackFrontRows[column] =
@@ -411,218 +421,174 @@ BoardAnalysis analyzeBoard(const Board &board) {
     return analysis;
 }
 
-void markSlidingAttacks(AttackInfo &info, const Board &board, int row,
-                        int column, const std::array<Offset, 4> &directions,
-                        int value) {
-    for (const auto &direction : directions) {
-        int targetRow = row + direction.rowDelta;
-        int targetColumn = column + direction.columnDelta;
-        while (isInside(targetRow, targetColumn)) {
-            info.squares[targetRow][targetColumn] = true;
-            if (info.cheapest[targetRow][targetColumn] == 0 ||
-                value < info.cheapest[targetRow][targetColumn]) {
-                info.cheapest[targetRow][targetColumn] = value;
-            }
-            if (board[targetRow][targetColumn].has_value()) {
-                break;
-            }
-            targetRow += direction.rowDelta;
-            targetColumn += direction.columnDelta;
-        }
+void addCheapestAttacker(AttackInfo &info, int row, int column, int value) {
+    if (info.cheapest[row][column] == 0 || value < info.cheapest[row][column]) {
+        info.cheapest[row][column] = value;
     }
 }
 
-// Fills the attack maps of both colours in a single board pass. Attacks never
-// cross colours, so the interleaving order does not change the result.
+bool occupiedByColour(const Board &board, Rules::Color color, int row, int column) {
+    const auto &target = board[row][column];
+    return target.has_value() && target->color == color;
+}
+
+// Marks the attacks of both colours and, in the same walk, counts how many
+// squares each piece can move to. Walking the rays once for both is worth it:
+// the attack map and the mobility area ask almost the same question.
 void buildAttackInfo(const Board &board, AttackInfo &white, AttackInfo &black) {
+    // The pawns come first: their attacks define the area every other piece
+    // excludes, and their own mobility does not depend on it.
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
             const auto &piece = board[row][column];
-            if (!piece.has_value()) {
+            if (!piece.has_value() ||
+                piece->type != Rules::PieceType::Pawn) {
                 continue;
             }
 
             const bool isWhite = piece->color == Rules::Color::White;
             AttackInfo &info = isWhite ? white : black;
-
-            switch (piece->type) {
-            case Rules::PieceType::Pawn: {
-                const int pawnDirection = forwardDirection(piece->color);
-                for (const int columnDelta : {-1, 1}) {
-                    const int targetRow = row + pawnDirection;
-                    const int targetColumn = column + columnDelta;
-                    if (isInside(targetRow, targetColumn)) {
-                        info.squares[targetRow][targetColumn] = true;
-                        info.pawnSquares[targetRow][targetColumn] = true;
-                        if (info.cheapest[targetRow][targetColumn] == 0 ||
-                            P.pawnValue < info.cheapest[targetRow][targetColumn]) {
-                            info.cheapest[targetRow][targetColumn] = P.pawnValue;
-                        }
-                    }
+            const int pawnDirection = forwardDirection(piece->color);
+            for (const int columnDelta : {-1, 1}) {
+                const int targetRow = row + pawnDirection;
+                const int targetColumn = column + columnDelta;
+                if (isInside(targetRow, targetColumn)) {
+                    info.squares[targetRow][targetColumn] = true;
+                    info.pawnSquares[targetRow][targetColumn] = true;
+                    addCheapestAttacker(info, targetRow, targetColumn,
+                                        P.pawnValue);
                 }
-                break;
             }
-            case Rules::PieceType::Knight:
-            case Rules::PieceType::King: {
+
+            const int startingRow = isWhite ? 6 : 1;
+            const int forwardRow = row + pawnDirection;
+            int moves = 0;
+            if (isInside(forwardRow, column) &&
+                !board[forwardRow][column].has_value()) {
+                ++moves;
+                const int doubleRow = row + 2 * pawnDirection;
+                if (row == startingRow &&
+                    !board[doubleRow][column].has_value()) {
+                    ++moves;
+                }
+            }
+            for (const int columnDelta : {-1, 1}) {
+                const int targetColumn = column + columnDelta;
+                if (!isInside(forwardRow, targetColumn)) {
+                    continue;
+                }
+                const auto &target = board[forwardRow][targetColumn];
+                if (target.has_value() && target->color != piece->color) {
+                    ++moves;
+                }
+            }
+            info.mobility += moves * mobilityWeight(piece->type);
+        }
+    }
+
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 0; column < 8; ++column) {
+            const auto &piece = board[row][column];
+            if (!piece.has_value() ||
+                piece->type == Rules::PieceType::Pawn) {
+                continue;
+            }
+
+            const bool isWhite = piece->color == Rules::Color::White;
+            AttackInfo &info = isWhite ? white : black;
+            const AttackMap &enemyPawnAttacks =
+                isWhite ? black.pawnSquares : white.pawnSquares;
+            int moves = 0;
+
+            if (piece->type == Rules::PieceType::Knight ||
+                piece->type == Rules::PieceType::King) {
                 const bool knight = piece->type == Rules::PieceType::Knight;
                 const auto &offsets = knight ? KnightOffsets : KingOffsets;
-                const int value = knight ? P.knightValue : KingAttackerValue;
+                const int value =
+                    knight ? P.knightValue : KingAttackerValue;
                 for (const auto &offset : offsets) {
                     const int targetRow = row + offset.rowDelta;
                     const int targetColumn = column + offset.columnDelta;
-                    if (isInside(targetRow, targetColumn)) {
-                        info.squares[targetRow][targetColumn] = true;
-                        if (info.cheapest[targetRow][targetColumn] == 0 ||
-                            value < info.cheapest[targetRow][targetColumn]) {
-                            info.cheapest[targetRow][targetColumn] = value;
-                        }
+                    if (!isInside(targetRow, targetColumn)) {
+                        continue;
+                    }
+                    info.squares[targetRow][targetColumn] = true;
+                    addCheapestAttacker(info, targetRow, targetColumn, value);
+                    if (!enemyPawnAttacks[targetRow][targetColumn] &&
+                        !occupiedByColour(board, piece->color, targetRow,
+                                          targetColumn)) {
+                        ++moves;
                     }
                 }
-                break;
-            }
-            case Rules::PieceType::Bishop:
-                markSlidingAttacks(info, board, row, column, BishopDirections,
-                                   P.bishopValue);
-                break;
-            case Rules::PieceType::Rook:
-                markSlidingAttacks(info, board, row, column, RookDirections,
-                                   P.rookValue);
-                break;
-            case Rules::PieceType::Queen:
-                markSlidingAttacks(info, board, row, column, BishopDirections,
-                                   P.queenValue);
-                markSlidingAttacks(info, board, row, column, RookDirections,
-                                   P.queenValue);
-                break;
-            case Rules::PieceType::None:
-                break;
-            }
-        }
-    }
-}
-
-int countSliderMoves(const Board &board, const PieceOnBoard &piece,
-                     const std::array<Offset, 4> &directions,
-                     const AttackMap &enemyPawnAttacks) {
-    int moves = 0;
-    for (const auto &direction : directions) {
-        int targetRow = piece.row + direction.rowDelta;
-        int targetColumn = piece.column + direction.columnDelta;
-        while (isInside(targetRow, targetColumn)) {
-            const bool attackedByPawn = enemyPawnAttacks[targetRow][targetColumn];
-            const auto &target = board[targetRow][targetColumn];
-            if (!target.has_value()) {
-                if (!attackedByPawn) {
-                    ++moves;
-                }
             } else {
-                if (target->color != piece.color && !attackedByPawn) {
-                    ++moves;
+                const bool diagonal =
+                    piece->type == Rules::PieceType::Bishop ||
+                    piece->type == Rules::PieceType::Queen;
+                const bool straight =
+                    piece->type == Rules::PieceType::Rook ||
+                    piece->type == Rules::PieceType::Queen;
+                const int value = piece->type == Rules::PieceType::Bishop
+                                      ? P.bishopValue
+                                  : piece->type == Rules::PieceType::Rook
+                                      ? P.rookValue
+                                      : P.queenValue;
+
+                const auto walk = [&](const std::array<Offset, 4> &directions) {
+                    for (const auto &direction : directions) {
+                        int targetRow = row + direction.rowDelta;
+                        int targetColumn = column + direction.columnDelta;
+                        while (isInside(targetRow, targetColumn)) {
+                            info.squares[targetRow][targetColumn] = true;
+                            addCheapestAttacker(info, targetRow, targetColumn,
+                                                value);
+                            const auto &target = board[targetRow][targetColumn];
+                            if (!target.has_value()) {
+                                if (!enemyPawnAttacks[targetRow][targetColumn]) {
+                                    ++moves;
+                                }
+                                targetRow += direction.rowDelta;
+                                targetColumn += direction.columnDelta;
+                                continue;
+                            }
+                            if (target->color != piece->color &&
+                                !enemyPawnAttacks[targetRow][targetColumn]) {
+                                ++moves;
+                            }
+                            break;
+                        }
+                    }
+                };
+
+                if (diagonal) {
+                    walk(BishopDirections);
                 }
-                break;
+                if (straight) {
+                    walk(RookDirections);
+                }
             }
-            targetRow += direction.rowDelta;
-            targetColumn += direction.columnDelta;
+
+            info.mobility += moves * mobilityWeight(piece->type);
         }
     }
-    return moves;
 }
 
-int pieceMobility(const Board &board, const PieceOnBoard &piece,
-                  const AttackMap &enemyPawnAttacks) {
-    const auto isOwnPiece = [&board, &piece](int row, int column) {
-        const auto &target = board[row][column];
-        return target.has_value() && target->color == piece.color;
-    };
 
-    int moves = 0;
-    switch (piece.type) {
-    case Rules::PieceType::Knight:
-        for (const auto &offset : KnightOffsets) {
-            const int row = piece.row + offset.rowDelta;
-            const int column = piece.column + offset.columnDelta;
-            if (isInside(row, column) && !isOwnPiece(row, column) &&
-                !enemyPawnAttacks[row][column]) {
-                ++moves;
-            }
-        }
-        break;
-    case Rules::PieceType::King:
-        for (const auto &offset : KingOffsets) {
-            const int row = piece.row + offset.rowDelta;
-            const int column = piece.column + offset.columnDelta;
-            if (isInside(row, column) && !isOwnPiece(row, column) &&
-                !enemyPawnAttacks[row][column]) {
-                ++moves;
-            }
-        }
-        break;
-    case Rules::PieceType::Bishop:
-        moves += countSliderMoves(board, piece, BishopDirections,
-                                  enemyPawnAttacks);
-        break;
-    case Rules::PieceType::Rook:
-        moves += countSliderMoves(board, piece, RookDirections,
-                                  enemyPawnAttacks);
-        break;
-    case Rules::PieceType::Queen:
-        moves += countSliderMoves(board, piece, BishopDirections,
-                                  enemyPawnAttacks);
-        moves += countSliderMoves(board, piece, RookDirections,
-                                  enemyPawnAttacks);
-        break;
-    case Rules::PieceType::Pawn: {
-        const int direction = forwardDirection(piece.color);
-        const int startingRow = piece.color == Rules::Color::White ? 6 : 1;
-        const int forwardRow = piece.row + direction;
-        if (isInside(forwardRow, piece.column) &&
-            !board[forwardRow][piece.column].has_value()) {
-            ++moves;
-            const int doubleRow = piece.row + 2 * direction;
-            if (piece.row == startingRow &&
-                !board[doubleRow][piece.column].has_value()) {
-                ++moves;
-            }
-        }
-        for (const int columnDelta : {-1, 1}) {
-            const int column = piece.column + columnDelta;
-            if (!isInside(forwardRow, column)) {
-                continue;
-            }
-            const auto &target = board[forwardRow][column];
-            if (target.has_value() && target->color != piece.color) {
-                ++moves;
-            }
-        }
-        break;
-    }
-    case Rules::PieceType::None:
-        break;
-    }
-    return moves;
-}
-
-TaperedScore evaluateMaterial(const BoardAnalysis &analysis) {
-    TaperedScore score;
-    for (int index = 0; index < analysis.pieceCount; ++index) {
-        const PieceOnBoard &piece = analysis.pieces[index];
-        score += signFor(piece.color) *
-                 bothPhases(HeuristicEval::pieceValue(piece.type));
-    }
-    return score;
-}
-
-TaperedScore evaluatePlacement(const BoardAnalysis &analysis) {
-    TaperedScore score;
+// Material and placement of every piece, in a single pass: they read the same
+// piece list and the same square.
+void evaluateMaterialAndPlacement(const BoardAnalysis &analysis,
+                                  TaperedScore *material,
+                                  TaperedScore *placement) {
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         const int sign = signFor(piece.color);
+        *material += sign * bothPhases(HeuristicEval::pieceValue(piece.type));
+
         const int square = relativeSquare(piece.color, piece.row, piece.column);
         if (piece.type == Rules::PieceType::King) {
-            score += sign * TaperedScore{KingMiddleGamePST[square],
-                                         KingEndGamePST[square]};
+            *placement += sign * TaperedScore{KingMiddleGamePST[square],
+                                              KingEndGamePST[square]};
         } else if (const auto *pst = pieceSquareTable(piece.type)) {
-            score += sign * bothPhases((*pst)[square]);
+            *placement += sign * bothPhases((*pst)[square]);
         }
 
         if (piece.type == Rules::PieceType::Rook) {
@@ -633,28 +599,26 @@ TaperedScore evaluatePlacement(const BoardAnalysis &analysis) {
                 piece.color == Rules::Color::White ? analysis.blackPawnCounts
                                                    : analysis.whitePawnCounts;
             if (ownPawns[piece.column] == 0) {
-                score += sign * (enemyPawns[piece.column] == 0
-                                     ? TaperedScore{P.rookOpenFileMG,
-                                                    P.rookOpenFileEG}
-                                     : TaperedScore{P.rookSemiOpenFileMG,
-                                                    P.rookSemiOpenFileEG});
+                *placement += sign * (enemyPawns[piece.column] == 0
+                                          ? TaperedScore{P.rookOpenFileMG,
+                                                         P.rookOpenFileEG}
+                                          : TaperedScore{P.rookSemiOpenFileMG,
+                                                         P.rookSemiOpenFileEG});
             }
             if (relativeRank(piece.color, piece.row) == 7) {
-                score += sign * TaperedScore{P.rookSeventhRankMG,
-                                             P.rookSeventhRankEG};
+                *placement += sign * TaperedScore{P.rookSeventhRankMG,
+                                                  P.rookSeventhRankEG};
             }
         }
     }
 
     const TaperedScore bishopPair{P.bishopPairMG, P.bishopPairEG};
     if (analysis.bishopCounts[0] >= 2) {
-        score += bishopPair;
+        *placement += bishopPair;
     }
     if (analysis.bishopCounts[1] >= 2) {
-        score -= bishopPair;
+        *placement -= bishopPair;
     }
-
-    return score;
 }
 
 bool isPassedPawn(const BoardAnalysis &analysis, const PieceOnBoard &pawn) {
@@ -675,18 +639,21 @@ bool isPassedPawn(const BoardAnalysis &analysis, const PieceOnBoard &pawn) {
 
 // Counts pawns of `color` standing in the span (own and adjacent files) that
 // lies ahead of `row` in the given direction.
-int countPawnsAhead(const Board &board, Rules::Color color, int row,
+int countPawnsAhead(const BoardAnalysis &analysis, Rules::Color color, int row,
                     int column, int direction) {
+    const auto &pawnRows =
+        color == Rules::Color::White ? analysis.whitePawnRows
+                                     : analysis.blackPawnRows;
+    // Rows strictly ahead of `row` in the direction of play.
+    const int ahead = direction < 0
+                          ? (row == 0 ? 0 : (1 << row) - 1)
+                          : (row >= 7 ? 0
+                                      : 0xFF & ~((1 << (row + 1)) - 1));
     int count = 0;
     for (int file = std::max(0, column - 1); file <= std::min(7, column + 1);
          ++file) {
-        for (int r = row + direction; isInside(r, file); r += direction) {
-            const auto &piece = board[r][file];
-            if (piece.has_value() && piece->type == Rules::PieceType::Pawn &&
-                piece->color == color) {
-                ++count;
-            }
-        }
+        count += std::popcount(
+            static_cast<unsigned>(pawnRows[file] & static_cast<quint8>(ahead)));
     }
     return count;
 }
@@ -708,7 +675,9 @@ bool hasRookBehindPawn(const Board &board, const PieceOnBoard &pawn,
 }
 
 TaperedScore evaluatePawnStructure(const Board &board,
-                                   const BoardAnalysis &analysis) {
+                                   const BoardAnalysis &analysis,
+                                   const AttackMap &whitePawnAttacks,
+                                   const AttackMap &blackPawnAttacks) {
     TaperedScore score;
 
     for (const Rules::Color color :
@@ -742,23 +711,14 @@ TaperedScore evaluatePawnStructure(const Board &board,
 
         const int sign = signFor(piece.color);
         const int direction = forwardDirection(piece.color);
-        const int supportRow = piece.row - direction;
 
-        bool supportedByPawn = false;
-        if (isInside(supportRow, piece.column)) {
-            for (const int columnDelta : {-1, 1}) {
-                const int column = piece.column + columnDelta;
-                if (!isInside(supportRow, column)) {
-                    continue;
-                }
-                const auto &neighbour = board[supportRow][column];
-                if (neighbour.has_value() &&
-                    neighbour->type == Rules::PieceType::Pawn &&
-                    neighbour->color == piece.color) {
-                    supportedByPawn = true;
-                }
-            }
-        }
+        // A friendly pawn attacks the square the pawn stands on exactly when
+        // it is defended by one.
+        const AttackMap &friendlyPawnAttacks =
+            piece.color == Rules::Color::White ? whitePawnAttacks
+                                               : blackPawnAttacks;
+        const bool supportedByPawn =
+            friendlyPawnAttacks[piece.row][piece.column];
         if (supportedByPawn) {
             score += sign * TaperedScore{P.supportedPawnBonusMG,
                                          P.supportedPawnBonusEG};
@@ -854,10 +814,11 @@ TaperedScore evaluatePawnStructure(const Board &board,
         } else {
             // A candidate is a non-passed pawn whose span contains at least as
             // many friendly pawns as enemy ones.
-            const int ownAhead = countPawnsAhead(board, piece.color, piece.row,
-                                                 piece.column, direction);
+            const int ownAhead = countPawnsAhead(analysis, piece.color,
+                                                 piece.row, piece.column,
+                                                 direction);
             const int enemyAhead =
-                countPawnsAhead(board,
+                countPawnsAhead(analysis,
                                 piece.color == Rules::Color::White
                                     ? Rules::Color::Black
                                     : Rules::Color::White,
@@ -875,29 +836,15 @@ TaperedScore evaluatePawnStructure(const Board &board,
     return score;
 }
 
-TaperedScore evaluateMobility(const Board &board, const BoardAnalysis &analysis,
-                              const AttackMap &whitePawnAttacks,
-                              const AttackMap &blackPawnAttacks) {
-    TaperedScore score;
-    for (int index = 0; index < analysis.pieceCount; ++index) {
-        const PieceOnBoard &piece = analysis.pieces[index];
-        const AttackMap &enemyPawnAttacks =
-            piece.color == Rules::Color::White ? blackPawnAttacks
-                                               : whitePawnAttacks;
-        score += signFor(piece.color) *
-                 (pieceMobility(board, piece, enemyPawnAttacks) *
-                  mobilityWeight(piece.type));
-    }
-    return score;
-}
 
-TaperedScore evaluateThreats(const BoardAnalysis &analysis,
-                            const AttackInfo &white, const AttackInfo &black) {
-    TaperedScore score;
+// Threats, outposts and the bad-bishop penalty in one pass over the pieces:
+// they all ask a question about the piece that is already in hand.
+void evaluatePieceTerms(const BoardAnalysis &analysis, const AttackInfo &white,
+                        const AttackInfo &black, TaperedScore *threats,
+                        TaperedScore *outposts, TaperedScore *badBishops) {
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
-        if (piece.type == Rules::PieceType::King ||
-            piece.type == Rules::PieceType::None) {
+        if (piece.type == Rules::PieceType::None) {
             continue;
         }
 
@@ -906,72 +853,43 @@ TaperedScore evaluateThreats(const BoardAnalysis &analysis,
         const AttackInfo &own = isWhite ? white : black;
         const int sign = signFor(piece.color);
 
-        if (!enemy.squares[piece.row][piece.column]) {
-            continue;
+        if (piece.type == Rules::PieceType::Bishop) {
+            const int colour = colorIndex(piece.color);
+            const int squareColour = (piece.row + piece.column) % 2;
+            const int blockers =
+                analysis.pawnsOnSquareColour[colour][squareColour];
+            const int penalty =
+                std::min(P.badBishopCap, blockers * P.badBishopPenalty);
+            *badBishops -= sign * bothPhases(penalty);
         }
 
-        const int value = HeuristicEval::pieceValue(piece.type);
-        if (!own.squares[piece.row][piece.column]) {
-            // Attacked and undefended: the opponent can simply take it.
-            score -= sign * bothPhases(value / P.hangingPieceDivisor);
-        } else {
-            const int cheapest = enemy.cheapest[piece.row][piece.column];
-            if (cheapest != 0 && cheapest + P.cheapAttackerMargin < value) {
-                score -=
-                    sign * bothPhases((value - cheapest) / P.cheapAttackerDivisor);
+        if (piece.type != Rules::PieceType::King &&
+            enemy.squares[piece.row][piece.column]) {
+            const int value = HeuristicEval::pieceValue(piece.type);
+            if (!own.squares[piece.row][piece.column]) {
+                // Attacked and undefended: the opponent can simply take it.
+                *threats -= sign * bothPhases(value / P.hangingPieceDivisor);
+            } else {
+                const int cheapest = enemy.cheapest[piece.row][piece.column];
+                if (cheapest != 0 && cheapest + P.cheapAttackerMargin < value) {
+                    *threats -= sign * bothPhases((value - cheapest) /
+                                                  P.cheapAttackerDivisor);
+                }
             }
         }
+
+        if ((piece.type == Rules::PieceType::Knight ||
+             piece.type == Rules::PieceType::Bishop) &&
+            relativeRank(piece.color, piece.row) >= 4 &&
+            own.pawnSquares[piece.row][piece.column] &&
+            !enemy.pawnSquares[piece.row][piece.column]) {
+            const TaperedScore bonus =
+                piece.type == Rules::PieceType::Knight
+                    ? TaperedScore{P.outpostKnightMG, P.outpostKnightEG}
+                    : TaperedScore{P.outpostBishopMG, P.outpostBishopEG};
+            *outposts += sign * bonus;
+        }
     }
-    return score;
-}
-
-TaperedScore evaluateOutposts(const BoardAnalysis &analysis,
-                             const AttackInfo &white,
-                             const AttackInfo &black) {
-    TaperedScore score;
-    for (int index = 0; index < analysis.pieceCount; ++index) {
-        const PieceOnBoard &piece = analysis.pieces[index];
-        if (piece.type != Rules::PieceType::Knight &&
-            piece.type != Rules::PieceType::Bishop) {
-            continue;
-        }
-
-        const bool isWhite = piece.color == Rules::Color::White;
-        const AttackInfo &own = isWhite ? white : black;
-        const AttackInfo &enemy = isWhite ? black : white;
-        if (relativeRank(piece.color, piece.row) < 4) {
-            continue;
-        }
-        if (!own.pawnSquares[piece.row][piece.column] ||
-            enemy.pawnSquares[piece.row][piece.column]) {
-            continue;
-        }
-
-        const TaperedScore bonus =
-            piece.type == Rules::PieceType::Knight
-                ? TaperedScore{P.outpostKnightMG, P.outpostKnightEG}
-                : TaperedScore{P.outpostBishopMG, P.outpostBishopEG};
-        score += signFor(piece.color) * bonus;
-    }
-    return score;
-}
-
-TaperedScore evaluateBadBishops(const BoardAnalysis &analysis) {
-    TaperedScore score;
-    for (int index = 0; index < analysis.pieceCount; ++index) {
-        const PieceOnBoard &piece = analysis.pieces[index];
-        if (piece.type != Rules::PieceType::Bishop) {
-            continue;
-        }
-        const int colour = colorIndex(piece.color);
-        const int squareColour = (piece.row + piece.column) % 2;
-        const int blockers =
-            analysis.pawnsOnSquareColour[colour][squareColour];
-        const int penalty =
-            std::min(P.badBishopCap, blockers * P.badBishopPenalty);
-        score -= signFor(piece.color) * bothPhases(penalty);
-    }
-    return score;
 }
 
 bool hasClearPath(const Board &board, const PieceOnBoard &first,
@@ -1326,20 +1244,23 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
 
     // Every term is computed once, both for the total and for the breakdown,
     // and tapered at the end so that the terms weigh in the phase together.
-    const TaperedScore material = evaluateMaterial(analysis);
-    const TaperedScore placement = evaluatePlacement(analysis);
-    const TaperedScore pawns = evaluatePawnStructure(board, analysis);
-    const TaperedScore mobility =
-        evaluateMobility(board, analysis, attacksByWhite.pawnSquares,
-                         attacksByBlack.pawnSquares);
+    TaperedScore material;
+    TaperedScore placement;
+    evaluateMaterialAndPlacement(analysis, &material, &placement);
+    const TaperedScore pawns =
+        evaluatePawnStructure(board, analysis, attacksByWhite.pawnSquares,
+                              attacksByBlack.pawnSquares);
+    // Collected by the attack walk, from each colour's point of view.
+    TaperedScore mobility = attacksByWhite.mobility;
+    mobility -= attacksByBlack.mobility;
     const TaperedScore kingSafety =
         evaluateKingSafety(board, analysis, attacksByWhite.squares,
                            attacksByBlack.squares);
-    const TaperedScore threats =
-        evaluateThreats(analysis, attacksByWhite, attacksByBlack);
-    const TaperedScore outposts =
-        evaluateOutposts(analysis, attacksByWhite, attacksByBlack);
-    const TaperedScore badBishops = evaluateBadBishops(analysis);
+    TaperedScore threats;
+    TaperedScore outposts;
+    TaperedScore badBishops;
+    evaluatePieceTerms(analysis, attacksByWhite, attacksByBlack, &threats,
+                       &outposts, &badBishops);
     const TaperedScore connectedRooks = evaluateConnectedRooks(board, analysis);
     const TaperedScore mopUp = evaluateEndgameMopUp(analysis);
     const TaperedScore tempo =
@@ -2050,14 +1971,15 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         }
         anyLegal = true;
         // A check may start a forcing line, so it is never reduced.
-        const bool givesCheck = rules.isInCheck(rules.currentPlayer());
-
         // Late move reductions: quiet moves far down the list are searched a
-        // ply shallower and only re-searched in full when they beat alpha.
+        // ply shallower and only re-searched in full when they beat alpha. The
+        // check test is part of the condition, so it is only paid for the moves
+        // that could actually be reduced.
         int childDepth = depth - 1;
         int reduction = 0;
-        if (depth >= 3 && !tactical && !inCheck && !givesCheck && i >= 3 &&
-            alpha > -MateThreshold && beta < MateThreshold) {
+        if (depth >= 3 && !tactical && !inCheck && i >= 3 &&
+            alpha > -MateThreshold && beta < MateThreshold &&
+            !rules.isInCheck(rules.currentPlayer())) {
             reduction = i >= 8 ? 2 : 1;
             if (reduction > childDepth) {
                 reduction = childDepth;
@@ -2524,8 +2446,10 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
     SearchResult result;
 
     const Rules::Color side = rules.currentPlayer();
-    depth = std::max(0, depth);
-    quiescenceDepth = std::max(0, quiescenceDepth);
+    // The horizon caps the search whatever the caller asks for, so a depth
+    // beyond it is clamped instead of silently stopping at `MaxSearchPly`.
+    depth = std::clamp(depth, 0, MaxSearchPly);
+    quiescenceDepth = std::clamp(quiescenceDepth, 0, MaxSearchPly);
 
     Rules::Move moves[MaxMoves];
     const int moveCount = rules.generatePseudoLegalMoves(moves, MaxMoves);

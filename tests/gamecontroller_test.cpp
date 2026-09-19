@@ -1277,6 +1277,9 @@ void GameControllerTest::testDrawOffers() {
     QVERIFY(controller.isComputerGameActive());
     QVERIFY(controller.canOfferDraw());
 
+    // The decision has to answer immediately, so it runs under a short time
+    // budget even at the deepest evaluation setting.
+    controller.setEvaluationDepth(HeuristicEval::MaxSearchDepth);
     controller.offerDraw();
     QCOMPARE(finishedSpy.count(), 1);
     QCOMPARE(finishedSpy.first().at(0).toString(), QStringLiteral("1/2-1/2"));
