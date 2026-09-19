@@ -57,15 +57,28 @@ void CurveWorker::computeCurve(quint64 requestId, const QString &initialFen,
     QVector<double> curve;
     curve.reserve(total);
 
-    const auto point = [this, depth, quiescenceDepth,
-                        &limits](const Rules &position) {
+    // Scores the current position and publishes the point. A search that was
+    // interrupted reports whatever iteration it had finished, which is not a
+    // value of this position, so nothing is published for it.
+    const auto scorePoint = [&](int ply) {
         const HeuristicEval::SearchResult result =
-            HeuristicEval::search(position, depth, quiescenceDepth, limits);
-        return HeuristicEval::centipawnsToPercentage(result.centipawns);
+            HeuristicEval::search(replay, depth, quiescenceDepth, limits);
+        if (limits.shouldStop()) {
+            return false;
+        }
+        const double value =
+            HeuristicEval::centipawnsToPercentage(result.centipawns);
+        curve.append(value);
+        emit pointScored(requestId, ply, value);
+        emit progress(requestId, curve.size(), total);
+        return true;
     };
 
-    curve.append(point(replay));
-    emit progress(requestId, 1, total);
+    if (!scorePoint(0)) {
+        endRequest(requestId);
+        emit cancelled(requestId);
+        return;
+    }
 
     for (const QString &uci : uciMoves) {
         // The position the point belongs to changed, so the request is over:
@@ -80,8 +93,11 @@ void CurveWorker::computeCurve(quint64 requestId, const QString &initialFen,
         if (!move.has_value() || !replay.tryMove(*move)) {
             break;
         }
-        curve.append(point(replay));
-        emit progress(requestId, curve.size(), total);
+        if (!scorePoint(curve.size())) {
+            endRequest(requestId);
+            emit cancelled(requestId);
+            return;
+        }
     }
 
     // The search reports a cancellation through its result as well, which is

@@ -120,6 +120,7 @@ public:
     void setEngineCurvePoint(int ply, double winPct);
     void requestEvaluationRefinement();
     void onCurveProgress(quint64 requestId, int completed, int total);
+    void onCurvePointScored(quint64 requestId, int ply, double winPct);
     void onCurveReady(quint64 requestId, const QVector<double> &curve);
     void onCurveCancelled(quint64 requestId);
     void onEvaluationReady(quint64 requestId, int centipawns, bool hasMate,

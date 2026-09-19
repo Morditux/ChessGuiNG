@@ -53,6 +53,9 @@ public slots:
 
 signals:
     void progress(quint64 requestId, int completed, int total);
+    // The point the worker has just scored, so the curve can be drawn as the
+    // analysis walks the game instead of only when the whole line is done.
+    void pointScored(quint64 requestId, int ply, double winPct);
     void curveReady(quint64 requestId, const QVector<double> &curve);
     void evaluationReady(quint64 requestId, int centipawns, bool hasMate,
                          int mateIn, const std::optional<Rules::Move> &bestMove);

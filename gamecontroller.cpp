@@ -44,6 +44,8 @@ GameController::GameController(QObject *parent)
             &CurveWorker::evaluatePosition);
     connect(curveWorker_, &CurveWorker::progress, this,
             &GameController::onCurveProgress);
+    connect(curveWorker_, &CurveWorker::pointScored, this,
+            &GameController::onCurvePointScored);
     connect(curveWorker_, &CurveWorker::curveReady, this,
             &GameController::onCurveReady);
     connect(curveWorker_, &CurveWorker::cancelled, this,
@@ -1154,6 +1156,16 @@ void GameController::onCurveProgress(quint64 requestId, int completed,
     curveCompleted_ = completed;
     curveTotal_ = total;
     emit evaluationCurveProgressChanged(completed, total);
+}
+
+void GameController::onCurvePointScored(quint64 requestId, int ply,
+                                        double winPct) {
+    if (requestId != curveRequestId_) {
+        return;
+    }
+    // The curve sharpens as the worker walks the game: every scored position
+    // replaces the static estimate the graph is already showing.
+    updateCurvePoint(ply, winPct);
 }
 
 void GameController::onCurveReady(quint64 requestId,

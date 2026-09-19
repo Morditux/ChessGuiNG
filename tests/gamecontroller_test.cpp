@@ -1550,9 +1550,20 @@ void GameControllerTest::testEvaluationDepthSetting() {
 
 void GameControllerTest::testEvaluationCurveIsComputedInTheBackground() {
     GameController controller;
+    // A deeper search than the static pass, so that the points really change as
+    // the worker walks the game.
+    controller.setEvaluationDepth(3);
     QSignalSpy progressSpy(&controller,
                            &GameController::evaluationCurveProgressChanged);
     QSignalSpy curveSpy(&controller, &GameController::evaluationCurveChanged);
+
+    int progressiveChanges = 0;
+    connect(&controller, &GameController::evaluationCurveChanged, &controller,
+            [&controller, &progressiveChanges] {
+                if (controller.isEvaluationCurveComputing()) {
+                    ++progressiveChanges;
+                }
+            });
 
     // The static pass is synchronous, so the curve is complete and in range
     // before the worker has searched anything.
@@ -1563,13 +1574,31 @@ void GameControllerTest::testEvaluationCurveIsComputedInTheBackground() {
     QVERIFY(progressSpy.count() > 0);
     QCOMPARE(progressSpy.first().at(1).toInt(), expectedPoints);
 
-    // The worker then walks the same curve and reports its progress.
+    // Every point the worker scores is published on the spot, so the graph
+    // follows the analysis and never shows an out-of-range value on the way.
+    bool allInRange = true;
+    connect(&controller, &GameController::evaluationCurveChanged, &controller,
+            [&controller, &allInRange] {
+                for (const double value : controller.evaluationCurve()) {
+                    if (value < 0.0 || value > 100.0) {
+                        allInRange = false;
+                    }
+                }
+            });
+
     QTRY_VERIFY_WITH_TIMEOUT(!controller.isEvaluationCurveComputing(),
                              WaitTimeout);
     QCOMPARE(controller.evaluationCurve().size(), expectedPoints);
     for (const double value : controller.evaluationCurve()) {
         QVERIFY(value >= 0.0 && value <= 100.0);
     }
+    QVERIFY(allInRange);
+    // The graph was refreshed while the worker was still walking the curve, not
+    // only when the whole line landed.
+    QVERIFY2(progressiveChanges > 0,
+             qPrintable(QStringLiteral("%1 changes for %2 points")
+                            .arg(curveSpy.count())
+                            .arg(expectedPoints)));
 
     int highestProgress = 0;
     for (const QList<QVariant> &arguments : progressSpy) {
