@@ -109,6 +109,9 @@ public:
     // Falls back to the heuristic best move for the recommended-move preview
     // when no engine is connected; the engine owns the preview whenever it is.
     void updateHintPreview(const HeuristicEval::SearchResult &result);
+    // Centipawns of the heuristic search at `evaluationDepth_`, used where only
+    // the score (and not the mate distance) is needed.
+    [[nodiscard]] int evaluationCentipawns(const Rules &rules) const;
 
     // Applies the limits used by the next analysis: a depth of 0 searches
     // without a depth limit and MultiPV is the number of principal variations.
@@ -166,6 +169,16 @@ public:
     // curve and the evaluation bar cannot disagree. Computed with the
     // heuristic evaluator and refined ply by ply while a game audit runs.
     [[nodiscard]] QVector<double> evaluationCurve() const;
+
+    // Depth of the heuristic search behind the live evaluation and the
+    // whole-game curve.
+    [[nodiscard]] int evaluationDepth() const;
+    void setEvaluationDepth(int depth);
+
+    // Recomputes the live evaluation and the whole-game curve; callers use it
+    // after changing how the heuristic evaluator is configured.
+    void refreshEvaluation();
+
     [[nodiscard]] bool isComputerGameActive() const;
     [[nodiscard]] bool isComputerGamePending() const;
     [[nodiscard]] bool isComputerMovePreviewEnabled() const;
@@ -325,6 +338,7 @@ private:
     int auditSavedCursor_ = 0;
     int auditPosition_ = 0;
     int gameAuditDepth_ = 18;
+    int evaluationDepth_ = HeuristicEval::DefaultSearchDepth;
     QVector<AuditScore> auditScores_;
     QStringList auditBestMoves_;
     std::optional<EngineAnalysisLine> auditLatestLine_;

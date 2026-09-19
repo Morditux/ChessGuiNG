@@ -16,6 +16,12 @@ class HeuristicEval {
 public:
     static constexpr int MateScore = 10000;
 
+    // Depth the evaluator is normally searched at, and the deepest one callers
+    // are expected to configure for the live evaluation (deeper searches see
+    // more tactics but make a whole-game curve much slower).
+    static constexpr int DefaultSearchDepth = 2;
+    static constexpr int MaxSearchDepth = 4;
+
     // Every tunable weight of the classical evaluation, in centipawns unless
     // the name says otherwise. Each term carries a middle-game and an
     // end-game value (`MG`/`EG`) and the evaluator interpolates between them
@@ -212,8 +218,9 @@ public:
     // the search horizon and reports them through `mateIn`, and scores the
     // fifty-move and repetition draws it meets inside the horizon as draws
     // without ever letting them hide a checkmate.
-    [[nodiscard]] static SearchResult search(const Rules &rules, int depth = 2,
-                                             int quiescenceDepth = 2);
+    [[nodiscard]] static SearchResult search(
+        const Rules &rules, int depth = DefaultSearchDepth,
+        int quiescenceDepth = 2);
 
     // The same search under explicit limits, which stop it early; the result
     // then keeps the last iteration that completed and reports `aborted`.

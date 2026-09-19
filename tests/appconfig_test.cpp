@@ -19,6 +19,7 @@
 #include "gamecontroller.h"
 
 #include "appconfig.h"
+#include "evalparamfields.h"
 #include "engineoutputwidget.h"
 #include "mainwindow.h"
 #include "uciengine.h"
@@ -43,6 +44,7 @@ private slots:
     void testLegacyEngineSectionMigration();
     void testLoadAndSaveRemoteEngineSettings();
     void testLoadAndSaveAnalysisSettings();
+    void testLoadAndSaveEvaluationSettings();
     void testResetToDefaults();
     void testLoadNonExistentFileReturnsFalse();
     void testMainWindowAutoCreatesConfigFile();
@@ -487,6 +489,70 @@ void AppConfigTest::testLoadAndSaveRemoteEngineSettings() {
     QCOMPARE(loadedConfig.remoteEngineVersion(), QStringLiteral("17"));
     QCOMPARE(loadedConfig.remoteEngineAccessKey(),
              QStringLiteral("f81d4fae-7dec-11d0-a765-00a0c91e6bf6"));
+}
+
+void AppConfigTest::testLoadAndSaveEvaluationSettings() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString confPath = tempDir.filePath(QStringLiteral("chessGui.conf"));
+    AppConfig config(confPath);
+
+    HeuristicEval::EvalParams tuned;
+    tuned.pawnValue = 130;
+    tuned.isolatedPawnPenaltyEG = 41;
+    tuned.mobilityQueenMG = 3;
+    tuned.mopUpMaterialThreshold = 250;
+    config.setEvalParams(tuned);
+    config.setEvalSearchThreads(3);
+    config.setEvalDepth(3);
+    config.setShowEvaluationScore(false);
+    config.setShowCentreLine(false);
+    QVERIFY(config.save());
+
+    AppConfig loadedConfig(confPath);
+    QVERIFY(loadedConfig.load());
+    const HeuristicEval::EvalParams loaded = loadedConfig.evalParams();
+    const HeuristicEval::EvalParams defaults;
+    for (const EvalParamFields::Field &field : EvalParamFields::all()) {
+        const bool tunedField =
+            field.member == &HeuristicEval::EvalParams::pawnValue ||
+            field.member == &HeuristicEval::EvalParams::isolatedPawnPenaltyEG ||
+            field.member == &HeuristicEval::EvalParams::mobilityQueenMG ||
+            field.member == &HeuristicEval::EvalParams::mopUpMaterialThreshold;
+        if (!tunedField) {
+            QCOMPARE(loaded.*field.member, defaults.*field.member);
+        }
+    }
+    QCOMPARE(loaded.pawnValue, 130);
+    QCOMPARE(loaded.isolatedPawnPenaltyEG, 41);
+    QCOMPARE(loaded.mobilityQueenMG, 3);
+    QCOMPARE(loaded.mopUpMaterialThreshold, 250);
+    QCOMPARE(loadedConfig.evalSearchThreads(), 3);
+    QCOMPARE(loadedConfig.evalDepth(), 3);
+    QVERIFY(!loadedConfig.showEvaluationScore());
+    QVERIFY(!loadedConfig.showCentreLine());
+
+    // A file that predates the evaluator settings keeps the defaults.
+    const QString legacyPath = tempDir.filePath(QStringLiteral("legacy.conf"));
+    QFile legacyFile(legacyPath);
+    QVERIFY(legacyFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    legacyFile.write("[General]\ngeometry=\n");
+    legacyFile.close();
+    AppConfig legacy(legacyPath);
+    QVERIFY(legacy.load());
+    QCOMPARE(legacy.evalDepth(), HeuristicEval::DefaultSearchDepth);
+    QCOMPARE(legacy.evalSearchThreads(), 0);
+    QVERIFY(legacy.showEvaluationScore());
+    QVERIFY(legacy.showCentreLine());
+    QCOMPARE(legacy.evalParams().pawnValue, defaults.pawnValue);
+
+    // Out-of-range values are clamped.
+    AppConfig clamped(confPath);
+    clamped.setEvalDepth(99);
+    clamped.setEvalSearchThreads(-4);
+    QCOMPARE(clamped.evalDepth(), HeuristicEval::MaxSearchDepth);
+    QCOMPARE(clamped.evalSearchThreads(), 0);
 }
 
 void AppConfigTest::testResetToDefaults() {

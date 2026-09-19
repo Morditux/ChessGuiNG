@@ -184,6 +184,10 @@ private:
     void processImage(const QImage &image, const QString &displayName);
     void loadRemoteImage(const QUrl &url);
     void applyConfiguredEngineOptions();
+    // Opens the evaluator settings dialog and applies what it returns.
+    void configureEvaluationParams();
+    void setShowEvaluationScore(bool show);
+    void setShowCentreLine(bool show);
     void refreshEngineStateUi();
     void refreshAuditUi();
     void clearLoadedPgnSource();
@@ -264,6 +268,9 @@ private:
     QAction *stepForwardAction_ = nullptr;
     QAction *lastMoveAction_ = nullptr;
     QAction *configureEngineAction_ = nullptr;
+    QAction *evaluationParamsAction_ = nullptr;
+    QAction *showEvaluationScoreAction_ = nullptr;
+    QAction *showCentreLineAction_ = nullptr;
     QAction *uciOptionsAction_ = nullptr;
     QAction *configureRemoteEngineAction_ = nullptr;
     QAction *playAgainstComputerAction_ = nullptr;

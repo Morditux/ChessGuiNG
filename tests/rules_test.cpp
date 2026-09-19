@@ -106,6 +106,7 @@ private slots:
     void testMainWindowRecognizesScreenshotWhenProvided();
     void testComputerGameDialogSettings();
     void testMainWindowExplainsTheEvaluation();
+    void testMainWindowSettingsMenu();
 };
 
 void RulesTest::testFenStartPos() {
@@ -1270,6 +1271,72 @@ void RulesTest::testMainWindowExplainsTheEvaluation() {
     const QString queenTooltip = window.evaluationBar()->toolTip();
     QVERIFY2(queenTooltip.contains(QStringLiteral("+9.00")),
              qPrintable(queenTooltip));
+}
+
+void RulesTest::testMainWindowSettingsMenu() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    MainWindow window(nullptr, tempDir.filePath(QStringLiteral("chessGui.conf")));
+
+    // The evaluator dialog and the gauge preferences live in their own menu.
+    auto *settingsMenu = static_cast<QMenu *>(nullptr);
+    for (QMenu *menu : window.findChildren<QMenu *>()) {
+        if (menu->menuAction() != nullptr &&
+            menu->title() == QStringLiteral("Settings")) {
+            settingsMenu = menu;
+        }
+    }
+    QVERIFY(settingsMenu != nullptr);
+
+    auto *evaluationParams =
+        window.findChild<QAction *>(QStringLiteral("evaluationParamsAction"));
+    auto *showScore =
+        window.findChild<QAction *>(QStringLiteral("showEvaluationScoreAction"));
+    auto *showCentreLine =
+        window.findChild<QAction *>(QStringLiteral("showCentreLineAction"));
+    QVERIFY(evaluationParams != nullptr);
+    QVERIFY(showScore != nullptr);
+    QVERIFY(showCentreLine != nullptr);
+    QVERIFY(evaluationParams->isEnabled());
+    QVERIFY(showScore->isCheckable());
+    QVERIFY(showCentreLine->isCheckable());
+    QVERIFY(settingsMenu->actions().contains(evaluationParams));
+    QVERIFY(settingsMenu->actions().contains(showScore));
+    QVERIFY(settingsMenu->actions().contains(showCentreLine));
+
+    // The gauge preferences start from the configuration, are applied when they
+    // change and are written back.
+    QVERIFY(showScore->isChecked());
+    QVERIFY(showCentreLine->isChecked());
+    QVERIFY(window.evaluationBar()->showEvaluationText());
+    QVERIFY(window.evaluationBar()->showCenterLine());
+
+    showScore->setChecked(false);
+    showCentreLine->setChecked(false);
+    QVERIFY(!window.evaluationBar()->showEvaluationText());
+    QVERIFY(!window.evaluationBar()->showCenterLine());
+    QVERIFY(!window.config().showEvaluationScore());
+    QVERIFY(!window.config().showCentreLine());
+
+    // A reopened window restores them, and the evaluator settings survive too.
+    HeuristicEval::EvalParams tuned = HeuristicEval::params();
+    tuned.rookValue = 505;
+    window.gameController()->setEvaluationDepth(3);
+    AppConfig stored = window.config();
+    stored.setEvalParams(tuned);
+    stored.setEvalDepth(3);
+    stored.setEvalSearchThreads(2);
+    QVERIFY(stored.save());
+
+    MainWindow reopened(nullptr, tempDir.filePath(QStringLiteral("chessGui.conf")));
+    QVERIFY(!reopened.evaluationBar()->showEvaluationText());
+    QVERIFY(!reopened.evaluationBar()->showCenterLine());
+    QCOMPARE(reopened.gameController()->evaluationDepth(), 3);
+    QCOMPARE(HeuristicEval::searchThreads(), 2);
+    QCOMPARE(HeuristicEval::params().rookValue, 505);
+
+    HeuristicEval::resetParams();
+    HeuristicEval::setSearchThreads(0);
 }
 
 QTEST_MAIN(RulesTest)

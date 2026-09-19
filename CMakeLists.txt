@@ -112,6 +112,7 @@ add_library(chesscore OBJECT
         auditreports.h
         enginebackend.cpp
         enginebackend.h
+        evalparamfields.h
         gamecontroller.cpp
         gamecontroller.h
         gatewayclient.cpp
@@ -193,6 +194,8 @@ add_library(chessapp OBJECT
         computergamedialog.h
         engineconfigurationdialog.cpp
         engineconfigurationdialog.h
+        evalparamsdialog.cpp
+        evalparamsdialog.h
         mainwindow.cpp
         mainwindow.h
         pgnselectdialog.cpp
@@ -407,6 +410,12 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(EngineOutputWidgetTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
     add_test(NAME EngineOutputWidgetTest COMMAND EngineOutputWidgetTest)
+
+    qt_add_executable(EvalParamsDialogTest
+            tests/evalparamsdialog_test.cpp
+    )
+    target_link_libraries(EvalParamsDialogTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
+    add_test(NAME EvalParamsDialogTest COMMAND EvalParamsDialogTest)
 
     qt_add_executable(AppConfigTest
             tests/appconfig_test.cpp

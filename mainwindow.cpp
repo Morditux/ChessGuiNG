@@ -3,6 +3,8 @@
 //
 
 #include "mainwindow.h"
+
+#include "evalparamsdialog.h"
 #include "analysisreportdialog.h"
 #include "chessboard.h"
 #include "computergamedialog.h"
@@ -591,6 +593,20 @@ void MainWindow::loadConfiguration(const QString &configFilePath) {
         historySizes[1] = qMax(1, historySizes.at(1) + previousSize - historySizes.at(section));
     }
     rightSplitter_->setSizes(historySizes);
+
+    HeuristicEval::setParams(config_.evalParams());
+    HeuristicEval::setSearchThreads(config_.evalSearchThreads());
+    gameController_->setEvaluationDepth(config_.evalDepth());
+    // Apply the gauge preferences directly and sync the menu without letting
+    // the toggled() signal write the configuration back while it is loading.
+    evaluationBar_->setShowEvaluationText(config_.showEvaluationScore());
+    evaluationBar_->setShowCenterLine(config_.showCentreLine());
+    {
+        const QSignalBlocker scoreBlocker(showEvaluationScoreAction_);
+        const QSignalBlocker centreLineBlocker(showCentreLineAction_);
+        showEvaluationScoreAction_->setChecked(config_.showEvaluationScore());
+        showCentreLineAction_->setChecked(config_.showCentreLine());
+    }
 
     setComputerMovePreviewEnabled(config_.computerMovePreviewEnabled());
     setRecommendedMovePreviewEnabled(config_.recommendedMovePreviewEnabled());
@@ -1928,6 +1944,38 @@ void MainWindow::onEngineLoaded(const QString &name, const QString &author) {
     applyConfiguredEngineOptions();
 }
 
+void MainWindow::configureEvaluationParams() {
+    EvalParamsDialog dialog(HeuristicEval::params(),
+                            HeuristicEval::searchThreads(),
+                            gameController_->evaluationDepth(),
+                            HeuristicEval::DefaultSearchDepth, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    HeuristicEval::setParams(dialog.params());
+    HeuristicEval::setSearchThreads(dialog.searchThreads());
+    gameController_->setEvaluationDepth(dialog.evaluationDepth());
+    gameController_->refreshEvaluation();
+
+    config_.setEvalParams(HeuristicEval::params());
+    config_.setEvalSearchThreads(dialog.searchThreads());
+    config_.setEvalDepth(dialog.evaluationDepth());
+    config_.save();
+}
+
+void MainWindow::setShowEvaluationScore(bool show) {
+    evaluationBar_->setShowEvaluationText(show);
+    config_.setShowEvaluationScore(show);
+    config_.save();
+}
+
+void MainWindow::setShowCentreLine(bool show) {
+    evaluationBar_->setShowCenterLine(show);
+    config_.setShowCentreLine(show);
+    config_.save();
+}
+
 void MainWindow::applyConfiguredEngineOptions() {
     const QMap<QString, QString> configuredOptions = config_.uciEngineOptions();
 
@@ -2410,6 +2458,39 @@ void MainWindow::setupUi() {
     connect(stopEngineAction_, &QAction::triggered, this, &MainWindow::stopEngine);
 
     menubar->addMenu(menuEngine);
+
+    // Menu Settings
+    auto *menuSettings = new QMenu(tr("Settings"), this);
+    evaluationParamsAction_ = menuSettings->addAction(tr("Evaluation params..."));
+    evaluationParamsAction_->setObjectName(QStringLiteral("evaluationParamsAction"));
+    evaluationParamsAction_->setToolTip(
+        tr("Edit the weights of the heuristic evaluator, its search depth and "
+           "the number of threads it may use"));
+    evaluationParamsAction_->setStatusTip(evaluationParamsAction_->toolTip());
+    connect(evaluationParamsAction_, &QAction::triggered,
+            this, &MainWindow::configureEvaluationParams);
+
+    menuSettings->addSeparator();
+
+    showEvaluationScoreAction_ = menuSettings->addAction(tr("Show the evaluation score"));
+    showEvaluationScoreAction_->setObjectName(QStringLiteral("showEvaluationScoreAction"));
+    showEvaluationScoreAction_->setCheckable(true);
+    showEvaluationScoreAction_->setToolTip(
+        tr("Show the score text inside the evaluation gauge"));
+    showEvaluationScoreAction_->setStatusTip(showEvaluationScoreAction_->toolTip());
+    connect(showEvaluationScoreAction_, &QAction::toggled,
+            this, &MainWindow::setShowEvaluationScore);
+
+    showCentreLineAction_ = menuSettings->addAction(tr("Show the gauge centre line"));
+    showCentreLineAction_->setObjectName(QStringLiteral("showCentreLineAction"));
+    showCentreLineAction_->setCheckable(true);
+    showCentreLineAction_->setToolTip(
+        tr("Mark the equal position in the middle of the evaluation gauge"));
+    showCentreLineAction_->setStatusTip(showCentreLineAction_->toolTip());
+    connect(showCentreLineAction_, &QAction::toggled,
+            this, &MainWindow::setShowCentreLine);
+
+    menubar->addMenu(menuSettings);
     menubar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     auto *toolBar = new QToolBar(tr("Main toolbar"), this);

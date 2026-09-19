@@ -12,6 +12,8 @@
 #include <QSize>
 #include <QString>
 
+#include "heuristiceval.h"
+
 class AppConfig {
 public:
     enum class EngineDetailsPage {
@@ -125,6 +127,29 @@ public:
     [[nodiscard]] int auditDepth() const;
     void setAuditDepth(int depth);
 
+    // Weights of the heuristic evaluator, restored into HeuristicEval at
+    // startup and written back when the settings dialog is accepted. Fields
+    // missing from the file keep their calibrated default.
+    [[nodiscard]] HeuristicEval::EvalParams evalParams() const;
+    void setEvalParams(const HeuristicEval::EvalParams &params);
+
+    // Root workers the heuristic search may use; zero follows the hardware.
+    [[nodiscard]] int evalSearchThreads() const;
+    void setEvalSearchThreads(int threads);
+
+    // Depth of the heuristic search behind the live evaluation and the
+    // whole-game curve.
+    [[nodiscard]] int evalDepth() const;
+    void setEvalDepth(int depth);
+
+    // Interface preferences: the score text and the centre line of the
+    // evaluation gauge.
+    [[nodiscard]] bool showEvaluationScore() const;
+    void setShowEvaluationScore(bool show);
+
+    [[nodiscard]] bool showCentreLine() const;
+    void setShowCentreLine(bool show);
+
     void resetToDefaults();
 
 private:
@@ -157,6 +182,11 @@ private:
     int analysisDepth_ = 0;
     int analysisMultiPv_ = 1;
     int auditDepth_ = 18;
+    HeuristicEval::EvalParams evalParams_;
+    int evalSearchThreads_ = 0;
+    int evalDepth_ = HeuristicEval::DefaultSearchDepth;
+    bool showEvaluationScore_ = true;
+    bool showCentreLine_ = true;
 };
 
 #endif // CHESSGUI_APPCONFIG_H

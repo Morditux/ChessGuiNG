@@ -194,6 +194,7 @@ private slots:
     void testDrawOffers();
     void testAnalysisSettings();
     void testEvaluationBreakdownAndHeuristicHint();
+    void testEvaluationDepthSetting();
 };
 
 void GameControllerTest::initTestCase() {
@@ -1509,6 +1510,33 @@ void GameControllerTest::testEvaluationBreakdownAndHeuristicHint() {
     QVERIFY(controller.loadFen(QStringLiteral("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")));
     QVERIFY(controller.rules().isGameOver());
     QVERIFY(!recommendedSpy.last().at(0).value<std::optional<Rules::Move>>().has_value());
+}
+
+void GameControllerTest::testEvaluationDepthSetting() {
+    GameController controller;
+    QCOMPARE(controller.evaluationDepth(), HeuristicEval::DefaultSearchDepth);
+
+    controller.setEvaluationDepth(3);
+    QCOMPARE(controller.evaluationDepth(), 3);
+    controller.setEvaluationDepth(99);
+    QCOMPARE(controller.evaluationDepth(), HeuristicEval::MaxSearchDepth);
+    controller.setEvaluationDepth(0);
+    QCOMPARE(controller.evaluationDepth(), 1);
+
+    // Changing how the evaluator is configured only shows up after a refresh,
+    // which recomputes the score and the whole-game curve.
+    QVERIFY(controller.loadFen(QStringLiteral(
+        "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
+    controller.setEvaluationDepth(2);
+    QSignalSpy scoreSpy(&controller, &GameController::evaluationScoreChanged);
+    QSignalSpy curveSpy(&controller, &GameController::evaluationCurveChanged);
+    controller.refreshEvaluation();
+
+    QVERIFY(scoreSpy.count() > 0);
+    QVERIFY(curveSpy.count() > 0);
+    QCOMPARE(controller.evaluationCurve().size(), 1);
+    const double start = controller.evaluationCurve().first();
+    QVERIFY(start >= 0.0 && start <= 100.0);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

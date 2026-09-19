@@ -4,6 +4,8 @@
 
 #include "appconfig.h"
 
+#include "evalparamfields.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -181,6 +183,28 @@ bool AppConfig::load() {
                                            auditDepth_).toInt(), 99);
     settings.endGroup();
 
+    // One key per weight, written and read through the same field table the
+    // settings dialog builds its spin boxes from.
+    settings.beginGroup(QStringLiteral("Evaluation"));
+    for (const EvalParamFields::Field &field : EvalParamFields::all()) {
+        int &value = evalParams_.*field.member;
+        value = settings.value(QString::fromLatin1(field.key), value).toInt();
+    }
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("Interface"));
+    evalSearchThreads_ = qBound(
+        0, settings.value(QStringLiteral("evalSearchThreads"),
+                          evalSearchThreads_).toInt(), 16);
+    evalDepth_ = qBound(1, settings.value(QStringLiteral("evalDepth"),
+                                          evalDepth_).toInt(),
+                        HeuristicEval::MaxSearchDepth);
+    showEvaluationScore_ = settings.value(QStringLiteral("showEvaluationScore"),
+                                          showEvaluationScore_).toBool();
+    showCentreLine_ = settings.value(QStringLiteral("showCentreLine"),
+                                     showCentreLine_).toBool();
+    settings.endGroup();
+
     return settings.status() == QSettings::NoError;
 }
 
@@ -255,6 +279,20 @@ bool AppConfig::save() const {
     settings.setValue(QStringLiteral("analysisDepth"), analysisDepth_);
     settings.setValue(QStringLiteral("analysisMultiPv"), analysisMultiPv_);
     settings.setValue(QStringLiteral("auditDepth"), auditDepth_);
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("Evaluation"));
+    for (const EvalParamFields::Field &field : EvalParamFields::all()) {
+        settings.setValue(QString::fromLatin1(field.key),
+                          evalParams_.*field.member);
+    }
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("Interface"));
+    settings.setValue(QStringLiteral("evalSearchThreads"), evalSearchThreads_);
+    settings.setValue(QStringLiteral("evalDepth"), evalDepth_);
+    settings.setValue(QStringLiteral("showEvaluationScore"), showEvaluationScore_);
+    settings.setValue(QStringLiteral("showCentreLine"), showCentreLine_);
     settings.endGroup();
 
     settings.sync();
@@ -520,6 +558,46 @@ int AppConfig::auditDepth() const {
     return auditDepth_;
 }
 
+HeuristicEval::EvalParams AppConfig::evalParams() const {
+    return evalParams_;
+}
+
+void AppConfig::setEvalParams(const HeuristicEval::EvalParams &params) {
+    evalParams_ = params;
+}
+
+int AppConfig::evalSearchThreads() const {
+    return evalSearchThreads_;
+}
+
+void AppConfig::setEvalSearchThreads(int threads) {
+    evalSearchThreads_ = qBound(0, threads, 16);
+}
+
+int AppConfig::evalDepth() const {
+    return evalDepth_;
+}
+
+void AppConfig::setEvalDepth(int depth) {
+    evalDepth_ = qBound(1, depth, HeuristicEval::MaxSearchDepth);
+}
+
+bool AppConfig::showEvaluationScore() const {
+    return showEvaluationScore_;
+}
+
+void AppConfig::setShowEvaluationScore(bool show) {
+    showEvaluationScore_ = show;
+}
+
+bool AppConfig::showCentreLine() const {
+    return showCentreLine_;
+}
+
+void AppConfig::setShowCentreLine(bool show) {
+    showCentreLine_ = show;
+}
+
 void AppConfig::setAuditDepth(int depth) {
     auditDepth_ = qBound(1, depth, 99);
 }
@@ -553,4 +631,9 @@ void AppConfig::resetToDefaults() {
     analysisDepth_ = 0;
     analysisMultiPv_ = 1;
     auditDepth_ = 18;
+    evalParams_ = HeuristicEval::EvalParams{};
+    evalSearchThreads_ = 0;
+    evalDepth_ = HeuristicEval::DefaultSearchDepth;
+    showEvaluationScore_ = true;
+    showCentreLine_ = true;
 }
