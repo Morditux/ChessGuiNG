@@ -3,13 +3,47 @@
 
 A modern, fast, and lightweight desktop Chess GUI built with **C++20** and **Qt 6**.
 
-ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN recognition, complete chess rule validation, real-time classical heuristic position evaluation, UCI chess engine integration (local processes or remote engines behind a chessgateway server), a dynamic evaluation bar, live PGN move history, and automatic OS-standard configuration management.
+Its headline feature is **automatic screenshot-to-FEN recognition**: give it a picture of a chessboard — a screenshot, a diagram, a web image — and the pieces are recognised and the exact position is loaded onto the board, with no FEN to type. On top of that, ChessGui offers an interactive chessboard interface, complete chess rule validation, real-time classical heuristic position evaluation, UCI chess engine integration (local processes or remote engines behind a chessgateway server), a dynamic evaluation bar, live PGN move history, and automatic OS-standard configuration management.
 
 <img width="1062" height="1039" alt="image" src="https://github.com/user-attachments/assets/3f6f24f6-ee97-471f-92de-f7e4688d5849" />
 
 ---
 
+## Automatic Screenshot-to-FEN Recognition
+
+**Paste a chessboard picture, get the position.** ChessGui finds the board inside the image, reads all 64 squares with a bundled neural network, and puts the recognised position straight onto the chessboard — ready to play, analyse or export as FEN/PGN. No manual position setup, no external service, no FEN typing.
+
+### How to use it
+
+| Input | Action |
+| --- | --- |
+| Clipboard image | `Ctrl+V`, or `Edit -> Paste FEN or screenshot` |
+| Image file | `File -> Load screenshot...` (`Ctrl+Shift+I`) |
+| Drag & drop | Drop an image file, a web image, or an image URL anywhere on the window |
+| Remote image | Pasting or dropping an image URL downloads it and recognises it |
+
+All routes feed the same pipeline, so the behaviour is identical. When the screenshot carries no game-state metadata, the visible `White to play` checkbox decides the side to move.
+
+### How it works
+
+1. **Board detection** (`BoardDetector`) — locates an axis-aligned 8x8 board anywhere inside a larger image: grayscale conversion, horizontal/vertical gradients, 1-D peak responses, a regularly-spaced line sequence search, checkerboard correlation, parity repair, and an optional grid-snap refinement.
+2. **Square classification** (`FenRecognizer`) — classifies the 64 tiles with the bundled `chess-tiles-v2.onnx` model through ONNX Runtime and assembles the resulting FEN placement.
+3. **Orientation** — a pawn-rank heuristic detects a board displayed from Black's side and rotates it 180° automatically, so a flipped diagram still lands the right way up.
+4. **Non-blocking** (`VisionWorker`) — detection and classification run on a dedicated `QThread`; pasting a screenshot never freezes the interface, and a request counter discards stale results when several images are processed in a row.
+
+### Confidence feedback and fallback
+
+The status line reports how the board was found (`raw` or grid-`aligned`), the detected orientation, and the tile-classification confidence (mean and minimum), and it asks you to verify the position when the weakest tile falls below 70%. A manual FEN paste (`Ctrl+V`) stays available as the fallback whenever an image is ambiguous.
+
+---
+
 ## Features
+
+- **Screenshot-to-FEN Recognition**
+  - Detects an axis-aligned 8x8 chessboard inside a larger screenshot.
+  - Classifies the 64 squares with the bundled `chess-tiles-v2.onnx` model via ONNX Runtime.
+  - Accepts a clipboard image, an image file, a dragged image, or an image URL; reports confidence and orientation feedback while retaining a manual FEN fallback.
+  - Runs detection and classification in a dedicated worker thread (`VisionWorker`), so pasting or dropping a screenshot never freezes the UI; a request counter discards stale results when several images are processed in a row.
 
 - **Interactive Chessboard UI**
   - Crisp vector rendering using third-party SVG pieces (Chessnut set).
@@ -60,16 +94,9 @@ ChessGui offers an interactive chessboard interface, automatic screenshot-to-FEN
   - Concede a game against the engine: `Games -> Resign` gives the win to the engine, and `Games -> Offer draw` is accepted while the position stays balanced (in free play the same action records an agreed draw).
   - Load full PGN game files (`Load PGN...`) or drop a `.pgn` file onto the window, with automatic move replay, check/mate validation, and live move history update.
   - Copy current FEN (`Ctrl+Shift+F`) or full PGN (`Ctrl+Shift+C`) directly to the clipboard.
-  - Paste any FEN position directly from the clipboard using `Ctrl+V` or the `Games -> Paste FEN or screenshot` menu action.
-  - Import a chessboard screenshot from the clipboard, a browser drag, or a file-manager drag. The board is detected, classified with ONNX Runtime, and loaded into the chessboard automatically.
-  - Use the visible `White to play` checkbox to choose the side to move when a screenshot does not contain game-state metadata.
+  - Paste any FEN position directly from the clipboard using `Ctrl+V` or the `Edit -> Paste FEN or screenshot` menu action.
+  - Import a chessboard screenshot from the clipboard, a browser drag, or a file-manager drag; see [Automatic Screenshot-to-FEN Recognition](#automatic-screenshot-to-fen-recognition) above.
   - Complete round-trip FEN export and SAN (Standard Algebraic Notation) disambiguation.
-
-- **Screenshot-to-FEN Recognition**
-  - Detects an axis-aligned 8x8 chessboard in a larger screenshot.
-  - Classifies the 64 squares with the bundled `chess-tiles-v2.onnx` model.
-  - Displays confidence and orientation feedback, while retaining a manual FEN fallback.
-  - Detection and classification run in a dedicated worker thread (`VisionWorker`), so pasting or dropping a screenshot never freezes the UI; a request counter discards stale results when several images are processed in a row.
 
 - **PGN Move History & Navigation**
   - Automatic algebraic notation generator supporting piece markers, capture markers (`x`), checks (`+`), checkmates (`#`), castling (`O-O` / `O-O-O`), and promotions (`=Q`).
