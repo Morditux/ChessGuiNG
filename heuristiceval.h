@@ -15,9 +15,12 @@ public:
     static constexpr int MateScore = 10000;
 
     // Every tunable weight of the classical evaluation, in centipawns unless
-    // the name says otherwise. Percentages scale a term that is already
-    // computed. `params()` returns the active set and `setParams()` replaces
-    // it, so the evaluator can be calibrated without editing the terms.
+    // the name says otherwise. Each term carries a middle-game and an
+    // end-game value (`MG`/`EG`) and the evaluator interpolates between them
+    // with the phase; a term that does not depend on the phase uses one value
+    // for both. Percentages scale a term that is already computed. `params()`
+    // returns the active set and `setParams()` replaces it, so the evaluator
+    // can be calibrated without editing the terms.
     struct EvalParams {
         // Material.
         int pawnValue = 100;
@@ -31,18 +34,30 @@ public:
         int inCheckPenalty = 50;
 
         // Pawn structure.
-        int doubledPawnPenalty = 12;
-        int isolatedPawnPenalty = 15;
-        int supportedPawnBonus = 8;
-        int backwardPawnPenalty = 10;
-        int candidatePawnBonus = 8;
-        int candidatePawnRankBonus = 2;
-        int passedPawnBase = 12;
-        int passedPawnRankBonus = 6;
-        int passedPawnEndgameScalePercent = 150;
-        int passedPawnBlockedPenalty = 8;
-        int passedPawnControlledPenalty = 4;
-        int passedPawnRookBehind = 20;
+        int doubledPawnPenaltyMG = 12;
+        int doubledPawnPenaltyEG = 18;
+        int isolatedPawnPenaltyMG = 15;
+        int isolatedPawnPenaltyEG = 18;
+        int supportedPawnBonusMG = 8;
+        int supportedPawnBonusEG = 5;
+        int backwardPawnPenaltyMG = 10;
+        int backwardPawnPenaltyEG = 12;
+        int candidatePawnBonusMG = 8;
+        int candidatePawnBonusEG = 12;
+        int candidatePawnRankBonusMG = 2;
+        int candidatePawnRankBonusEG = 3;
+        int passedPawnBaseMG = 12;
+        int passedPawnBaseEG = 25;
+        int passedPawnRankBonusMG = 6;
+        int passedPawnRankBonusEG = 15;
+        int passedPawnBlockedPenaltyMG = 8;
+        int passedPawnBlockedPenaltyEG = 15;
+        int passedPawnControlledPenaltyMG = 4;
+        int passedPawnControlledPenaltyEG = 10;
+        int passedPawnRookBehindMG = 20;
+        int passedPawnRookBehindEG = 30;
+        int passedPawnEnemyRookBehindMG = 15;
+        int passedPawnEnemyRookBehindEG = 25;
 
         // Mobility weights (middlegame, endgame).
         int mobilityPawnMG = 1;
@@ -58,20 +73,32 @@ public:
         int mobilityKingMG = 2;
         int mobilityKingEG = 1;
 
-        // King safety.
+        // King safety (middlegame terms; the shelter keeps a smaller endgame
+        // value so that a king still prefers pawns in front of it).
         int castledBonus = 15;
         int castlingRightsBonus = 10;
         int kingAttackPenalty = 12;
         int kingShelterBonus = 8;
         int kingShelterSecondRankPercent = 75;
         int kingShelterThirdRankPercent = 50;
+        int kingShelterEndgamePercent = 50;
         int openFileNearKingPenalty = 12;
         int kingPawnStormPenalty = 6;
 
         // Rooks.
-        int rookOpenFileBonus = 20;
-        int rookSemiOpenFileBonus = 10;
-        int rookSeventhRankBonus = 20;
+        int rookOpenFileMG = 20;
+        int rookOpenFileEG = 10;
+        int rookSemiOpenFileMG = 10;
+        int rookSemiOpenFileEG = 8;
+        int rookSeventhRankMG = 20;
+        int rookSeventhRankEG = 30;
+
+        // Endgame mop-up: with an advantage of at least `mopUpMaterialThreshold`
+        // centipawns and few pieces left, the stronger side gains by driving
+        // the enemy king to the edge and by walking its own king in.
+        int mopUpMaterialThreshold = 400;
+        int mopUpEdgeBonus = 8;
+        int mopUpKingProximityBonus = 3;
 
         // Threats.
         int hangingPieceDivisor = 8;
@@ -81,11 +108,14 @@ public:
         // Piece specific.
         int bishopPairMG = 30;
         int bishopPairEG = 50;
-        int outpostKnight = 20;
-        int outpostBishop = 10;
+        int outpostKnightMG = 20;
+        int outpostKnightEG = 10;
+        int outpostBishopMG = 10;
+        int outpostBishopEG = 5;
         int badBishopPenalty = 3;
         int badBishopCap = 20;
-        int connectedRooksBonus = 15;
+        int connectedRooksMG = 30;
+        int connectedRooksEG = 20;
     };
 
     // Active weights. Configure them before starting a search: reading is not

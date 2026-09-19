@@ -40,6 +40,41 @@ constexpr int KingAttackerValue = 100000;
 HeuristicEval::EvalParams activeParams;
 const HeuristicEval::EvalParams &P = activeParams;
 
+// Middle-game and end-game value of one evaluation term. Every term returns one
+// of these and `evaluateBoard` interpolates the total once with the phase, so a
+// term can weigh differently in the two phases without repeating the
+// interpolation in each of them.
+struct TaperedScore {
+    int middleGame = 0;
+    int endGame = 0;
+
+    TaperedScore &operator+=(const TaperedScore &other) {
+        middleGame += other.middleGame;
+        endGame += other.endGame;
+        return *this;
+    }
+
+    TaperedScore &operator-=(const TaperedScore &other) {
+        middleGame -= other.middleGame;
+        endGame -= other.endGame;
+        return *this;
+    }
+};
+
+// A term that is worth the same in both phases.
+constexpr TaperedScore bothPhases(int value) {
+    return {value, value};
+}
+
+// A term that only exists in the middlegame, such as king safety.
+constexpr TaperedScore middleGameOnly(int value) {
+    return {value, 0};
+}
+
+constexpr TaperedScore operator*(int factor, const TaperedScore &score) {
+    return {factor * score.middleGame, factor * score.endGame};
+}
+
 // Tables are indexed from the point of view of the relevant side:
 // index 0 is that side's home rank and index 7 its promotion rank.
 constexpr std::array<int, 64> PawnPST = {
@@ -232,30 +267,39 @@ constexpr const std::array<int, 64> *pieceSquareTable(Rules::PieceType type) {
     return nullptr;
 }
 
+// Rounds to the nearest centipawn, away from zero, so that a mirrored position
+// keeps scoring exactly the opposite.
 constexpr int interpolate(int middleGameValue, int endGameValue, int phase) {
-    return (middleGameValue * phase + endGameValue * (MaxPhase - phase)) / MaxPhase;
+    const int total =
+        middleGameValue * phase + endGameValue * (MaxPhase - phase);
+    return total >= 0 ? (total + MaxPhase / 2) / MaxPhase
+                      : -((-total + MaxPhase / 2) / MaxPhase);
+}
+
+int taperedValue(const TaperedScore &score, int phase) {
+    return interpolate(score.middleGame, score.endGame, phase);
 }
 
 // Mobility weights are tapered so that rooks and queens matter more once the
 // board opens up.
-int mobilityWeight(Rules::PieceType type, int phase) {
+TaperedScore mobilityWeight(Rules::PieceType type) {
     switch (type) {
     case Rules::PieceType::Pawn:
-        return interpolate(P.mobilityPawnMG, P.mobilityPawnEG, phase);
+        return {P.mobilityPawnMG, P.mobilityPawnEG};
     case Rules::PieceType::Knight:
-        return interpolate(P.mobilityKnightMG, P.mobilityKnightEG, phase);
+        return {P.mobilityKnightMG, P.mobilityKnightEG};
     case Rules::PieceType::Bishop:
-        return interpolate(P.mobilityBishopMG, P.mobilityBishopEG, phase);
+        return {P.mobilityBishopMG, P.mobilityBishopEG};
     case Rules::PieceType::Rook:
-        return interpolate(P.mobilityRookMG, P.mobilityRookEG, phase);
+        return {P.mobilityRookMG, P.mobilityRookEG};
     case Rules::PieceType::Queen:
-        return interpolate(P.mobilityQueenMG, P.mobilityQueenEG, phase);
+        return {P.mobilityQueenMG, P.mobilityQueenEG};
     case Rules::PieceType::King:
-        return interpolate(P.mobilityKingMG, P.mobilityKingEG, phase);
+        return {P.mobilityKingMG, P.mobilityKingEG};
     case Rules::PieceType::None:
-        return 0;
+        return {};
     }
-    return 0;
+    return {};
 }
 
 Board snapshotBoard(const Rules &rules) {
@@ -557,19 +601,19 @@ int pieceMobility(const Board &board, const PieceOnBoard &piece,
     return moves;
 }
 
-int evaluateMaterialAndPlacement(const BoardAnalysis &analysis) {
-    int score = 0;
+TaperedScore evaluateMaterialAndPlacement(const BoardAnalysis &analysis) {
+    TaperedScore score;
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         const int sign = signFor(piece.color);
-        score += sign * HeuristicEval::pieceValue(piece.type);
+        score += sign * bothPhases(HeuristicEval::pieceValue(piece.type));
 
         const int square = relativeSquare(piece.color, piece.row, piece.column);
         if (piece.type == Rules::PieceType::King) {
-            score += sign * interpolate(KingMiddleGamePST[square],
-                                        KingEndGamePST[square], analysis.phase);
+            score += sign * TaperedScore{KingMiddleGamePST[square],
+                                         KingEndGamePST[square]};
         } else if (const auto *pst = pieceSquareTable(piece.type)) {
-            score += sign * (*pst)[square];
+            score += sign * bothPhases((*pst)[square]);
         }
 
         if (piece.type == Rules::PieceType::Rook) {
@@ -581,17 +625,19 @@ int evaluateMaterialAndPlacement(const BoardAnalysis &analysis) {
                                                    : analysis.whitePawnCounts;
             if (ownPawns[piece.column] == 0) {
                 score += sign * (enemyPawns[piece.column] == 0
-                                     ? P.rookOpenFileBonus
-                                     : P.rookSemiOpenFileBonus);
+                                     ? TaperedScore{P.rookOpenFileMG,
+                                                    P.rookOpenFileEG}
+                                     : TaperedScore{P.rookSemiOpenFileMG,
+                                                    P.rookSemiOpenFileEG});
             }
             if (relativeRank(piece.color, piece.row) == 7) {
-                score += sign * P.rookSeventhRankBonus;
+                score += sign * TaperedScore{P.rookSeventhRankMG,
+                                             P.rookSeventhRankEG};
             }
         }
     }
 
-    const int bishopPair =
-        interpolate(P.bishopPairMG, P.bishopPairEG, analysis.phase);
+    const TaperedScore bishopPair{P.bishopPairMG, P.bishopPairEG};
     if (analysis.bishopCounts[0] >= 2) {
         score += bishopPair;
     }
@@ -636,8 +682,25 @@ int countPawnsAhead(const Board &board, Rules::Color color, int row,
     return count;
 }
 
-int evaluatePawnStructure(const Board &board, const BoardAnalysis &analysis) {
-    int score = 0;
+// Whether a rook of `colour` stands behind `pawn` on its file: the square the
+// pawn came from and every square further back.
+bool hasRookBehindPawn(const Board &board, const PieceOnBoard &pawn,
+                       Rules::Color colour) {
+    const int direction = forwardDirection(pawn.color);
+    for (int row = pawn.row - direction; isInside(row, pawn.column);
+         row -= direction) {
+        const auto &piece = board[row][pawn.column];
+        if (piece.has_value() && piece->type == Rules::PieceType::Rook &&
+            piece->color == colour) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TaperedScore evaluatePawnStructure(const Board &board,
+                                   const BoardAnalysis &analysis) {
+    TaperedScore score;
 
     for (const Rules::Color color :
          {Rules::Color::White, Rules::Color::Black}) {
@@ -647,13 +710,17 @@ int evaluatePawnStructure(const Board &board, const BoardAnalysis &analysis) {
                                  : analysis.blackPawnCounts;
         for (int file = 0; file < 8; ++file) {
             if (counts[file] > 1) {
-                score += sign * (-(counts[file] - 1) * P.doubledPawnPenalty);
+                score -= sign * (counts[file] - 1) *
+                         TaperedScore{P.doubledPawnPenaltyMG,
+                                      P.doubledPawnPenaltyEG};
             }
             const bool hasAdjacentPawns =
                 (file > 0 && counts[file - 1] > 0) ||
                 (file < 7 && counts[file + 1] > 0);
             if (!hasAdjacentPawns) {
-                score += sign * (-P.isolatedPawnPenalty * counts[file]);
+                score -= sign * counts[file] *
+                         TaperedScore{P.isolatedPawnPenaltyMG,
+                                      P.isolatedPawnPenaltyEG};
             }
         }
     }
@@ -684,7 +751,8 @@ int evaluatePawnStructure(const Board &board, const BoardAnalysis &analysis) {
             }
         }
         if (supportedByPawn) {
-            score += sign * P.supportedPawnBonus;
+            score += sign * TaperedScore{P.supportedPawnBonusMG,
+                                         P.supportedPawnBonusEG};
         }
 
         const auto &ownCounts = piece.color == Rules::Color::White
@@ -733,41 +801,47 @@ int evaluatePawnStructure(const Board &board, const BoardAnalysis &analysis) {
                 }
             }
             if (!canBeSupported && enemyAhead) {
-                score += sign * -P.backwardPawnPenalty;
+                score -= sign * TaperedScore{P.backwardPawnPenaltyMG,
+                                             P.backwardPawnPenaltyEG};
             }
         }
 
         if (passed) {
             const int rank = relativeRank(piece.color, piece.row);
-            int bonus = P.passedPawnBase + rank * P.passedPawnRankBonus;
-            // Passed pawns grow in strength as the board empties out.
-            bonus = interpolate(
-                bonus, bonus * P.passedPawnEndgameScalePercent / 100,
-                analysis.phase);
+            TaperedScore bonus{
+                P.passedPawnBaseMG + rank * P.passedPawnRankBonusMG,
+                P.passedPawnBaseEG + rank * P.passedPawnRankBonusEG};
 
             const int aheadRow = piece.row + direction;
             if (isInside(aheadRow, piece.column)) {
                 if (board[aheadRow][piece.column].has_value()) {
-                    bonus -= P.passedPawnBlockedPenalty;
+                    bonus -= TaperedScore{P.passedPawnBlockedPenaltyMG,
+                                          P.passedPawnBlockedPenaltyEG};
                 } else if ((piece.color == Rules::Color::White
                                 ? analysis.blackPawnCounts
                                 : analysis.whitePawnCounts)[piece.column] > 0) {
-                    bonus -= P.passedPawnControlledPenalty;
+                    bonus -= TaperedScore{P.passedPawnControlledPenaltyMG,
+                                          P.passedPawnControlledPenaltyEG};
                 }
             }
 
-            // A friendly rook behind the pawn escorts it to promotion.
-            for (int r = piece.row - direction; isInside(r, piece.column);
-                 r -= direction) {
-                const auto &behind = board[r][piece.column];
-                if (behind.has_value() &&
-                    behind->type == Rules::PieceType::Rook &&
-                    behind->color == piece.color) {
-                    bonus += P.passedPawnRookBehind;
-                    break;
-                }
+            // A rook belongs behind a passed pawn: the owner's rook escorts it
+            // to promotion, an enemy rook blockades it from behind.
+            if (hasRookBehindPawn(board, piece, piece.color)) {
+                bonus += TaperedScore{P.passedPawnRookBehindMG,
+                                      P.passedPawnRookBehindEG};
             }
-            score += sign * std::max(bonus, 0);
+            if (hasRookBehindPawn(
+                    board, piece,
+                    piece.color == Rules::Color::White ? Rules::Color::Black
+                                                       : Rules::Color::White)) {
+                bonus -= TaperedScore{P.passedPawnEnemyRookBehindMG,
+                                      P.passedPawnEnemyRookBehindEG};
+            }
+
+            score += sign *
+                     TaperedScore{std::max(bonus.middleGame, 0),
+                                  std::max(bonus.endGame, 0)};
         } else {
             // A candidate is a non-passed pawn whose span contains at least as
             // many friendly pawns as enemy ones.
@@ -781,33 +855,36 @@ int evaluatePawnStructure(const Board &board, const BoardAnalysis &analysis) {
                                 piece.row, piece.column, direction);
             if (supportedByPawn && ownAhead > 0 && ownAhead >= enemyAhead) {
                 const int rank = relativeRank(piece.color, piece.row);
-                score += sign *
-                         (P.candidatePawnBonus +
-                          rank * P.candidatePawnRankBonus);
+                score += sign * TaperedScore{
+                                    P.candidatePawnBonusMG +
+                                        rank * P.candidatePawnRankBonusMG,
+                                    P.candidatePawnBonusEG +
+                                        rank * P.candidatePawnRankBonusEG};
             }
         }
     }
     return score;
 }
 
-int evaluateMobility(const Board &board, const BoardAnalysis &analysis,
-                     const AttackMap &whitePawnAttacks,
-                     const AttackMap &blackPawnAttacks) {
-    int score = 0;
+TaperedScore evaluateMobility(const Board &board, const BoardAnalysis &analysis,
+                              const AttackMap &whitePawnAttacks,
+                              const AttackMap &blackPawnAttacks) {
+    TaperedScore score;
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         const AttackMap &enemyPawnAttacks =
             piece.color == Rules::Color::White ? blackPawnAttacks
                                                : whitePawnAttacks;
-        score += signFor(piece.color) * mobilityWeight(piece.type, analysis.phase) *
-                 pieceMobility(board, piece, enemyPawnAttacks);
+        score += signFor(piece.color) *
+                 (pieceMobility(board, piece, enemyPawnAttacks) *
+                  mobilityWeight(piece.type));
     }
     return score;
 }
 
-int evaluateThreats(const BoardAnalysis &analysis,
-                    const AttackInfo &white, const AttackInfo &black) {
-    int score = 0;
+TaperedScore evaluateThreats(const BoardAnalysis &analysis,
+                            const AttackInfo &white, const AttackInfo &black) {
+    TaperedScore score;
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         if (piece.type == Rules::PieceType::King ||
@@ -827,20 +904,22 @@ int evaluateThreats(const BoardAnalysis &analysis,
         const int value = HeuristicEval::pieceValue(piece.type);
         if (!own.squares[piece.row][piece.column]) {
             // Attacked and undefended: the opponent can simply take it.
-            score -= sign * (value / P.hangingPieceDivisor);
+            score -= sign * bothPhases(value / P.hangingPieceDivisor);
         } else {
             const int cheapest = enemy.cheapest[piece.row][piece.column];
             if (cheapest != 0 && cheapest + P.cheapAttackerMargin < value) {
-                score -= sign * ((value - cheapest) / P.cheapAttackerDivisor);
+                score -=
+                    sign * bothPhases((value - cheapest) / P.cheapAttackerDivisor);
             }
         }
     }
     return score;
 }
 
-int evaluateOutposts(const BoardAnalysis &analysis, const AttackInfo &white,
-                     const AttackInfo &black) {
-    int score = 0;
+TaperedScore evaluateOutposts(const BoardAnalysis &analysis,
+                             const AttackInfo &white,
+                             const AttackInfo &black) {
+    TaperedScore score;
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         if (piece.type != Rules::PieceType::Knight &&
@@ -859,16 +938,17 @@ int evaluateOutposts(const BoardAnalysis &analysis, const AttackInfo &white,
             continue;
         }
 
-        const int bonus = piece.type == Rules::PieceType::Knight
-                              ? P.outpostKnight
-                              : P.outpostBishop;
+        const TaperedScore bonus =
+            piece.type == Rules::PieceType::Knight
+                ? TaperedScore{P.outpostKnightMG, P.outpostKnightEG}
+                : TaperedScore{P.outpostBishopMG, P.outpostBishopEG};
         score += signFor(piece.color) * bonus;
     }
     return score;
 }
 
-int evaluateBadBishops(const BoardAnalysis &analysis) {
-    int score = 0;
+TaperedScore evaluateBadBishops(const BoardAnalysis &analysis) {
+    TaperedScore score;
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
         if (piece.type != Rules::PieceType::Bishop) {
@@ -880,7 +960,7 @@ int evaluateBadBishops(const BoardAnalysis &analysis) {
             analysis.pawnsOnSquareColour[colour][squareColour];
         const int penalty =
             std::min(P.badBishopCap, blockers * P.badBishopPenalty);
-        score += signFor(piece.color) * -penalty;
+        score -= signFor(piece.color) * bothPhases(penalty);
     }
     return score;
 }
@@ -910,8 +990,9 @@ bool hasClearPath(const Board &board, const PieceOnBoard &first,
     return false;
 }
 
-int evaluateConnectedRooks(const Board &board, const BoardAnalysis &analysis) {
-    int score = 0;
+TaperedScore evaluateConnectedRooks(const Board &board,
+                                   const BoardAnalysis &analysis) {
+    TaperedScore score;
     for (const Rules::Color color :
          {Rules::Color::White, Rules::Color::Black}) {
         if (analysis.rookCounts[colorIndex(color)] != 2) {
@@ -932,27 +1013,28 @@ int evaluateConnectedRooks(const Board &board, const BoardAnalysis &analysis) {
         }
         if (first != nullptr && second != nullptr &&
             hasClearPath(board, *first, *second)) {
-            score += signFor(color) * P.connectedRooksBonus;
+            score += signFor(color) *
+                     TaperedScore{P.connectedRooksMG, P.connectedRooksEG};
         }
     }
     return score;
 }
 
-int kingSafety(const Board &board, const BoardAnalysis &analysis,
-               Rules::Color color, const AttackMap &enemyAttacks) {
+TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
+                        Rules::Color color, const AttackMap &enemyAttacks) {
     const int kingRow = color == Rules::Color::White ? analysis.whiteKingRow
                                                      : analysis.blackKingRow;
     const int kingColumn = color == Rules::Color::White
                                ? analysis.whiteKingColumn
                                : analysis.blackKingColumn;
     if (kingRow == NoKingRow) {
-        return 0;
+        return {};
     }
 
-    int score = 0;
+    TaperedScore score;
     const int homeRow = color == Rules::Color::White ? 7 : 0;
     if (kingRow == homeRow && (kingColumn == 2 || kingColumn == 6)) {
-        score += P.castledBonus;
+        score += middleGameOnly(P.castledBonus);
     }
 
     const bool canCastle = color == Rules::Color::White
@@ -961,7 +1043,7 @@ int kingSafety(const Board &board, const BoardAnalysis &analysis,
                                : (analysis.blackCanCastleKingSide ||
                                   analysis.blackCanCastleQueenSide);
     if (canCastle) {
-        score += P.castlingRightsBonus * analysis.phase / MaxPhase;
+        score += middleGameOnly(P.castlingRightsBonus);
     }
 
     // Attacked squares in the king's neighbourhood expose it to tactics.
@@ -973,10 +1055,14 @@ int kingSafety(const Board &board, const BoardAnalysis &analysis,
             }
         }
     }
-    score -= P.kingAttackPenalty * attackedSquares * analysis.phase / MaxPhase;
+    score -= attackedSquares * middleGameOnly(P.kingAttackPenalty);
 
     // The pawns in front of the king form its shelter; the closer they are,
-    // the better.
+    // the better. The shelter keeps a reduced endgame value: even with few
+    // pieces left the king prefers pawns in front of it.
+    const TaperedScore shelter{
+        P.kingShelterBonus,
+        P.kingShelterBonus * P.kingShelterEndgamePercent / 100};
     const int forward = forwardDirection(color);
     for (int file = std::max(0, kingColumn - 1);
          file <= std::min(7, kingColumn + 1); ++file) {
@@ -996,15 +1082,13 @@ int kingSafety(const Board &board, const BoardAnalysis &analysis,
             }
         }
         if (found) {
-            if (distance == 1) {
-                score += P.kingShelterBonus;
-            } else if (distance == 2) {
-                score += P.kingShelterBonus * P.kingShelterSecondRankPercent /
-                         100;
-            } else {
-                score += P.kingShelterBonus * P.kingShelterThirdRankPercent /
-                         100;
-            }
+            const int percent = distance == 1
+                                    ? 100
+                                    : (distance == 2
+                                           ? P.kingShelterSecondRankPercent
+                                           : P.kingShelterThirdRankPercent);
+            score += TaperedScore{shelter.middleGame * percent / 100,
+                                  shelter.endGame * percent / 100};
         }
     }
 
@@ -1021,7 +1105,7 @@ int kingSafety(const Board &board, const BoardAnalysis &analysis,
             }
         }
         if (!hasOwnPawn) {
-            score -= P.openFileNearKingPenalty * analysis.phase / MaxPhase;
+            score -= middleGameOnly(P.openFileNearKingPenalty);
         }
     }
 
@@ -1037,19 +1121,80 @@ int kingSafety(const Board &board, const BoardAnalysis &analysis,
         }
         const int rank = relativeRank(piece.color, piece.row);
         if (rank >= 5) {
-            score -= P.kingPawnStormPenalty * (rank - 4) * analysis.phase /
-                     MaxPhase;
+            score -= (rank - 4) * middleGameOnly(P.kingPawnStormPenalty);
         }
     }
 
     return score;
 }
 
-int evaluateKingSafety(const Board &board, const BoardAnalysis &analysis,
-                       const AttackMap &whiteAttacks,
-                       const AttackMap &blackAttacks) {
-    return kingSafety(board, analysis, Rules::Color::White, blackAttacks) -
-           kingSafety(board, analysis, Rules::Color::Black, whiteAttacks);
+TaperedScore evaluateKingSafety(const Board &board,
+                                const BoardAnalysis &analysis,
+                                const AttackMap &whiteAttacks,
+                                const AttackMap &blackAttacks) {
+    TaperedScore score =
+        kingSafety(board, analysis, Rules::Color::White, blackAttacks);
+    score -= kingSafety(board, analysis, Rules::Color::Black, whiteAttacks);
+    return score;
+}
+
+// Chessboard distance from the centre: zero in the middle, three on an edge or
+// in a corner. The mop-up uses it to push the enemy king outwards.
+int centreDistance(int row, int column) {
+    const int rowDistance = std::max({0, 3 - row, row - 4});
+    const int columnDistance = std::max({0, 3 - column, column - 4});
+    return std::max(rowDistance, columnDistance);
+}
+
+int manhattanDistance(int firstRow, int firstColumn, int secondRow,
+                      int secondColumn) {
+    return std::abs(firstRow - secondRow) + std::abs(firstColumn - secondColumn);
+}
+
+// Mop-up for the stronger side: drive the enemy king to the edge and bring the
+// own king closer. Only the endgame half of the score is filled in, so the term
+// fades away while pieces are still on the board.
+TaperedScore mopUpFor(Rules::Color strong, const BoardAnalysis &analysis) {
+    const bool strongIsWhite = strong == Rules::Color::White;
+    const int strongRow =
+        strongIsWhite ? analysis.whiteKingRow : analysis.blackKingRow;
+    const int strongColumn =
+        strongIsWhite ? analysis.whiteKingColumn : analysis.blackKingColumn;
+    const int weakRow =
+        strongIsWhite ? analysis.blackKingRow : analysis.whiteKingRow;
+    const int weakColumn =
+        strongIsWhite ? analysis.blackKingColumn : analysis.whiteKingColumn;
+    if (strongRow == NoKingRow || weakRow == NoKingRow) {
+        return {};
+    }
+
+    const int edge = centreDistance(weakRow, weakColumn);
+    // The kings are at most fourteen Manhattan steps apart.
+    const int proximity =
+        14 - manhattanDistance(strongRow, strongColumn, weakRow, weakColumn);
+    return {0, edge * P.mopUpEdgeBonus + proximity * P.mopUpKingProximityBonus};
+}
+
+// Sum of the material on the board from White's point of view.
+int materialBalance(const BoardAnalysis &analysis) {
+    int balance = 0;
+    for (int index = 0; index < analysis.pieceCount; ++index) {
+        const PieceOnBoard &piece = analysis.pieces[index];
+        balance += signFor(piece.color) * HeuristicEval::pieceValue(piece.type);
+    }
+    return balance;
+}
+
+TaperedScore evaluateEndgameMopUp(const BoardAnalysis &analysis) {
+    const int balance = materialBalance(analysis);
+    if (balance >= P.mopUpMaterialThreshold) {
+        return mopUpFor(Rules::Color::White, analysis);
+    }
+    if (balance <= -P.mopUpMaterialThreshold) {
+        const TaperedScore score = mopUpFor(Rules::Color::Black, analysis);
+        return {-score.middleGame, -score.endGame};
+    }
+    return {};
 }
 
 // Delegates the material-draw decision to the rules engine so the score the UI
@@ -1099,6 +1244,59 @@ bool isOppositeColourBishopEnding(const BoardAnalysis &analysis, int *num,
     return true;
 }
 
+// A lone bishop with only rook pawns of its wrong colour cannot promote
+// against a bare king: the defender walks to the corner the bishop does not
+// control. The position is drawn whatever the material says, so the evaluator
+// scores it as such.
+bool isWrongColouredRookPawnEnding(const BoardAnalysis &analysis) {
+    for (int colour = 0; colour < 2; ++colour) {
+        const int other = 1 - colour;
+        if (analysis.bishopCounts[colour] != 1 ||
+            analysis.knightCounts[colour] != 0 ||
+            analysis.rookCounts[colour] != 0 ||
+            analysis.queenCounts[colour] != 0) {
+            continue;
+        }
+        // The defender must be a bare king for the corner to be a safe haven.
+        if (analysis.knightCounts[other] != 0 ||
+            analysis.bishopCounts[other] != 0 ||
+            analysis.rookCounts[other] != 0 ||
+            analysis.queenCounts[other] != 0 ||
+            analysis.pawnTotals[other] != 0) {
+            continue;
+        }
+
+        const auto &pawnCounts = colour == 0 ? analysis.whitePawnCounts
+                                             : analysis.blackPawnCounts;
+        if (analysis.pawnTotals[colour] == 0) {
+            continue;
+        }
+        int rookPawns = 0;
+        for (int file = 1; file < 7; ++file) {
+            rookPawns += pawnCounts[file];
+        }
+        if (rookPawns != 0) {
+            continue;
+        }
+        // One of the two rook-pawn files is always playable, so only a single
+        // file can be wrong-coloured.
+        const bool pawnsOnAFile = pawnCounts[0] > 0;
+        const bool pawnsOnHFile = pawnCounts[7] > 0;
+        if (pawnsOnAFile == pawnsOnHFile) {
+            continue;
+        }
+
+        // The a-pawn promotes on an even square, the h-pawn on an odd one.
+        const bool bishopOnEvenSquares =
+            analysis.bishopSquareColourCounts[colour][0] == 1;
+        const bool promotionOnEvenSquares = pawnsOnAFile;
+        if (bishopOnEvenSquares != promotionOnEvenSquares) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Classical score of a position from White's perspective. It performs no
 // terminal test (checkmate, stalemate, insufficient material beyond the quick
 // board check): the search handles terminals itself, so a leaf can skip the
@@ -1108,34 +1306,41 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck) {
     if (isInsufficientMaterial(analysis)) {
         return 0;
     }
+    if (isWrongColouredRookPawnEnding(analysis)) {
+        return 0;
+    }
 
     AttackInfo attacksByWhite;
     AttackInfo attacksByBlack;
     buildAttackInfo(board, attacksByWhite, attacksByBlack);
 
-    int score = evaluateMaterialAndPlacement(analysis);
+    TaperedScore score = evaluateMaterialAndPlacement(analysis);
     score += evaluatePawnStructure(board, analysis);
     score += evaluateMobility(board, analysis, attacksByWhite.pawnSquares,
                               attacksByBlack.pawnSquares);
     score += evaluateKingSafety(board, analysis, attacksByWhite.squares,
-                                 attacksByBlack.squares);
+                                attacksByBlack.squares);
     score += evaluateThreats(analysis, attacksByWhite, attacksByBlack);
     score += evaluateOutposts(analysis, attacksByWhite, attacksByBlack);
     score += evaluateBadBishops(analysis);
     score += evaluateConnectedRooks(board, analysis);
-    score += sideToMove == Rules::Color::White ? P.tempoBonus : -P.tempoBonus;
+    score += evaluateEndgameMopUp(analysis);
+    score += (sideToMove == Rules::Color::White ? 1 : -1) *
+             bothPhases(P.tempoBonus);
 
     if (inCheck) {
-        score -= signFor(sideToMove) * P.inCheckPenalty;
+        score -= signFor(sideToMove) * bothPhases(P.inCheckPenalty);
     }
+
+    int value = taperedValue(score, analysis.phase);
 
     int scaleNum = 1;
     int scaleDen = 1;
     if (isOppositeColourBishopEnding(analysis, &scaleNum, &scaleDen)) {
-        score = score * scaleNum / scaleDen;
+        value = value * scaleNum / scaleDen;
     }
 
-    return score;
+    return value;
 }
 
 // ---------------------------------------------------------------------------

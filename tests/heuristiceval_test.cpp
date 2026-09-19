@@ -93,6 +93,8 @@ private slots:
     void testEvalParamsDrivePieceValues();
     void testMaterialDrawsFollowRules();
     void testFiftyMoveAndRepetitionDraws();
+    void testEndgameMopUpDrivesTheKingToTheEdge();
+    void testWrongColouredRookPawnIsDrawn();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -669,6 +671,62 @@ void HeuristicEvalTest::testFiftyMoveAndRepetitionDraws() {
     QVERIFY(repetition.isThreefoldRepetition());
     QCOMPARE(HeuristicEval::evaluateCentipawns(repetition), 0);
     QCOMPARE(HeuristicEval::search(repetition, 2, 2).centipawns, 0);
+}
+
+void HeuristicEvalTest::testEndgameMopUpDrivesTheKingToTheEdge() {
+    // A queen against a bare king: pushing the king into the corner has to
+    // raise the evaluation, and the endgame mop-up is what pays for the push.
+    Rules cornered;
+    QVERIFY(cornered.loadFen(QStringLiteral("k7/8/8/8/8/8/8/K5Q1 w - - 0 1")));
+    Rules central;
+    QVERIFY(central.loadFen(QStringLiteral("8/8/8/3k4/8/8/8/K5Q1 w - - 0 1")));
+
+    const int withMopUp = HeuristicEval::evaluateCentipawns(cornered) -
+                          HeuristicEval::evaluateCentipawns(central);
+
+    // Switching the term off has to remove part of the difference, and the
+    // rest of it must not be a mop-up that fires without an advantage.
+    HeuristicEval::EvalParams disabled = HeuristicEval::params();
+    disabled.mopUpMaterialThreshold = 100'000;
+    HeuristicEval::setParams(disabled);
+    const int withoutMopUp = HeuristicEval::evaluateCentipawns(cornered) -
+                             HeuristicEval::evaluateCentipawns(central);
+    HeuristicEval::resetParams();
+
+    QVERIFY(withMopUp > 0);
+    QVERIFY2(withMopUp > withoutMopUp,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(withMopUp)
+                            .arg(withoutMopUp)));
+
+    // A balanced opening keeps the phase high, where the mop-up is tapered
+    // away and must not disturb the score.
+    Rules opening;
+    const int openingScore = HeuristicEval::evaluateCentipawns(opening);
+    QVERIFY(openingScore > -60);
+    QVERIFY(openingScore < 60);
+}
+
+void HeuristicEvalTest::testWrongColouredRookPawnIsDrawn() {
+    // A bishop that cannot control the promotion square of a rook pawn turns
+    // the extra pawn into nothing: the defending king just walks to the corner.
+    Rules wrongA;
+    QVERIFY(wrongA.loadFen(QStringLiteral("7k/8/8/8/8/8/P7/K1B5 w - - 0 1")));
+    QCOMPARE(HeuristicEval::evaluateCentipawns(wrongA), 0);
+
+    Rules rightA;
+    QVERIFY(rightA.loadFen(QStringLiteral("7k/8/8/8/8/8/P7/KB6 w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(rightA) > 0);
+
+    // The h-pawn promotes on the other square colour, so the two bishops swap
+    // roles.
+    Rules wrongH;
+    QVERIFY(wrongH.loadFen(QStringLiteral("7k/8/8/8/8/8/7P/KB6 w - - 0 1")));
+    QCOMPARE(HeuristicEval::evaluateCentipawns(wrongH), 0);
+
+    Rules rightH;
+    QVERIFY(rightH.loadFen(QStringLiteral("7k/8/8/8/8/8/7P/K1B5 w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(rightH) > 0);
 }
 
 QTEST_MAIN(HeuristicEvalTest)
