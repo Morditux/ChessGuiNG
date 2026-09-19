@@ -4,10 +4,10 @@
 
 #include "uciparser.h"
 
+#include "winprobability.h"
+
 #include <QCoreApplication>
 #include <QRegularExpression>
-#include <algorithm>
-#include <cmath>
 
 std::optional<EngineAnalysisLine> UciParser::parseInfoLine(const QString &line) {
     const QString trimmed = line.trimmed();
@@ -226,20 +226,7 @@ QString UciParser::toUciMove(Rules::Position from, Rules::Position to,
 }
 
 double UciParser::scoreToWinningPercentage(double scoreCp, std::optional<int> mateIn) {
-    if (mateIn.has_value()) {
-        const int mate = *mateIn;
-        if (mate > 0) {
-            return 100.0;
-        }
-        if (mate < 0) {
-            return 0.0;
-        }
-        return 50.0;
-    }
-
-    // Standard winning percentage formula based on centipawns
-    const double winPercentage = 100.0 / (1.0 + std::exp(-0.003682 * scoreCp));
-    return std::clamp(winPercentage, 0.0, 100.0);
+    return WinProbability::fromScore(scoreCp, mateIn);
 }
 
 std::optional<Rules::Move> UciParser::parseMove(const QString &moveText) {

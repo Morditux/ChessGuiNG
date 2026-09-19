@@ -233,7 +233,10 @@ public:
     // This is a display proxy, not a proven win probability.
     [[nodiscard]] static double evaluateDisplayPercentage(const Rules &rules);
 
-    // Converts a centipawn score to a display percentage in [0.0, 100.0].
+    // Winning chance of the side the score belongs to, in [0.0, 100.0], from
+    // the one model the gauge, the curve, the engine score display and the
+    // accuracy of the game report share (see winprobability.h), so two panels
+    // cannot disagree about the same position.
     [[nodiscard]] static double centipawnsToPercentage(double cp);
 
     // Classical piece value in centipawns, shared with the UI so that the

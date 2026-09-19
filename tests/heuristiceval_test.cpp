@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "heuristiceval.h"
+#include "winprobability.h"
 #include "rules.h"
 
 namespace {
@@ -198,15 +199,28 @@ void HeuristicEvalTest::testInitialPositionIsBalanced() {
 }
 
 void HeuristicEvalTest::testCentipawnsToPercentage() {
+    // The gauge, the curve and the accuracy of the game report all read the one
+    // model in winprobability.h, whose calibration puts a pawn at about 59% and
+    // four pawns at about 81%; the numbers below are that curve, so changing it
+    // is a decision and not an accident.
     QCOMPARE(HeuristicEval::centipawnsToPercentage(0.0), 50.0);
     QCOMPARE(HeuristicEval::centipawnsToPercentage(10000.0), 100.0);
     QCOMPARE(HeuristicEval::centipawnsToPercentage(-10000.0), 0.0);
 
+    // Nothing but this model: a second curve would drift away from the report.
+    for (const double cp : {0.0, 150.0, -150.0, 900.0}) {
+        QCOMPARE(HeuristicEval::centipawnsToPercentage(cp),
+                 WinProbability::fromCentipawns(cp));
+    }
+
+    const double plus100 = HeuristicEval::centipawnsToPercentage(100.0);
+    QVERIFY(plus100 > 58.9 && plus100 < 59.3);
+
     const double plus400 = HeuristicEval::centipawnsToPercentage(400.0);
-    QVERIFY(plus400 > 90.0 && plus400 < 92.0);
+    QVERIFY(plus400 > 81.1 && plus400 < 81.6);
 
     const double minus400 = HeuristicEval::centipawnsToPercentage(-400.0);
-    QVERIFY(minus400 > 8.0 && minus400 < 10.0);
+    QVERIFY(minus400 > 18.4 && minus400 < 18.9);
 
     for (double cp = -2000.0; cp <= 2000.0; cp += 100.0) {
         const double p1 = HeuristicEval::centipawnsToPercentage(cp);

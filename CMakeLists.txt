@@ -121,6 +121,9 @@ add_library(chesscore OBJECT
         gatewayclient.h
         heuristiceval.cpp
         heuristiceval.h
+        winprobability.h
+        heuristicsearch.cpp
+        heuristicsearch.h
         pgnannotations.cpp
         pgnannotations.h
         pgnfile.cpp
@@ -262,7 +265,7 @@ if (TARGET Qt6::lupdate AND TARGET Qt6::lrelease AND EXISTS "${CMAKE_CURRENT_SOU
                 enginebackend.cpp enginebackend.h
                 gamecontroller.cpp gamecontroller.h
                 gatewayclient.cpp gatewayclient.h
-                heuristiceval.cpp heuristiceval.h
+                heuristiceval.cpp heuristiceval.h heuristicsearch.cpp heuristicsearch.h
                 pgnfile.cpp pgnfile.h
                 rules.cpp rules.h
                 uciengine.cpp uciengine.h
