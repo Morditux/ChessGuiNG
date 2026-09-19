@@ -242,6 +242,41 @@ double UciParser::scoreToWinningPercentage(double scoreCp, std::optional<int> ma
     return std::clamp(winPercentage, 0.0, 100.0);
 }
 
+std::optional<Rules::Move> UciParser::parseMove(const QString &moveText) {
+    const QString move = moveText.trimmed().toLower();
+    if (move.size() < 4) {
+        return std::nullopt;
+    }
+
+    const auto parseFile = [](QChar file) -> int {
+        return file >= QChar('a') && file <= QChar('h') ? file.toLatin1() - 'a'
+                                                         : -1;
+    };
+    const auto parseRank = [](QChar rank) -> int {
+        return rank >= QChar('1') && rank <= QChar('8') ? 8 - rank.digitValue()
+                                                        : -1;
+    };
+
+    const Rules::Position from{parseRank(move.at(1)), parseFile(move.at(0))};
+    const Rules::Position to{parseRank(move.at(3)), parseFile(move.at(2))};
+    if (!Rules::isInside(from) || !Rules::isInside(to)) {
+        return std::nullopt;
+    }
+
+    Rules::PieceType promotion = Rules::PieceType::None;
+    if (move.size() >= 5) {
+        switch (move.at(4).toLatin1()) {
+        case 'q': promotion = Rules::PieceType::Queen; break;
+        case 'r': promotion = Rules::PieceType::Rook; break;
+        case 'b': promotion = Rules::PieceType::Bishop; break;
+        case 'n': promotion = Rules::PieceType::Knight; break;
+        default: return std::nullopt;
+        }
+    }
+
+    return Rules::Move{from, to, promotion};
+}
+
 QString UciParser::formatScore(double scoreCp, std::optional<int> mateIn) {
     if (mateIn.has_value()) {
         const int mate = *mateIn;

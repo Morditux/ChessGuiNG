@@ -66,6 +66,11 @@ public:
     // Formats a score for display from a single point of view, so that the
     // engine panel and the evaluation bar cannot disagree: "+1.35", "-0.42",
     // "+M3", "-M5", or "Mate" when the mate is already delivered.
+    // Parses a UCI move such as "e2e4" or "e7e8q" into a move; an empty
+    // optional means the text is not a move at all (the caller decides whether
+    // it is legal in its position).
+    [[nodiscard]] static std::optional<Rules::Move> parseMove(const QString &moveText);
+
     [[nodiscard]] static QString formatScore(double scoreCp,
                                             std::optional<int> mateIn = std::nullopt);
 };

@@ -90,6 +90,8 @@ private slots:
     void testSearchIsRepeatableSingleThreaded();
     void testSearchThreadCap();
     void testSearchCacheIsReusedConsistently();
+    void testEvaluationCacheIsTransparent();
+    void testEvaluationCacheFollowsTheParams();
     void testEvalParamsDrivePieceValues();
     void testMaterialDrawsFollowRules();
     void testFiftyMoveAndRepetitionDraws();
@@ -880,6 +882,54 @@ void HeuristicEvalTest::testSearchHonoursCancellationAndDeadline() {
     const auto timedOut = HeuristicEval::search(rules, 8, 2, deadline);
     QVERIFY(timedOut.aborted);
     QVERIFY(timedOut.depth < 8);
+}
+
+void HeuristicEvalTest::testEvaluationCacheIsTransparent() {
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral(
+        "r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9")));
+
+    HeuristicEval::setSearchThreads(1);
+    HeuristicEval::clearSearchCache();
+    const int coldSearch = HeuristicEval::search(rules, 4, 2).centipawns;
+    const int coldStatic = HeuristicEval::evaluateCentipawns(rules);
+
+    // The cache is filled by the search above; a second search and the static
+    // evaluation must not notice it.
+    const int warmSearch = HeuristicEval::search(rules, 4, 2).centipawns;
+    const int warmStatic = HeuristicEval::evaluateCentipawns(rules);
+    HeuristicEval::setSearchThreads(0);
+
+    QCOMPARE(warmSearch, coldSearch);
+    QCOMPARE(warmStatic, coldStatic);
+
+    // Dropping it must not change anything either.
+    HeuristicEval::clearSearchCache();
+    QCOMPARE(HeuristicEval::search(rules, 4, 2).centipawns, coldSearch);
+}
+
+void HeuristicEvalTest::testEvaluationCacheFollowsTheParams() {
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/P7/4K3 w - - 0 1")));
+
+    HeuristicEval::setSearchThreads(1);
+    HeuristicEval::resetParams();
+    // The search fills the evaluation cache with the default weights.
+    const int before = HeuristicEval::search(rules, 3, 2).centipawns;
+
+    HeuristicEval::EvalParams tuned = HeuristicEval::params();
+    tuned.pawnValue = 2 * tuned.pawnValue;
+    HeuristicEval::setParams(tuned);
+    const int tunedScore = HeuristicEval::search(rules, 3, 2).centipawns;
+
+    HeuristicEval::resetParams();
+    const int restored = HeuristicEval::search(rules, 3, 2).centipawns;
+    HeuristicEval::setSearchThreads(0);
+
+    // A stale cached score would have kept the old value for both.
+    QVERIFY2(tunedScore > before,
+             qPrintable(QStringLiteral("%1 vs %2").arg(tunedScore).arg(before)));
+    QCOMPARE(restored, before);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

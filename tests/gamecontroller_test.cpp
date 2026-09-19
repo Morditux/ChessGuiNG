@@ -195,6 +195,8 @@ private slots:
     void testAnalysisSettings();
     void testEvaluationBreakdownAndHeuristicHint();
     void testEvaluationDepthSetting();
+    void testEvaluationCurveIsComputedInTheBackground();
+    void testEvaluationCurveCanBeCancelled();
 };
 
 void GameControllerTest::initTestCase() {
@@ -231,7 +233,9 @@ void GameControllerTest::testLoadFen() {
     QVERIFY(controller.pgnText().contains(QStringLiteral("Position loaded from FEN.")));
     QCOMPARE(positionSpy.count(), 1);
     QCOMPARE(historySpy.count(), 1);
-    QCOMPARE(evaluationSpy.count(), 1);
+    // The static evaluation is published at once and its background search
+    // refinement follows, so at least one update is guaranteed.
+    QVERIFY(evaluationSpy.count() >= 1);
 
     QVERIFY(!controller.loadFen(QStringLiteral("not a fen")));
     QCOMPARE(controller.initialFen(), fen);
@@ -297,7 +301,9 @@ void GameControllerTest::testNewGame() {
     QVERIFY(!controller.isEngineAnalyzing());
     QCOMPARE(positionSpy.count(), 1);
     QCOMPARE(historySpy.count(), 1);
-    QCOMPARE(evaluationSpy.count(), 1);
+    // The static evaluation is published at once and its background search
+    // refinement follows, so at least one update is guaranteed.
+    QVERIFY(evaluationSpy.count() >= 1);
     QCOMPARE(computerStateSpy.count(), 1);
     QCOMPARE(computerStateSpy.at(0).at(0).toBool(), false);
 
@@ -1495,7 +1501,7 @@ void GameControllerTest::testEvaluationBreakdownAndHeuristicHint() {
     // search of the live evaluation, and it is a legal move.
     QVERIFY(!controller.isEngineConnected());
     controller.setRecommendedMovePreviewEnabled(true);
-    QVERIFY(recommendedSpy.count() > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(recommendedSpy.count() > 0, WaitTimeout);
     const auto preview =
         recommendedSpy.last().at(0).value<std::optional<Rules::Move>>();
     QVERIFY(preview.has_value());
@@ -1509,7 +1515,10 @@ void GameControllerTest::testEvaluationBreakdownAndHeuristicHint() {
     controller.setRecommendedMovePreviewEnabled(true);
     QVERIFY(controller.loadFen(QStringLiteral("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")));
     QVERIFY(controller.rules().isGameOver());
-    QVERIFY(!recommendedSpy.last().at(0).value<std::optional<Rules::Move>>().has_value());
+    QTRY_VERIFY_WITH_TIMEOUT(
+        recommendedSpy.count() > 0 &&
+            !recommendedSpy.last().at(0).value<std::optional<Rules::Move>>().has_value(),
+        WaitTimeout);
 }
 
 void GameControllerTest::testEvaluationDepthSetting() {
@@ -1537,6 +1546,66 @@ void GameControllerTest::testEvaluationDepthSetting() {
     QCOMPARE(controller.evaluationCurve().size(), 1);
     const double start = controller.evaluationCurve().first();
     QVERIFY(start >= 0.0 && start <= 100.0);
+}
+
+void GameControllerTest::testEvaluationCurveIsComputedInTheBackground() {
+    GameController controller;
+    QSignalSpy progressSpy(&controller,
+                           &GameController::evaluationCurveProgressChanged);
+    QSignalSpy curveSpy(&controller, &GameController::evaluationCurveChanged);
+
+    // The static pass is synchronous, so the curve is complete and in range
+    // before the worker has searched anything.
+    QVERIFY(controller.loadPgn(QStringLiteral(
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 *")));
+    const int expectedPoints = controller.uciMoves().size() + 1;
+    QCOMPARE(controller.evaluationCurve().size(), expectedPoints);
+    QVERIFY(progressSpy.count() > 0);
+    QCOMPARE(progressSpy.first().at(1).toInt(), expectedPoints);
+
+    // The worker then walks the same curve and reports its progress.
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.isEvaluationCurveComputing(),
+                             WaitTimeout);
+    QCOMPARE(controller.evaluationCurve().size(), expectedPoints);
+    for (const double value : controller.evaluationCurve()) {
+        QVERIFY(value >= 0.0 && value <= 100.0);
+    }
+
+    int highestProgress = 0;
+    for (const QList<QVariant> &arguments : progressSpy) {
+        highestProgress = qMax(highestProgress, arguments.at(0).toInt());
+    }
+    QCOMPARE(highestProgress, expectedPoints);
+    QVERIFY(curveSpy.count() > 0);
+
+    // A game change restarts the computation for the new line.
+    QVERIFY(controller.loadPgn(QStringLiteral("1. d4 d5 *")));
+    QCOMPARE(controller.evaluationCurve().size(), 3);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.isEvaluationCurveComputing(),
+                             WaitTimeout);
+    QCOMPARE(controller.evaluationCurve().size(), 3);
+}
+
+void GameControllerTest::testEvaluationCurveCanBeCancelled() {
+    GameController controller;
+    // A deep curve is slow enough that the cancel below matters, and the
+    // single thread keeps the expectations deterministic.
+    HeuristicEval::setSearchThreads(1);
+    controller.setEvaluationDepth(HeuristicEval::MaxSearchDepth);
+    QVERIFY(controller.loadPgn(QStringLiteral(
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 "
+        "7. Bb3 d6 8. c3 O-O 9. h3 Nb8 10. d4 Nbd7 *")));
+
+    const QVector<double> staticCurve = controller.evaluationCurve();
+    QCOMPARE(staticCurve.size(), controller.uciMoves().size() + 1);
+    QVERIFY(controller.isEvaluationCurveComputing());
+
+    controller.cancelEvaluationCurve();
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.isEvaluationCurveComputing(),
+                             WaitTimeout);
+    // The cancelled computation leaves the instant curve in place.
+    QCOMPARE(controller.evaluationCurve(), staticCurve);
+    HeuristicEval::setSearchThreads(0);
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)

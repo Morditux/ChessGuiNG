@@ -6,11 +6,14 @@
 
 #include "gamecontroller.h"
 
+#include "curveworker.h"
+
 #include "gatewayclient.h"
 #include "pgnfile.h"
 #include "uciengine.h"
 #include "uciparser.h"
 
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
@@ -27,7 +30,29 @@ GameController::GameController(QObject *parent)
     , engine_(new UciEngine(this))
     , gateway_(new ChessGatewayClient(this)) {
     plyAnnotations_.resize(1);
-    rebuildEvaluationCurve();
+
+    // The curve runs one search per ply, so it lives on its own thread. The
+    // worker can be stopped from here without a queued call because it only
+    // polls atomic flags while it searches.
+    curveThread_ = new QThread(this);
+    curveWorker_ = new CurveWorker;
+    curveWorker_->moveToThread(curveThread_);
+    connect(curveThread_, &QThread::finished, curveWorker_, &QObject::deleteLater);
+    connect(this, &GameController::curveComputeRequested, curveWorker_,
+            &CurveWorker::computeCurve);
+    connect(this, &GameController::positionEvaluationRequested, curveWorker_,
+            &CurveWorker::evaluatePosition);
+    connect(curveWorker_, &CurveWorker::progress, this,
+            &GameController::onCurveProgress);
+    connect(curveWorker_, &CurveWorker::curveReady, this,
+            &GameController::onCurveReady);
+    connect(curveWorker_, &CurveWorker::cancelled, this,
+            &GameController::onCurveCancelled);
+    connect(curveWorker_, &CurveWorker::evaluationReady, this,
+            &GameController::onEvaluationReady);
+    curveThread_->start();
+
+    requestEvaluationCurve();
     connect(engine_, &EngineBackend::stateChanged,
             this, [this](EngineBackend::State) { handleEngineStateChanged(); });
     connect(engine_, &EngineBackend::analysisUpdated,
@@ -53,6 +78,19 @@ GameController::GameController(QObject *parent)
             this, &GameController::onEngineTimedMove);
     connect(gateway_, &EngineBackend::bestMoveReceived,
             this, &GameController::onAuditBestMove);
+}
+
+GameController::~GameController() {
+    if (curveWorker_ != nullptr) {
+        // Thread safe and non-blocking: the worker polls this while it
+        // searches, so the thread stops in milliseconds instead of after a
+        // whole curve.
+        curveWorker_->stop();
+    }
+    if (curveThread_ != nullptr) {
+        curveThread_->quit();
+        curveThread_->wait();
+    }
 }
 
 void GameController::handleEngineStateChanged() {
@@ -200,7 +238,7 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
     whiteToMove_ = (rules_.currentPlayer() == Rules::Color::White);
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
-    rebuildEvaluationCurve();
+    requestEvaluationCurve();
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -238,7 +276,7 @@ void GameController::newGame() {
     whiteToMove_ = true;
     pgnMoveNumber_ = 1;
     moveCursor_ = 0;
-    rebuildEvaluationCurve();
+    requestEvaluationCurve();
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -304,7 +342,7 @@ bool GameController::loadPgn(const QString &pgnContent) {
         if (audit.isValid()) auditFindings_.append({audit.severity, ply, audit.centipawnLoss,
                                                     audit.bestMove, audit.forcedMate});
     }
-    rebuildEvaluationCurve();
+    requestEvaluationCurve();
 
     emit computerGameStateChanged(false);
     emit positionChanged();
@@ -480,9 +518,7 @@ bool GameController::takeBack() {
     if (plyAnnotations_.size() > remaining + 1) {
         plyAnnotations_.resize(remaining + 1);
     }
-    if (evaluationCurve_.size() > remaining + 1) {
-        evaluationCurve_.resize(remaining + 1);
-    }
+    truncateCurve(remaining + 1);
 
     moveCursor_ = remaining;
     rebuildPositionToCursor();
@@ -627,7 +663,7 @@ void GameController::onEngineTimedMove(const QString &bestMove,
         return;
     }
 
-    const auto move = parseUciMove(bestMove);
+    const auto move = UciParser::parseMove(bestMove);
     if (!move.has_value() || !rules_.isValidMove(*move) ||
         !recordMove(*move)) {
         finishComputerGame(
@@ -749,7 +785,7 @@ void GameController::setRecommendedMovePreviewEnabled(bool enabled) {
     }
     if (enabled) {
         startMovePreviewAnalysis();
-        updateHintPreview(HeuristicEval::search(rules_));
+        requestEvaluationRefinement();
     }
 }
 
@@ -762,7 +798,7 @@ void GameController::setEvaluationDepth(int depth) {
 }
 
 void GameController::refreshEvaluation() {
-    rebuildEvaluationCurve();
+    requestEvaluationCurve();
     updateEvaluation();
 }
 
@@ -773,33 +809,70 @@ int GameController::evaluationCentipawns(const Rules &rules) const {
 }
 
 void GameController::updateEvaluation() {
-    // A short search in front of the classical evaluation so that immediate
-    // tactics and mates inside the horizon are reflected; a mate already on
-    // the board is reported as exactly MateScore with a distance of zero.
-    const HeuristicEval::SearchResult result =
-        HeuristicEval::search(rules_, evaluationDepth_);
+    // The static evaluation is instant, so the gauge, the score text and the
+    // tooltip answer at once; the search that sees immediate tactics and the
+    // mates inside the horizon runs on the worker and refines them a moment
+    // later.
+    const HeuristicEval::EvalBreakdown breakdown =
+        HeuristicEval::evaluateBreakdown(rules_);
+    // A checkmate already on the board is reported as exactly MateScore, which
+    // the score text labels "Mate" whatever the distance the search would find.
+    const std::optional<int> staticMate =
+        std::abs(breakdown.total) >= HeuristicEval::MateScore
+            ? std::optional<int>(0)
+            : std::nullopt;
     emit evaluationChanged(
-        HeuristicEval::centipawnsToPercentage(result.centipawns));
+        HeuristicEval::centipawnsToPercentage(breakdown.total));
     emit evaluationScoreChanged(
-        UciParser::formatScore(result.centipawns, result.mateIn));
-    emit evaluationBreakdownChanged(HeuristicEval::evaluateBreakdown(rules_));
-    updateHintPreview(result);
+        UciParser::formatScore(breakdown.total, staticMate));
+    emit evaluationBreakdownChanged(breakdown);
+    requestEvaluationRefinement();
+}
+
+void GameController::requestEvaluationRefinement() {
+    const quint64 requestId = ++evaluationRequestId_;
+    // A depth of one answers from the static evaluation and the captures alone,
+    // so there is nothing worth a round trip to the worker.
+    if (evaluationDepth_ <= 1) {
+        updateHintPreview(
+            HeuristicEval::search(rules_, evaluationDepth_).bestMove);
+        return;
+    }
+    emit positionEvaluationRequested(requestId, rules_.toFen(), evaluationDepth_,
+                                     2);
+}
+
+void GameController::onEvaluationReady(
+    quint64 requestId, int centipawns, bool hasMate, int mateIn,
+    const std::optional<Rules::Move> &bestMove) {
+    // A superseded request describes another position, and while the engine is
+    // analysing it owns the score it reports.
+    if (requestId != evaluationRequestId_ || isEngineAnalyzing()) {
+        return;
+    }
+    const std::optional<int> mate =
+        hasMate ? std::optional<int>(mateIn) : std::nullopt;
+    emit evaluationChanged(HeuristicEval::centipawnsToPercentage(centipawns));
+    emit evaluationScoreChanged(UciParser::formatScore(centipawns, mate));
+    // The refinement is also the curve point of the position at the cursor.
+    updateCurvePoint(moveCursor_,
+                     HeuristicEval::centipawnsToPercentage(centipawns));
+    updateHintPreview(bestMove);
 }
 
 void GameController::updateHintPreview(
-    const HeuristicEval::SearchResult &result) {
+    const std::optional<Rules::Move> &bestMove) {
     // The engine draws the recommended-move arrow whenever it is connected, so
-    // the heuristic only steps in without one. It reuses the search the live
-    // evaluation has just run, which therefore costs nothing extra.
+    // the heuristic only steps in without one.
     if (!recommendedMovePreviewEnabled_ || isEngineConnected()) {
         return;
     }
-    if (rules_.isGameOver() || !result.bestMove.has_value() ||
-        !rules_.isValidMove(*result.bestMove)) {
+    if (rules_.isGameOver() || !bestMove.has_value() ||
+        !rules_.isValidMove(*bestMove)) {
         emit recommendedMovePreviewChanged(std::nullopt);
         return;
     }
-    emit recommendedMovePreviewChanged(*result.bestMove);
+    emit recommendedMovePreviewChanged(*bestMove);
 }
 
 bool GameController::canStartGameAudit() const {
@@ -881,7 +954,7 @@ QVector<QString> GameController::mainLineSan() const {
     }
 
     for (const QString &moveText : uciMoves_) {
-        const auto move = parseUciMove(moveText);
+        const auto move = UciParser::parseMove(moveText);
         if (!move.has_value() || !replay.isValidMove(*move)) {
             break;
         }
@@ -894,7 +967,7 @@ QVector<QString> GameController::mainLineSan() const {
 
 QString GameController::sanForUciMove(const Rules &position,
                                       const QString &uciMove) const {
-    const auto move = parseUciMove(uciMove);
+    const auto move = UciParser::parseMove(uciMove);
     if (!move.has_value() || !position.isValidMove(*move)) {
         return uciMove;
     }
@@ -969,29 +1042,139 @@ Rules::Color GameController::sideToMoveAtPly(int ply) const {
     return white ? Rules::Color::White : Rules::Color::Black;
 }
 
-void GameController::rebuildEvaluationCurve() {
-    evaluationCurve_.clear();
-    evaluationCurve_.reserve(uciMoves_.size() + 1);
+void GameController::requestEvaluationCurve() {
+    // Whatever is running was started for another game or another depth.
+    if (curveWorker_ != nullptr) {
+        curveWorker_->cancelRequest(curveRequestId_);
+    }
+    const quint64 requestId = ++curveRequestId_;
+
+    // The static pass is instant, so the graph has a whole curve to draw while
+    // the searched one is on its way; refinements made by the engine belong to
+    // the curve being replaced, so they go.
+    engineCurvePoints_.clear();
+    computeStaticCurve();
+    rebuildMergedCurve();
+
+    curveComputing_ = true;
+    curveCompleted_ = heuristicCurve_.size();
+    curveTotal_ = heuristicCurve_.size();
+    emit evaluationCurveProgressChanged(curveCompleted_, curveTotal_);
+    emit curveComputeRequested(requestId, initialFen_, uciMoves_,
+                               evaluationDepth_, 2);
+}
+
+void GameController::cancelEvaluationCurve() {
+    if (curveWorker_ != nullptr) {
+        curveWorker_->cancelRequest(curveRequestId_);
+    }
+}
+
+bool GameController::isEvaluationCurveComputing() const {
+    return curveComputing_;
+}
+
+void GameController::computeStaticCurve() {
+    heuristicCurve_.clear();
+    heuristicCurve_.reserve(uciMoves_.size() + 1);
 
     Rules replay;
     if (initialFen_.isEmpty() || !replay.loadFen(initialFen_)) {
         replay.reset();
     }
 
-    const auto curvePoint = [this](const Rules &position) {
+    const auto curvePoint = [](const Rules &position) {
         return HeuristicEval::centipawnsToPercentage(
-            evaluationCentipawns(position));
+            static_cast<double>(HeuristicEval::evaluateCentipawns(position)));
     };
-    evaluationCurve_.append(curvePoint(replay));
+    heuristicCurve_.append(curvePoint(replay));
     for (const QString &uci : std::as_const(uciMoves_)) {
-        const auto move = parseUciMove(uci);
+        const auto move = UciParser::parseMove(uci);
         if (!move.has_value() || !replay.tryMove(*move)) {
             break;
         }
-        evaluationCurve_.append(curvePoint(replay));
+        heuristicCurve_.append(curvePoint(replay));
     }
+}
 
+void GameController::rebuildMergedCurve() {
+    evaluationCurve_ = heuristicCurve_;
+    for (auto it = engineCurvePoints_.constBegin();
+         it != engineCurvePoints_.constEnd(); ++it) {
+        if (it.key() >= 0 && it.key() < evaluationCurve_.size()) {
+            evaluationCurve_[it.key()] = it.value();
+        }
+    }
     emit evaluationCurveChanged();
+}
+
+void GameController::truncateCurve(int size) {
+    const int bounded = std::max(size, 1);
+    if (heuristicCurve_.size() > bounded) {
+        heuristicCurve_.resize(bounded);
+    }
+    if (evaluationCurve_.size() > bounded) {
+        evaluationCurve_.resize(bounded);
+    }
+    for (auto it = engineCurvePoints_.begin(); it != engineCurvePoints_.end();) {
+        if (it.key() >= bounded) {
+            it = engineCurvePoints_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void GameController::updateCurvePoint(int ply, double winPct) {
+    if (ply < 0 || ply >= heuristicCurve_.size() ||
+        heuristicCurve_.at(ply) == winPct) {
+        return;
+    }
+    heuristicCurve_[ply] = winPct;
+    rebuildMergedCurve();
+}
+
+void GameController::setEngineCurvePoint(int ply, double winPct) {
+    if (ply < 0 || ply >= heuristicCurve_.size()) {
+        return;
+    }
+    if (engineCurvePoints_.contains(ply) &&
+        engineCurvePoints_.value(ply) == winPct) {
+        return;
+    }
+    engineCurvePoints_.insert(ply, winPct);
+    rebuildMergedCurve();
+}
+
+void GameController::onCurveProgress(quint64 requestId, int completed,
+                                     int total) {
+    if (requestId != curveRequestId_) {
+        return;
+    }
+    curveCompleted_ = completed;
+    curveTotal_ = total;
+    emit evaluationCurveProgressChanged(completed, total);
+}
+
+void GameController::onCurveReady(quint64 requestId,
+                                  const QVector<double> &curve) {
+    if (requestId != curveRequestId_) {
+        return;
+    }
+    curveComputing_ = false;
+    if (curve.size() >= 1) {
+        heuristicCurve_ = curve;
+        rebuildMergedCurve();
+    }
+    emit evaluationCurveProgressChanged(curveTotal_, curveTotal_);
+}
+
+void GameController::onCurveCancelled(quint64 requestId) {
+    if (requestId != curveRequestId_) {
+        return;
+    }
+    curveComputing_ = false;
+    emit evaluationCurveProgressChanged(curveCompleted_, curveTotal_);
 }
 
 QString GameController::formattedCommentAt(int ply) const {
@@ -1024,7 +1207,7 @@ QString GameController::buildPgnMovetext() const {
 
     bool previousWhiteHadComment = false;
     for (int i = 0; i < uciMoves_.size(); ++i) {
-        const auto move = parseUciMove(uciMoves_.at(i));
+        const auto move = UciParser::parseMove(uciMoves_.at(i));
         if (!move.has_value() || !replay.isValidMove(*move)) {
             break;
         }
@@ -1352,7 +1535,7 @@ void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
     }
 
     std::optional<Rules::Move> recommendedMove;
-    if (const auto firstMove = parseUciMove(moves.first());
+    if (const auto firstMove = UciParser::parseMove(moves.first());
         firstMove.has_value() && rules_.isValidMove(*firstMove)) {
         recommendedMove = firstMove;
     }
@@ -1361,7 +1544,7 @@ void GameController::updateMovePreviews(const EngineAnalysisLine &line) {
     if (computerGameActive_) {
         Rules projectedRules = rules_;
         for (const QString &moveText : moves) {
-            const auto move = parseUciMove(moveText);
+            const auto move = UciParser::parseMove(moveText);
             if (!move.has_value() || !projectedRules.isValidMove(*move)) {
                 break;
             }
@@ -1415,11 +1598,8 @@ void GameController::onAnalysisLine(const EngineAnalysisLine &line) {
         // cursor, so the curve takes the engine score for that ply: wherever
         // the engine has looked, the curve and the evaluation bar agree.
         // During an audit the lines belong to another position.
-        if (!auditActive_ && moveCursor_ >= 0 &&
-            moveCursor_ < evaluationCurve_.size() &&
-            evaluationCurve_.at(moveCursor_) != winPct) {
-            evaluationCurve_[moveCursor_] = winPct;
-            emit evaluationCurveChanged();
+        if (!auditActive_) {
+            setEngineCurvePoint(moveCursor_, winPct);
         }
     }
 }
@@ -1439,8 +1619,8 @@ void GameController::onAuditBestMove(const QString &bestMove, const QString &pon
 
     // The curve sharpens as the audit walks the main line: the engine score
     // replaces the heuristic one for the position just analysed.
-    if (auditPosition_ < evaluationCurve_.size() &&
-        (auditLatestLine_->scoreCp.has_value() || auditLatestLine_->mateIn.has_value())) {
+    if (auditLatestLine_->scoreCp.has_value() ||
+        auditLatestLine_->mateIn.has_value()) {
         const bool whiteToMoveHere =
             sideToMoveAtPly(auditPosition_) == Rules::Color::White;
         const double centipawns = auditLatestLine_->scoreCp.value_or(0.0);
@@ -1448,9 +1628,10 @@ void GameController::onAuditBestMove(const QString &bestMove, const QString &pon
         if (mateForWhite.has_value() && !whiteToMoveHere) {
             mateForWhite = -(*mateForWhite);
         }
-        evaluationCurve_[auditPosition_] = UciParser::scoreToWinningPercentage(
-            whiteToMoveHere ? centipawns : -centipawns, mateForWhite);
-        emit evaluationCurveChanged();
+        setEngineCurvePoint(
+            auditPosition_,
+            UciParser::scoreToWinningPercentage(
+                whiteToMoveHere ? centipawns : -centipawns, mateForWhite));
     }
 
     ++auditPosition_;
@@ -1599,7 +1780,7 @@ void GameController::finishGameAudit(bool applyResults, const QString &message) 
                 findings.append(finding);
             }
 
-            if (const auto played = parseUciMove(uciMoves_.at(ply - 1));
+            if (const auto played = UciParser::parseMove(uciMoves_.at(ply - 1));
                 played.has_value() && replay.isValidMove(*played)) {
                 replay.tryMove(*played);
             }
@@ -1683,9 +1864,7 @@ bool GameController::recordMove(const Rules::Move &move) {
         if (plyAnnotations_.size() > moveCursor_ + 1) {
             plyAnnotations_.resize(moveCursor_ + 1);
         }
-        if (evaluationCurve_.size() > moveCursor_ + 1) {
-            evaluationCurve_.resize(moveCursor_ + 1);
-        }
+        truncateCurve(moveCursor_ + 1);
         rebuildPgnHistory();
     }
 
@@ -1694,11 +1873,12 @@ bool GameController::recordMove(const Rules::Move &move) {
     appendPgnMove(san, movingColor);
     ++moveCursor_;
 
-    // The game only grows by one ply here, so the curve is appended rather
-    // than rebuilt.
-    evaluationCurve_.append(HeuristicEval::centipawnsToPercentage(
-        evaluationCentipawns(rules_)));
-    emit evaluationCurveChanged();
+    // The point is filled from the static evaluation at once and refined by the
+    // background search the live evaluation is about to request, so the curve
+    // keeps up with the game without blocking on a search.
+    heuristicCurve_.append(HeuristicEval::centipawnsToPercentage(
+        static_cast<double>(HeuristicEval::evaluateCentipawns(rules_))));
+    rebuildMergedCurve();
 
     refreshMoveHistory();
     updateEvaluation();
@@ -1742,7 +1922,7 @@ void GameController::rebuildPositionToCursor() {
 
     const int target = qBound(0, moveCursor_, uciMoves_.size());
     for (int i = 0; i < target; ++i) {
-        const auto move = parseUciMove(uciMoves_.at(i));
+        const auto move = UciParser::parseMove(uciMoves_.at(i));
         if (!move.has_value() || !rules_.tryMove(*move)) {
             moveCursor_ = i;
             break;
@@ -1764,7 +1944,7 @@ void GameController::rebuildPgnHistory() {
     pgnMoves_.clear();
     pgnMoveNumber_ = 1;
     for (const QString &moveText : uciMoves_) {
-        const auto move = parseUciMove(moveText);
+        const auto move = UciParser::parseMove(moveText);
         if (!move.has_value() || !replay.isValidMove(*move)) {
             break;
         }
@@ -1959,39 +2139,3 @@ int GameController::analysisMultiPv() const {
     return analysisMultiPv_;
 }
 
-std::optional<Rules::Move> GameController::parseUciMove(const QString &moveText) {
-    const QString move = moveText.trimmed().toLower();
-    if (move.size() < 4) {
-        return std::nullopt;
-    }
-
-    const auto parseFile = [](QChar file) -> int {
-        return file >= QChar('a') && file <= QChar('h')
-                   ? file.toLatin1() - 'a'
-                   : -1;
-    };
-    const auto parseRank = [](QChar rank) -> int {
-        return rank >= QChar('1') && rank <= QChar('8')
-                   ? 8 - rank.digitValue()
-                   : -1;
-    };
-
-    const Rules::Position from{parseRank(move.at(1)), parseFile(move.at(0))};
-    const Rules::Position to{parseRank(move.at(3)), parseFile(move.at(2))};
-    if (!Rules::isInside(from) || !Rules::isInside(to)) {
-        return std::nullopt;
-    }
-
-    Rules::PieceType promotion = Rules::PieceType::None;
-    if (move.size() >= 5) {
-        switch (move.at(4).toLatin1()) {
-        case 'q': promotion = Rules::PieceType::Queen; break;
-        case 'r': promotion = Rules::PieceType::Rook; break;
-        case 'b': promotion = Rules::PieceType::Bishop; break;
-        case 'n': promotion = Rules::PieceType::Knight; break;
-        default: return std::nullopt;
-        }
-    }
-
-    return Rules::Move{from, to, promotion};
-}

@@ -56,6 +56,8 @@
 #include <QPalette>
 #include <QPixmap>
 #include <QRegularExpression>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QThread>
@@ -186,6 +188,12 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             [this](const HeuristicEval::EvalBreakdown &breakdown) {
                 evaluationBar_->setToolTip(evaluationBreakdownText(breakdown));
             });
+    connect(gameController_, &GameController::evaluationCurveProgressChanged,
+            this, [this](int completed, int total) {
+                updateCurveProgress(completed, total);
+            });
+    connect(cancelCurveButton_, &QPushButton::clicked, this,
+            [this] { gameController_->cancelEvaluationCurve(); });
     connect(gameController_, &GameController::statusMessage, this, [this](const QString &message) {
         setActivityMessage(message);
     });
@@ -1944,6 +1952,20 @@ void MainWindow::onEngineLoaded(const QString &name, const QString &author) {
     applyConfiguredEngineOptions();
 }
 
+void MainWindow::updateCurveProgress(int completed, int total) {
+    if (curveProgressBar_ == nullptr || cancelCurveButton_ == nullptr) {
+        return;
+    }
+    const bool running = gameController_->isEvaluationCurveComputing() && total > 1;
+    curveProgressBar_->setVisible(running);
+    cancelCurveButton_->setVisible(running);
+    if (!running) {
+        return;
+    }
+    curveProgressBar_->setRange(0, total);
+    curveProgressBar_->setValue(completed);
+}
+
 void MainWindow::configureEvaluationParams() {
     EvalParamsDialog dialog(HeuristicEval::params(),
                             HeuristicEval::searchThreads(),
@@ -2544,6 +2566,26 @@ void MainWindow::setupUi() {
     visionStatusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     visionStatusLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     activityLayout->addWidget(visionStatusLabel_, 1);
+
+    // Progress of the background evaluation curve: it is the one computation
+    // that can take a while, and the user must be able to see it and stop it.
+    curveProgressBar_ = new QProgressBar(activityBar);
+    curveProgressBar_->setObjectName(QStringLiteral("curveProgressBar"));
+    curveProgressBar_->setFixedWidth(160);
+    curveProgressBar_->setFormat(tr("%v / %m"));
+    curveProgressBar_->setToolTip(
+        tr("Positions the background evaluation curve has scored"));
+    curveProgressBar_->hide();
+    activityLayout->addWidget(curveProgressBar_);
+
+    cancelCurveButton_ = new QPushButton(tr("Cancel"), activityBar);
+    cancelCurveButton_->setObjectName(QStringLiteral("cancelCurveButton"));
+    cancelCurveButton_->setToolTip(
+        tr("Stop scoring the evaluation curve; the curve keeps the static "
+           "values it already has"));
+    cancelCurveButton_->hide();
+    activityLayout->addWidget(cancelCurveButton_);
+
     layout->addWidget(activityBar, 3, 0);
 
     // Main vertical splitter: splits top area (board + move history) and bottom area (engine output)

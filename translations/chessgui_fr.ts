@@ -1211,99 +1211,99 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
 <context>
     <name>GameController</name>
     <message>
-        <location filename="../gamecontroller.cpp" line="68"/>
+        <location filename="../gamecontroller.cpp" line="106"/>
         <source>Game analysis stopped because the engine disconnected.</source>
         <translation>Analyse de la partie interrompue : le moteur s&apos;est déconnecté.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="75"/>
+        <location filename="../gamecontroller.cpp" line="113"/>
         <source>The engine disconnected.</source>
         <translation>Le moteur s&apos;est déconnecté.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="343"/>
+        <location filename="../gamecontroller.cpp" line="381"/>
         <source>Position loaded with %1 to move.</source>
         <translation>Position chargée ; aux %1 de jouer.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="344"/>
-        <location filename="../gamecontroller.cpp" line="1824"/>
+        <location filename="../gamecontroller.cpp" line="382"/>
+        <location filename="../gamecontroller.cpp" line="2004"/>
         <source>White</source>
         <translation>Blancs</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="345"/>
-        <location filename="../gamecontroller.cpp" line="1825"/>
+        <location filename="../gamecontroller.cpp" line="383"/>
+        <location filename="../gamecontroller.cpp" line="2005"/>
         <source>Black</source>
         <translation>Noirs</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="504"/>
+        <location filename="../gamecontroller.cpp" line="540"/>
         <source>Your last move and the engine&apos;s reply were taken back.</source>
         <translation>Votre dernier coup et la réponse du moteur ont été annulés.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="505"/>
+        <location filename="../gamecontroller.cpp" line="541"/>
         <source>The last move was taken back.</source>
         <translation>Le dernier coup a été annulé.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="604"/>
+        <location filename="../gamecontroller.cpp" line="640"/>
         <source>Game cancelled.</source>
         <translation>Partie annulée.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="617"/>
+        <location filename="../gamecontroller.cpp" line="653"/>
         <source>White&apos;s time has expired.</source>
         <translation>Le temps des Blancs est écoulé.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="618"/>
+        <location filename="../gamecontroller.cpp" line="654"/>
         <source>Black&apos;s time has expired.</source>
         <translation>Le temps des Noirs est écoulé.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="635"/>
+        <location filename="../gamecontroller.cpp" line="671"/>
         <source>The engine returned an invalid move: %1</source>
         <translation>Le moteur a renvoyé un coup invalide : %1</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="645"/>
+        <location filename="../gamecontroller.cpp" line="681"/>
         <source>Your turn.</source>
         <translation>À vous de jouer.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="827"/>
+        <location filename="../gamecontroller.cpp" line="900"/>
         <source>Analyzing game: 0 of %1 positions.</source>
         <translation>Analyse de la partie : 0 sur %1 positions.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="842"/>
+        <location filename="../gamecontroller.cpp" line="915"/>
         <source>Game analysis cancelled.</source>
         <translation>Analyse de la partie annulée.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1266"/>
+        <location filename="../gamecontroller.cpp" line="1449"/>
         <source>Your turn — White to move.</source>
         <translation>À vous de jouer — aux Blancs.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1281"/>
+        <location filename="../gamecontroller.cpp" line="1464"/>
         <source>The opening book returned an invalid move.</source>
         <translation>Le livre d&apos;ouvertures a renvoyé un coup invalide.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1292"/>
+        <location filename="../gamecontroller.cpp" line="1475"/>
         <source>Your turn (opening book).</source>
         <translation>À vous de jouer (livre d&apos;ouvertures).</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1298"/>
+        <location filename="../gamecontroller.cpp" line="1481"/>
         <source>Computer is thinking…</source>
         <translation>L&apos;ordinateur réfléchit…</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1432"/>
+        <location filename="../gamecontroller.cpp" line="1612"/>
         <source>Game analysis stopped: the engine did not return a score for position %1.</source>
         <translation>Analyse interrompue : le moteur n&apos;a pas renvoyé de score pour la position %1.</translation>
     </message>
@@ -1312,64 +1312,64 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <translation type="vanished">Analyse de la partie interrompue : le moteur n&apos;a pas renvoyé de score à la profondeur %1.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1458"/>
+        <location filename="../gamecontroller.cpp" line="1639"/>
         <source>Analyzing game: %1 of %2 positions.</source>
         <translation>Analyse de la partie : %1 sur %2 positions.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1460"/>
-        <location filename="../gamecontroller.cpp" line="1479"/>
+        <location filename="../gamecontroller.cpp" line="1641"/>
+        <location filename="../gamecontroller.cpp" line="1660"/>
         <source>Game analysis completed.</source>
         <translation>Analyse de la partie terminée.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1822"/>
+        <location filename="../gamecontroller.cpp" line="2002"/>
         <source>Game over: %1 wins.</source>
         <translation>Partie terminée : %1 gagnent.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1831"/>
+        <location filename="../gamecontroller.cpp" line="2011"/>
         <source>Draw by stalemate.</source>
         <translation>Nulle par pat.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1834"/>
+        <location filename="../gamecontroller.cpp" line="2014"/>
         <source>Draw by threefold repetition.</source>
         <translation>Nulle par triple répétition.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1837"/>
+        <location filename="../gamecontroller.cpp" line="2017"/>
         <source>Draw by the fifty-move rule.</source>
         <translation>Nulle par la règle des cinquante coups.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1840"/>
+        <location filename="../gamecontroller.cpp" line="2020"/>
         <source>Draw by insufficient material.</source>
         <translation>Nulle par matériel insuffisant.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1842"/>
+        <location filename="../gamecontroller.cpp" line="2022"/>
         <source>Game drawn.</source>
         <translation>Partie nulle.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1887"/>
+        <location filename="../gamecontroller.cpp" line="2067"/>
         <source>You resigned; the engine wins.</source>
         <translation>Vous avez abandonné ; le moteur gagne.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1922"/>
+        <location filename="../gamecontroller.cpp" line="2102"/>
         <source>The engine declined the draw offer.</source>
         <translation>Le moteur a refusé la proposition de nulle.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1927"/>
+        <location filename="../gamecontroller.cpp" line="2107"/>
         <source>The engine accepted the draw offer.</source>
         <translation>Le moteur a accepté la proposition de nulle.</translation>
     </message>
     <message>
-        <location filename="../gamecontroller.cpp" line="1934"/>
-        <location filename="../gamecontroller.cpp" line="1935"/>
+        <location filename="../gamecontroller.cpp" line="2114"/>
+        <location filename="../gamecontroller.cpp" line="2115"/>
         <source>Draw agreed.</source>
         <translation>Nulle convenue.</translation>
     </message>
@@ -1377,404 +1377,404 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../mainwindow.cpp" line="304"/>
-        <location filename="../mainwindow.cpp" line="308"/>
+        <location filename="../mainwindow.cpp" line="312"/>
+        <location filename="../mainwindow.cpp" line="316"/>
         <source>&gt;&gt; </source>
         <translation>&gt;&gt; </translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="508"/>
-        <location filename="../mainwindow.cpp" line="2059"/>
+        <location filename="../mainwindow.cpp" line="516"/>
+        <location filename="../mainwindow.cpp" line="2081"/>
         <source>Initializing</source>
         <translation>Initialisation</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="739"/>
+        <location filename="../mainwindow.cpp" line="747"/>
         <source>Unsaved game</source>
         <translation>Partie non enregistrée</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="740"/>
+        <location filename="../mainwindow.cpp" line="748"/>
         <source>The current game has not been saved yet.</source>
         <translation>La partie en cours n&apos;a pas encore été enregistrée.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="950"/>
+        <location filename="../mainwindow.cpp" line="958"/>
         <source>Imported image</source>
         <translation>Image importée</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="992"/>
+        <location filename="../mainwindow.cpp" line="1000"/>
         <source>Load chessboard screenshot</source>
         <translation>Charger une capture d&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="994"/>
+        <location filename="../mainwindow.cpp" line="1002"/>
         <source>Images (*.png *.jpg *.jpeg *.bmp *.webp)</source>
         <translation>Images (*.png *.jpg *.jpeg *.bmp *.webp)</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1004"/>
+        <location filename="../mainwindow.cpp" line="1012"/>
         <source>Could not load the image:
 %1</source>
         <translation>Impossible de charger l&apos;image :
 %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1027"/>
+        <location filename="../mainwindow.cpp" line="1035"/>
         <source>Downloading image…</source>
         <translation>Téléchargement de l&apos;image…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1046"/>
+        <location filename="../mainwindow.cpp" line="1054"/>
         <source>Could not download image: %1</source>
         <translation>Impossible de télécharger l&apos;image : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1053"/>
+        <location filename="../mainwindow.cpp" line="1061"/>
         <source>The remote resource is not a supported image.</source>
         <translation>La ressource distante n&apos;est pas une image prise en charge.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1064"/>
+        <location filename="../mainwindow.cpp" line="1072"/>
         <source>The image is empty.</source>
         <translation>L&apos;image est vide.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1079"/>
+        <location filename="../mainwindow.cpp" line="1087"/>
         <source>Analyzing %1…</source>
         <translation>Analyse de %1…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1130"/>
+        <location filename="../mainwindow.cpp" line="1138"/>
         <source>Material: %1</source>
         <translation>Matériel : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1131"/>
+        <location filename="../mainwindow.cpp" line="1139"/>
         <source>Piece placement: %1</source>
         <translation>Placement des pièces : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1132"/>
+        <location filename="../mainwindow.cpp" line="1140"/>
         <source>Pawn structure: %1</source>
         <translation>Structure de pions : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1133"/>
+        <location filename="../mainwindow.cpp" line="1141"/>
         <source>Mobility: %1</source>
         <translation>Mobilité : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1134"/>
+        <location filename="../mainwindow.cpp" line="1142"/>
         <source>King safety: %1</source>
         <translation>Sécurité du roi : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1135"/>
+        <location filename="../mainwindow.cpp" line="1143"/>
         <source>Threats: %1</source>
         <translation>Menaces : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1136"/>
+        <location filename="../mainwindow.cpp" line="1144"/>
         <source>Outposts: %1</source>
         <translation>Avant-postes : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1137"/>
+        <location filename="../mainwindow.cpp" line="1145"/>
         <source>Bad bishops: %1</source>
         <translation>Mauvais fous : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1138"/>
+        <location filename="../mainwindow.cpp" line="1146"/>
         <source>Connected rooks: %1</source>
         <translation>Tours connectées : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1139"/>
+        <location filename="../mainwindow.cpp" line="1147"/>
         <source>Endgame mop-up: %1</source>
         <translation>Nettoyage de finale : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1140"/>
+        <location filename="../mainwindow.cpp" line="1148"/>
         <source>Tempo: %1</source>
         <translation>Tempo : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1141"/>
+        <location filename="../mainwindow.cpp" line="1149"/>
         <source>In check: %1</source>
         <translation>En échec : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1142"/>
+        <location filename="../mainwindow.cpp" line="1150"/>
         <source>Total: %1</source>
         <translation>Total : %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1254"/>
+        <location filename="../mainwindow.cpp" line="1262"/>
         <source>Position detected from image.</source>
         <translation>Position détectée à partir de l&apos;image.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1256"/>
+        <location filename="../mainwindow.cpp" line="1264"/>
         <source>The detected FEN is invalid.</source>
         <translation>Le FEN détecté est invalide.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1268"/>
+        <location filename="../mainwindow.cpp" line="1276"/>
         <source>mean confidence %1%, minimum %2%</source>
         <translation>confiance moyenne %1 %, minimum %2 %</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1272"/>
+        <location filename="../mainwindow.cpp" line="1280"/>
         <source> — please verify</source>
         <translation> — veuillez vérifier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1275"/>
+        <location filename="../mainwindow.cpp" line="1283"/>
         <source>Chessboard detected (%1), orientation %2, %3%4</source>
         <translation>Échiquier détecté (%1), orientation %2, %3%4</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1276"/>
+        <location filename="../mainwindow.cpp" line="1284"/>
         <source>aligned</source>
         <translation>aligné</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1277"/>
+        <location filename="../mainwindow.cpp" line="1285"/>
         <source>raw</source>
         <translation>brut</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1279"/>
+        <location filename="../mainwindow.cpp" line="1287"/>
         <source>flipped 180°</source>
         <translation>retourné 180°</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1280"/>
+        <location filename="../mainwindow.cpp" line="1288"/>
         <source>auto</source>
         <translation>auto</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1333"/>
+        <location filename="../mainwindow.cpp" line="1341"/>
         <source>Load PGN File</source>
         <translation>Charger un fichier PGN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1335"/>
-        <location filename="../mainwindow.cpp" line="1443"/>
+        <location filename="../mainwindow.cpp" line="1343"/>
+        <location filename="../mainwindow.cpp" line="1451"/>
         <source>PGN Files (*.pgn);;All Files (*)</source>
         <translation>Fichiers PGN (*.pgn);;Tous les fichiers (*)</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1345"/>
-        <location filename="../mainwindow.cpp" line="1391"/>
-        <location filename="../mainwindow.cpp" line="1472"/>
-        <location filename="../mainwindow.cpp" line="2118"/>
+        <location filename="../mainwindow.cpp" line="1353"/>
+        <location filename="../mainwindow.cpp" line="1399"/>
+        <location filename="../mainwindow.cpp" line="1480"/>
+        <location filename="../mainwindow.cpp" line="2140"/>
         <source>Error</source>
         <translation>Erreur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1346"/>
+        <location filename="../mainwindow.cpp" line="1354"/>
         <source>Could not open file:
 %1</source>
         <translation>Impossible d&apos;ouvrir le fichier :
 %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1392"/>
+        <location filename="../mainwindow.cpp" line="1400"/>
         <source>Failed to parse PGN content.</source>
         <translation>Échec de l&apos;analyse du contenu PGN.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1432"/>
+        <location filename="../mainwindow.cpp" line="1440"/>
         <source>Save PGN</source>
         <translation>Enregistrer le PGN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1433"/>
+        <location filename="../mainwindow.cpp" line="1441"/>
         <source>There is no game to save.</source>
         <translation>Aucune partie à enregistrer.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1441"/>
+        <location filename="../mainwindow.cpp" line="1449"/>
         <source>Save PGN File</source>
         <translation>Enregistrer le fichier PGN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1473"/>
+        <location filename="../mainwindow.cpp" line="1481"/>
         <source>Could not open file for writing:
 %1</source>
         <translation>Impossible d&apos;ouvrir le fichier en écriture :
 %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1489"/>
+        <location filename="../mainwindow.cpp" line="1497"/>
         <source>Game saved to %1</source>
         <translation>Partie enregistrée dans %1</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1497"/>
+        <location filename="../mainwindow.cpp" line="1505"/>
         <source>FEN copied to clipboard.</source>
         <translation>FEN copié dans le presse-papiers.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1503"/>
+        <location filename="../mainwindow.cpp" line="1511"/>
         <source>PGN copied to clipboard.</source>
         <translation>PGN copié dans le presse-papiers.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1516"/>
+        <location filename="../mainwindow.cpp" line="1524"/>
         <source>Position loaded from FEN.</source>
         <translation>Position chargée depuis un FEN.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1532"/>
+        <location filename="../mainwindow.cpp" line="1540"/>
         <source>FEN pasted from clipboard.</source>
         <translation>FEN collé depuis le presse-papiers.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1537"/>
+        <location filename="../mainwindow.cpp" line="1545"/>
         <source>The clipboard does not contain an image or a valid FEN.</source>
         <translation>Le presse-papiers ne contient ni image ni FEN valide.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1561"/>
-        <location filename="../mainwindow.cpp" line="2193"/>
+        <location filename="../mainwindow.cpp" line="1569"/>
+        <location filename="../mainwindow.cpp" line="2215"/>
         <source>Play against computer</source>
         <translation>Jouer contre l&apos;ordinateur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1562"/>
+        <location filename="../mainwindow.cpp" line="1570"/>
         <source>Load and start a UCI engine before starting a game.</source>
         <translation>Chargez et démarrez un moteur UCI avant de lancer une partie.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1580"/>
+        <location filename="../mainwindow.cpp" line="1588"/>
         <source>Select UCI Chess Engine</source>
         <translation>Sélectionner un moteur d&apos;échecs UCI</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1582"/>
+        <location filename="../mainwindow.cpp" line="1590"/>
         <source>Executables (*)</source>
         <translation>Exécutables (*)</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1617"/>
-        <location filename="../mainwindow.cpp" line="1632"/>
-        <location filename="../mainwindow.cpp" line="1645"/>
-        <location filename="../mainwindow.cpp" line="1705"/>
+        <location filename="../mainwindow.cpp" line="1625"/>
+        <location filename="../mainwindow.cpp" line="1640"/>
+        <location filename="../mainwindow.cpp" line="1653"/>
+        <location filename="../mainwindow.cpp" line="1713"/>
         <source>Engine configuration</source>
         <translation>Configuration du moteur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1618"/>
-        <location filename="../mainwindow.cpp" line="1633"/>
-        <location filename="../mainwindow.cpp" line="1706"/>
+        <location filename="../mainwindow.cpp" line="1626"/>
+        <location filename="../mainwindow.cpp" line="1641"/>
+        <location filename="../mainwindow.cpp" line="1714"/>
         <source>Could not save the engine configuration.</source>
         <translation>Impossible d&apos;enregistrer la configuration du moteur.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1646"/>
+        <location filename="../mainwindow.cpp" line="1654"/>
         <source>Could not start the selected UCI engine.</source>
         <translation>Impossible de démarrer le moteur UCI sélectionné.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1680"/>
+        <location filename="../mainwindow.cpp" line="1688"/>
         <source>Remote engine configuration</source>
         <translation>Configuration du moteur distant</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1681"/>
+        <location filename="../mainwindow.cpp" line="1689"/>
         <source>Could not save the remote engine configuration.</source>
         <translation>Impossible d&apos;enregistrer la configuration du moteur distant.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1719"/>
+        <location filename="../mainwindow.cpp" line="1727"/>
         <source>Game analysis is unavailable. Load a completed game and connect an engine.</source>
         <translation>L&apos;analyse de partie est indisponible. Chargez une partie terminée et connectez un moteur.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1738"/>
+        <location filename="../mainwindow.cpp" line="1746"/>
         <source>That move cannot be shown while a game is in progress.</source>
         <translation>Ce coup ne peut pas être affiché pendant une partie en cours.</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1870"/>
+        <location filename="../mainwindow.cpp" line="1878"/>
         <source>UCI Engine</source>
         <translation>Moteur UCI</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1871"/>
-        <location filename="../mainwindow.cpp" line="2053"/>
+        <location filename="../mainwindow.cpp" line="1879"/>
+        <location filename="../mainwindow.cpp" line="2075"/>
         <source>Disconnected</source>
         <translation>Déconnecté</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="1943"/>
-        <location filename="../mainwindow.cpp" line="2062"/>
+        <location filename="../mainwindow.cpp" line="1951"/>
+        <location filename="../mainwindow.cpp" line="2084"/>
         <source>Ready</source>
         <translation>Prêt</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2013"/>
+        <location filename="../mainwindow.cpp" line="2035"/>
         <source>Stop Analysis</source>
         <translation>Arrêter l&apos;analyse</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2014"/>
-        <location filename="../mainwindow.cpp" line="2430"/>
+        <location filename="../mainwindow.cpp" line="2036"/>
+        <location filename="../mainwindow.cpp" line="2452"/>
         <source>Start Analysis</source>
         <translation>Démarrer l&apos;analyse</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2065"/>
+        <location filename="../mainwindow.cpp" line="2087"/>
         <source>Analyzing</source>
         <translation>Analyse en cours</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2068"/>
+        <location filename="../mainwindow.cpp" line="2090"/>
         <source>Stopping</source>
         <translation>Arrêt en cours</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2079"/>
+        <location filename="../mainwindow.cpp" line="2101"/>
         <source>Cancel Game Analysis</source>
         <translation>Annuler l&apos;analyse de la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2079"/>
-        <location filename="../mainwindow.cpp" line="2437"/>
+        <location filename="../mainwindow.cpp" line="2101"/>
+        <location filename="../mainwindow.cpp" line="2459"/>
         <source>Analyze Game</source>
         <translation>Analyser la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2081"/>
+        <location filename="../mainwindow.cpp" line="2103"/>
         <source>Cancel the running game analysis</source>
         <translation>Annuler l&apos;analyse de partie en cours</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2082"/>
+        <location filename="../mainwindow.cpp" line="2104"/>
         <source>Analyze the main line at depth %1 and mark inaccuracies, mistakes and blunders</source>
         <translation>Analyser la ligne principale à la profondeur %1 et marquer les imprécisions, erreurs et gaffes</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2357"/>
+        <location filename="../mainwindow.cpp" line="2379"/>
         <source>Ctrl+Shift+K</source>
         <translation>Ctrl+Shift+K</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2441"/>
+        <location filename="../mainwindow.cpp" line="2463"/>
         <source>Analyze the main line and mark the mistakes it contains</source>
         <translation>Analyser la ligne principale et marquer les erreurs qu&apos;elle contient</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2445"/>
+        <location filename="../mainwindow.cpp" line="2467"/>
         <source>Analysis Report...</source>
         <translation>Rapport d&apos;analyse…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2448"/>
+        <location filename="../mainwindow.cpp" line="2470"/>
         <source>Show the accuracy and the flagged moves of the game analysis</source>
         <translation>Afficher la précision et les coups signalés de l&apos;analyse de la partie</translation>
     </message>
@@ -1787,336 +1787,336 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <translation type="vanished">Analyser la ligne principale à la profondeur 18 et marquer les imprécisions, erreurs et gaffes</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2119"/>
+        <location filename="../mainwindow.cpp" line="2141"/>
         <source>ERROR: </source>
         <translation>ERREUR : </translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2138"/>
+        <location filename="../mainwindow.cpp" line="2160"/>
         <source>File</source>
         <translation>Fichier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2178"/>
+        <location filename="../mainwindow.cpp" line="2200"/>
         <source>Quit</source>
         <translation>Quitter</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2181"/>
+        <location filename="../mainwindow.cpp" line="2203"/>
         <source>Quit ChessGui</source>
         <translation>Quitter ChessGui</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2191"/>
+        <location filename="../mainwindow.cpp" line="2213"/>
         <source>Games</source>
         <translation>Parties</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2250"/>
+        <location filename="../mainwindow.cpp" line="2272"/>
         <source>Navigation</source>
         <translation>Navigation</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2293"/>
+        <location filename="../mainwindow.cpp" line="2315"/>
         <source>Board</source>
         <translation>Échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2367"/>
+        <location filename="../mainwindow.cpp" line="2389"/>
         <source>Edit</source>
         <translation>Édition</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2162"/>
+        <location filename="../mainwindow.cpp" line="2184"/>
         <source>Ctrl+Shift+I</source>
         <translation>Ctrl+Shift+I</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2197"/>
+        <location filename="../mainwindow.cpp" line="2219"/>
         <source>Ctrl+Shift+N</source>
         <translation>Ctrl+Shift+N</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2217"/>
+        <location filename="../mainwindow.cpp" line="2239"/>
         <source>Ctrl+R</source>
         <translation>Ctrl+R</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2227"/>
+        <location filename="../mainwindow.cpp" line="2249"/>
         <source>Ctrl+Shift+R</source>
         <translation>Ctrl+Shift+R</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2238"/>
+        <location filename="../mainwindow.cpp" line="2260"/>
         <source>Ctrl+D</source>
         <translation>Ctrl+D</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2299"/>
+        <location filename="../mainwindow.cpp" line="2321"/>
         <source>Ctrl+F</source>
         <translation>Ctrl+F</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2324"/>
+        <location filename="../mainwindow.cpp" line="2346"/>
         <source>Ctrl+Shift+M</source>
         <translation>Ctrl+Shift+M</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2335"/>
+        <location filename="../mainwindow.cpp" line="2357"/>
         <source>Ctrl+M</source>
         <translation>Ctrl+M</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2346"/>
+        <location filename="../mainwindow.cpp" line="2368"/>
         <source>Ctrl+Shift+H</source>
         <translation>Ctrl+Shift+H</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2139"/>
+        <location filename="../mainwindow.cpp" line="2161"/>
         <source>New game</source>
         <translation>Nouvelle partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2142"/>
+        <location filename="../mainwindow.cpp" line="2164"/>
         <source>Start a new game from the initial position</source>
         <translation>Démarrer une nouvelle partie depuis la position initiale</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2251"/>
+        <location filename="../mainwindow.cpp" line="2273"/>
         <source>Go to start</source>
         <translation>Aller au début</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2254"/>
+        <location filename="../mainwindow.cpp" line="2276"/>
         <source>Go to the beginning of the game</source>
         <translation>Aller au début de la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2261"/>
+        <location filename="../mainwindow.cpp" line="2283"/>
         <source>Step back</source>
         <translation>Reculer d&apos;un coup</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2264"/>
+        <location filename="../mainwindow.cpp" line="2286"/>
         <source>Go back one move in the game</source>
         <translation>Reculer d&apos;un coup dans la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2271"/>
+        <location filename="../mainwindow.cpp" line="2293"/>
         <source>Step forward</source>
         <translation>Avancer d&apos;un coup</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2274"/>
+        <location filename="../mainwindow.cpp" line="2296"/>
         <source>Go forward one move in the game</source>
         <translation>Avancer d&apos;un coup dans la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2281"/>
+        <location filename="../mainwindow.cpp" line="2303"/>
         <source>Go to end</source>
         <translation>Aller à la fin</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2284"/>
+        <location filename="../mainwindow.cpp" line="2306"/>
         <source>Go to the end of the game</source>
         <translation>Aller à la fin de la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2204"/>
+        <location filename="../mainwindow.cpp" line="2226"/>
         <source>Take back move</source>
         <translation>Reprendre un coup</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2207"/>
+        <location filename="../mainwindow.cpp" line="2229"/>
         <source>Take back the last move and play a different one</source>
         <translation>Annuler le dernier coup et en jouer un autre</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2196"/>
+        <location filename="../mainwindow.cpp" line="2218"/>
         <source>Start a game against the computer</source>
         <translation>Lancer une partie contre l&apos;ordinateur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2321"/>
-        <location filename="../mainwindow.cpp" line="2665"/>
+        <location filename="../mainwindow.cpp" line="2343"/>
+        <location filename="../mainwindow.cpp" line="2707"/>
         <source>Show computer&apos;s planned move</source>
         <translation>Afficher le coup prévu de l&apos;ordinateur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2327"/>
-        <location filename="../mainwindow.cpp" line="2668"/>
+        <location filename="../mainwindow.cpp" line="2349"/>
+        <location filename="../mainwindow.cpp" line="2710"/>
         <source>Draw the computer&apos;s next planned move as a dashed arrow</source>
         <translation>Dessiner le prochain coup prévu de l&apos;ordinateur par une flèche en pointillés</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2332"/>
-        <location filename="../mainwindow.cpp" line="2677"/>
+        <location filename="../mainwindow.cpp" line="2354"/>
+        <location filename="../mainwindow.cpp" line="2719"/>
         <source>Show recommended move</source>
         <translation>Afficher le coup recommandé</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2338"/>
-        <location filename="../mainwindow.cpp" line="2680"/>
+        <location filename="../mainwindow.cpp" line="2360"/>
+        <location filename="../mainwindow.cpp" line="2722"/>
         <source>Draw the engine&apos;s recommended move as a solid arrow</source>
         <translation>Dessiner le coup recommandé par le moteur par une flèche pleine</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2149"/>
+        <location filename="../mainwindow.cpp" line="2171"/>
         <source>Load PGN...</source>
         <translation>Charger un PGN…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2151"/>
+        <location filename="../mainwindow.cpp" line="2173"/>
         <source>Load a PGN game</source>
         <translation>Charger une partie PGN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2169"/>
+        <location filename="../mainwindow.cpp" line="2191"/>
         <source>Save PGN...</source>
         <translation>Enregistrer le PGN…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2171"/>
+        <location filename="../mainwindow.cpp" line="2193"/>
         <source>Save the current game to a PGN file</source>
         <translation>Enregistrer la partie en cours dans un fichier PGN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2368"/>
+        <location filename="../mainwindow.cpp" line="2390"/>
         <source>Copy FEN</source>
         <translation>Copier le FEN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2371"/>
+        <location filename="../mainwindow.cpp" line="2393"/>
         <source>Copy current board position as FEN to clipboard</source>
         <translation>Copier la position actuelle au format FEN dans le presse-papiers</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2372"/>
+        <location filename="../mainwindow.cpp" line="2394"/>
         <source>Ctrl+Shift+F</source>
         <translation>Ctrl+Shift+F</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2377"/>
+        <location filename="../mainwindow.cpp" line="2399"/>
         <source>Copy PGN</source>
         <translation>Copier le PGN</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2380"/>
+        <location filename="../mainwindow.cpp" line="2402"/>
         <source>Copy current game as PGN to clipboard</source>
         <translation>Copier la partie en cours au format PGN dans le presse-papiers</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2381"/>
+        <location filename="../mainwindow.cpp" line="2403"/>
         <source>Ctrl+Shift+C</source>
         <translation>Ctrl+Shift+C</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2157"/>
+        <location filename="../mainwindow.cpp" line="2179"/>
         <source>Load screenshot...</source>
         <translation>Charger une capture…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2161"/>
+        <location filename="../mainwindow.cpp" line="2183"/>
         <source>Load a chessboard screenshot</source>
         <translation>Charger une capture d&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2387"/>
+        <location filename="../mainwindow.cpp" line="2409"/>
         <source>Paste FEN or screenshot</source>
         <translation>Coller un FEN ou une capture</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2389"/>
+        <location filename="../mainwindow.cpp" line="2411"/>
         <source>Paste a FEN position or screenshot</source>
         <translation>Coller une position FEN ou une capture d&apos;écran</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2308"/>
+        <location filename="../mainwindow.cpp" line="2330"/>
         <source>Clear board annotations</source>
         <translation>Effacer les annotations de l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2313"/>
+        <location filename="../mainwindow.cpp" line="2335"/>
         <source>Clear all user-drawn arrows and square highlights</source>
         <translation>Effacer toutes les flèches et surbrillances dessinées</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2236"/>
+        <location filename="../mainwindow.cpp" line="2258"/>
         <source>Declare draw</source>
         <translation>Déclarer la nulle</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2241"/>
+        <location filename="../mainwindow.cpp" line="2263"/>
         <source>Claim a draw by threefold repetition or the fifty-move rule</source>
         <translation>Réclamer la nulle par triple répétition ou par la règle des cinquante coups</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2215"/>
+        <location filename="../mainwindow.cpp" line="2237"/>
         <source>Resign</source>
         <translation>Abandonner</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2219"/>
+        <location filename="../mainwindow.cpp" line="2241"/>
         <source>Resign the game against the computer</source>
         <translation>Abandonner la partie contre l&apos;ordinateur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2225"/>
+        <location filename="../mainwindow.cpp" line="2247"/>
         <source>Offer draw</source>
         <translation>Proposer la nulle</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2230"/>
+        <location filename="../mainwindow.cpp" line="2252"/>
         <source>Offer a draw: the engine decides, or the two players agree</source>
         <translation>Proposer la nulle : le moteur décide, ou les deux joueurs se mettent d&apos;accord</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2399"/>
+        <location filename="../mainwindow.cpp" line="2421"/>
         <source>Engine</source>
         <translation>Moteur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2400"/>
+        <location filename="../mainwindow.cpp" line="2422"/>
         <source>Load UCI Engine...</source>
         <translation>Charger un moteur UCI…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2403"/>
+        <location filename="../mainwindow.cpp" line="2425"/>
         <source>Load a UCI chess engine</source>
         <translation>Charger un moteur d&apos;échecs UCI</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2406"/>
+        <location filename="../mainwindow.cpp" line="2428"/>
         <source>Remote Engine...</source>
         <translation>Moteur distant…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2410"/>
+        <location filename="../mainwindow.cpp" line="2432"/>
         <source>Select a remote engine on a chessgateway server</source>
         <translation>Sélectionner un moteur distant sur un serveur chessgateway</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2414"/>
+        <location filename="../mainwindow.cpp" line="2436"/>
         <source>Configure</source>
         <translation>Configurer</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2417"/>
+        <location filename="../mainwindow.cpp" line="2439"/>
         <source>Configure the chess engine</source>
         <translation>Configurer le moteur d&apos;échecs</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2421"/>
+        <location filename="../mainwindow.cpp" line="2443"/>
         <source>UCI Options...</source>
         <translation>Options UCI…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2425"/>
+        <location filename="../mainwindow.cpp" line="2447"/>
         <source>Configure the UCI options of the active engine</source>
         <translation>Configurer les options UCI du moteur actif</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2433"/>
+        <location filename="../mainwindow.cpp" line="2455"/>
         <source>Start or stop engine analysis</source>
         <translation>Démarrer ou arrêter l&apos;analyse du moteur</translation>
     </message>
@@ -2125,175 +2125,195 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <translation type="vanished">Analyser la ligne principale à la profondeur 18</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2453"/>
+        <location filename="../mainwindow.cpp" line="2475"/>
         <source>Disconnect Engine</source>
         <translation>Déconnecter le moteur</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2456"/>
+        <location filename="../mainwindow.cpp" line="2478"/>
         <source>Disconnect the chess engine</source>
         <translation>Déconnecter le moteur d&apos;échecs</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2496"/>
+        <location filename="../mainwindow.cpp" line="2518"/>
         <source>Main toolbar</source>
         <translation>Barre d&apos;outils principale</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2294"/>
-        <location filename="../mainwindow.cpp" line="2624"/>
+        <location filename="../mainwindow.cpp" line="2316"/>
+        <location filename="../mainwindow.cpp" line="2666"/>
         <source>Flip board</source>
         <translation>Retourner l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2297"/>
-        <location filename="../mainwindow.cpp" line="2628"/>
+        <location filename="../mainwindow.cpp" line="2319"/>
+        <location filename="../mainwindow.cpp" line="2670"/>
         <source>Flip the board orientation</source>
         <translation>Inverser l&apos;orientation de l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2463"/>
+        <location filename="../mainwindow.cpp" line="2485"/>
         <source>Settings</source>
         <translation>Paramètres</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2464"/>
+        <location filename="../mainwindow.cpp" line="2486"/>
         <source>Evaluation params...</source>
         <translation>Paramètres d&apos;évaluation…</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2467"/>
+        <location filename="../mainwindow.cpp" line="2489"/>
         <source>Edit the weights of the heuristic evaluator, its search depth and the number of threads it may use</source>
         <translation>Modifier les poids de l&apos;évaluateur heuristique, sa profondeur de recherche et le nombre de threads qu&apos;il peut utiliser</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2475"/>
+        <location filename="../mainwindow.cpp" line="2497"/>
         <source>Show the evaluation score</source>
         <translation>Afficher le score d&apos;évaluation</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2479"/>
+        <location filename="../mainwindow.cpp" line="2501"/>
         <source>Show the score text inside the evaluation gauge</source>
         <translation>Afficher le texte du score dans la jauge d&apos;évaluation</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2484"/>
+        <location filename="../mainwindow.cpp" line="2506"/>
         <source>Show the gauge centre line</source>
         <translation>Afficher la ligne médiane de la jauge</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2488"/>
+        <location filename="../mainwindow.cpp" line="2510"/>
         <source>Mark the equal position in the middle of the evaluation gauge</source>
         <translation>Marquer la position d&apos;égalité au milieu de la jauge d&apos;évaluation</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2630"/>
+        <location filename="../mainwindow.cpp" line="2575"/>
+        <source>%v / %m</source>
+        <translation>%v / %m</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="2577"/>
+        <source>Positions the background evaluation curve has scored</source>
+        <translation>Positions déjà évaluées par la courbe d&apos;évaluation en arrière-plan</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="2581"/>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="2584"/>
+        <source>Stop scoring the evaluation curve; the curve keeps the static values it already has</source>
+        <translation>Arrêter l&apos;évaluation de la courbe ; la courbe conserve les valeurs statiques déjà calculées</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="2672"/>
         <source>Flip board orientation</source>
         <translation>Inverser l&apos;orientation de l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2632"/>
+        <location filename="../mainwindow.cpp" line="2674"/>
         <source>Display the chessboard from the opposite side</source>
         <translation>Afficher l&apos;échiquier depuis le camp opposé</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2637"/>
-        <location filename="../mainwindow.cpp" line="2645"/>
-        <location filename="../mainwindow.cpp" line="2651"/>
+        <location filename="../mainwindow.cpp" line="2679"/>
+        <location filename="../mainwindow.cpp" line="2687"/>
+        <location filename="../mainwindow.cpp" line="2693"/>
         <source>Position tools</source>
         <translation>Outils de position</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2643"/>
+        <location filename="../mainwindow.cpp" line="2685"/>
         <source>Change the side to move, move previews and last move highlighting</source>
         <translation>Changer le trait, les aperçus de coup et la surbrillance du dernier coup</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2647"/>
+        <location filename="../mainwindow.cpp" line="2689"/>
         <source>Open position and move preview settings</source>
         <translation>Ouvrir les réglages de position et d&apos;aperçu des coups</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2653"/>
+        <location filename="../mainwindow.cpp" line="2695"/>
         <source>Position and move preview settings</source>
         <translation>Réglages de position et d&apos;aperçu des coups</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2657"/>
+        <location filename="../mainwindow.cpp" line="2699"/>
         <source>White to play</source>
         <translation>Aux Blancs de jouer</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2670"/>
+        <location filename="../mainwindow.cpp" line="2712"/>
         <source>Show the computer&apos;s next planned move on the chessboard</source>
         <translation>Afficher le prochain coup prévu de l&apos;ordinateur sur l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2682"/>
+        <location filename="../mainwindow.cpp" line="2724"/>
         <source>Show the engine&apos;s recommended move on the chessboard</source>
         <translation>Afficher le coup recommandé par le moteur sur l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2342"/>
-        <location filename="../mainwindow.cpp" line="2689"/>
+        <location filename="../mainwindow.cpp" line="2364"/>
+        <location filename="../mainwindow.cpp" line="2731"/>
         <source>Highlight last move</source>
         <translation>Surligner le dernier coup</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2349"/>
-        <location filename="../mainwindow.cpp" line="2693"/>
+        <location filename="../mainwindow.cpp" line="2371"/>
+        <location filename="../mainwindow.cpp" line="2735"/>
         <source>Highlight the squares of the last played move</source>
         <translation>Surligner les cases du dernier coup joué</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2695"/>
+        <location filename="../mainwindow.cpp" line="2737"/>
         <source>Highlight the source and destination squares of the last move on the chessboard</source>
         <translation>Surligner les cases de départ et d&apos;arrivée du dernier coup sur l&apos;échiquier</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2353"/>
-        <location filename="../mainwindow.cpp" line="2702"/>
+        <location filename="../mainwindow.cpp" line="2375"/>
+        <location filename="../mainwindow.cpp" line="2744"/>
         <source>Highlight king in check</source>
         <translation>Surligner le roi en échec</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2360"/>
-        <location filename="../mainwindow.cpp" line="2706"/>
+        <location filename="../mainwindow.cpp" line="2382"/>
+        <location filename="../mainwindow.cpp" line="2748"/>
         <source>Highlight the king&apos;s square when that side is in check</source>
         <translation>Surligner la case du roi lorsque son camp est en échec</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2708"/>
+        <location filename="../mainwindow.cpp" line="2750"/>
         <source>Highlight the king&apos;s square when that side is in check on the chessboard</source>
         <translation>Surligner sur l&apos;échiquier la case du roi lorsque son camp est en échec</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2764"/>
+        <location filename="../mainwindow.cpp" line="2806"/>
         <source>Game information</source>
         <translation>Informations sur la partie</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2771"/>
+        <location filename="../mainwindow.cpp" line="2813"/>
         <source>Moves</source>
         <translation>Coups</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2779"/>
+        <location filename="../mainwindow.cpp" line="2821"/>
         <source>Start</source>
         <translation>Début</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2781"/>
+        <location filename="../mainwindow.cpp" line="2823"/>
         <source>Displayed move</source>
         <translation>Coup affiché</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2793"/>
+        <location filename="../mainwindow.cpp" line="2835"/>
         <source>Log</source>
         <translation>Journal</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="2854"/>
+        <location filename="../mainwindow.cpp" line="2896"/>
         <source>Paste or drop a chessboard screenshot to detect its position.</source>
         <translation>Collez ou déposez une capture d&apos;échiquier pour détecter sa position.</translation>
     </message>
@@ -2662,17 +2682,17 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
 <context>
     <name>UciParser</name>
     <message>
-        <location filename="../uciparser.cpp" line="249"/>
+        <location filename="../uciparser.cpp" line="284"/>
         <source>+M%1</source>
         <translation>+M%1</translation>
     </message>
     <message>
-        <location filename="../uciparser.cpp" line="252"/>
+        <location filename="../uciparser.cpp" line="287"/>
         <source>-M%1</source>
         <translation>-M%1</translation>
     </message>
     <message>
-        <location filename="../uciparser.cpp" line="254"/>
+        <location filename="../uciparser.cpp" line="289"/>
         <source>Mate</source>
         <translation>Mat</translation>
     </message>

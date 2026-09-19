@@ -7,6 +7,7 @@
 #ifndef CHESSGUI_GAMECONTROLLER_H
 #define CHESSGUI_GAMECONTROLLER_H
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -25,6 +26,8 @@
 #include "uciparser.h"
 
 class ChessGatewayClient;
+class CurveWorker;
+class QThread;
 
 class GameController : public QObject {
     Q_OBJECT
@@ -55,6 +58,7 @@ public:
                          const QString &engineId,
                          const QString &engineName = QString(),
                          const QString &accessKey = QString());
+    ~GameController() override;
     void clearRemoteEngine();
     [[nodiscard]] bool hasRemoteEngine() const;
 
@@ -106,9 +110,24 @@ public:
     void setComputerMovePreviewEnabled(bool enabled);
     void setRecommendedMovePreviewEnabled(bool enabled);
     void updateEvaluation();
+    // Fills the curve from the static evaluation alone, which is instant and
+    // gives the graph something to draw before the worker's searched curve.
+    void computeStaticCurve();
+    // evaluationCurve_ = heuristicCurve_ with the engine points on top.
+    void rebuildMergedCurve();
+    void truncateCurve(int size);
+    void updateCurvePoint(int ply, double winPct);
+    void setEngineCurvePoint(int ply, double winPct);
+    void requestEvaluationRefinement();
+    void onCurveProgress(quint64 requestId, int completed, int total);
+    void onCurveReady(quint64 requestId, const QVector<double> &curve);
+    void onCurveCancelled(quint64 requestId);
+    void onEvaluationReady(quint64 requestId, int centipawns, bool hasMate,
+                           int mateIn,
+                           const std::optional<Rules::Move> &bestMove);
     // Falls back to the heuristic best move for the recommended-move preview
     // when no engine is connected; the engine owns the preview whenever it is.
-    void updateHintPreview(const HeuristicEval::SearchResult &result);
+    void updateHintPreview(const std::optional<Rules::Move> &bestMove);
     // Centipawns of the heuristic search at `evaluationDepth_`, used where only
     // the score (and not the mate distance) is needed.
     [[nodiscard]] int evaluationCentipawns(const Rules &rules) const;
@@ -170,6 +189,17 @@ public:
     // heuristic evaluator and refined ply by ply while a game audit runs.
     [[nodiscard]] QVector<double> evaluationCurve() const;
 
+    // Recomputes the whole-game curve in the background: the static
+    // evaluations are filled in at once and the worker refines them ply by ply
+    // at the configured depth, reporting its progress through
+    // evaluationCurveProgressChanged(). A running computation is cancelled,
+    // because its result would describe the game as it was.
+    void requestEvaluationCurve();
+    // Asks the running curve computation to stop; the curve keeps whatever the
+    // synchronous pass already filled in.
+    void cancelEvaluationCurve();
+    [[nodiscard]] bool isEvaluationCurveComputing() const;
+
     // Depth of the heuristic search behind the live evaluation and the
     // whole-game curve.
     [[nodiscard]] int evaluationDepth() const;
@@ -214,6 +244,15 @@ signals:
     // Contribution of every term of the heuristic evaluation, so the UI can
     // explain the score it displays. Emitted with the evaluation.
     void evaluationBreakdownChanged(const HeuristicEval::EvalBreakdown &breakdown);
+    // How far the background curve computation is, in positions scored.
+    void evaluationCurveProgressChanged(int completed, int total);
+
+    // Internal plumbing to the curve worker, which lives on its own thread.
+    void curveComputeRequested(quint64 requestId, const QString &initialFen,
+                               const QStringList &uciMoves, int depth,
+                               int quiescenceDepth);
+    void positionEvaluationRequested(quint64 requestId, const QString &fen,
+                                     int depth, int quiescenceDepth);
     // Emitted whenever the whole-game curve gains or loses a point.
     void evaluationCurveChanged();
     void statusMessage(const QString &message);
@@ -238,7 +277,6 @@ private:
     void sendPositionToEngine();
     // Recomputes the whole-game curve with the heuristic evaluator. Used when
     // the game changes as a whole, while a single move only appends a point.
-    void rebuildEvaluationCurve();
     // Colour to move at the given ply of the current game, which decides the
     // point of view of an engine score reported for that position.
     [[nodiscard]] Rules::Color sideToMoveAtPly(int ply) const;
@@ -283,7 +321,6 @@ private:
     [[nodiscard]] QString drawReasonMessage() const;
     [[nodiscard]] QString buildPgnMovetext() const;
     [[nodiscard]] QString formattedCommentAt(int ply) const;
-    [[nodiscard]] static std::optional<Rules::Move> parseUciMove(const QString &moveText);
     [[nodiscard]] EngineBackend *selectedBackend() const;
     [[nodiscard]] EngineBackend *activeBackendForCommands() const;
 
@@ -339,6 +376,17 @@ private:
     int auditPosition_ = 0;
     int gameAuditDepth_ = 18;
     int evaluationDepth_ = HeuristicEval::DefaultSearchDepth;
+    QThread *curveThread_ = nullptr;
+    CurveWorker *curveWorker_ = nullptr;
+    quint64 curveRequestId_ = 0;
+    quint64 evaluationRequestId_ = 0;
+    bool curveComputing_ = false;
+    int curveCompleted_ = 0;
+    int curveTotal_ = 0;
+    // Curve points the heuristic produced, and the ones the engine refined;
+    // evaluationCurve_ is the merge of the two and what the UI reads.
+    QVector<double> heuristicCurve_;
+    QHash<int, double> engineCurvePoints_;
     QVector<AuditScore> auditScores_;
     QStringList auditBestMoves_;
     std::optional<EngineAnalysisLine> auditLatestLine_;

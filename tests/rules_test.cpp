@@ -10,6 +10,8 @@
 #include <QComboBox>
 #include <QFile>
 #include <QFrame>
+#include <QProgressBar>
+#include <QPushButton>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
@@ -1317,6 +1319,17 @@ void RulesTest::testMainWindowSettingsMenu() {
     QVERIFY(!window.evaluationBar()->showCenterLine());
     QVERIFY(!window.config().showEvaluationScore());
     QVERIFY(!window.config().showCentreLine());
+
+    // The background curve reports through a progress bar that stays hidden
+    // while nothing is being computed.
+    auto *curveProgress =
+        window.findChild<QProgressBar *>(QStringLiteral("curveProgressBar"));
+    auto *cancelCurve =
+        window.findChild<QPushButton *>(QStringLiteral("cancelCurveButton"));
+    QVERIFY(curveProgress != nullptr);
+    QVERIFY(cancelCurve != nullptr);
+    QVERIFY(!curveProgress->isVisible());
+    QVERIFY(!cancelCurve->isVisible());
 
     // A reopened window restores them, and the evaluator settings survive too.
     HeuristicEval::EvalParams tuned = HeuristicEval::params();

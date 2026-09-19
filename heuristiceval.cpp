@@ -1509,6 +1509,63 @@ private:
     int bits_ = 0;
 };
 
+// One slot of the classical-evaluation cache. The value is the score of the
+// position from White's perspective, keyed by its Zobrist key; as for the
+// transposition table, the key is written last so a reader that sees it also
+// sees the matching payload.
+struct EvalCacheEntry {
+    std::atomic<quint64> key{0};
+    std::atomic<qint32> value{0};
+};
+
+// Direct-mapped cache of `evaluateBoard`. The leaf evaluation is the hottest
+// work the search does, and the same positions come back both through
+// transpositions and through the successive searches the evaluation curve
+// runs, so the score is worth keeping. The active weights are part of the
+// value, which is why setParams(), resetParams() and clearSearchCache() drop
+// the cache together with the transposition table.
+class EvalCache {
+public:
+    static EvalCache &instance() {
+        static EvalCache cache;
+        return cache;
+    }
+
+    bool lookup(quint64 key, int *value) const {
+        const EvalCacheEntry &entry = entries_[key & Mask];
+        const quint64 storedKey = entry.key.load(std::memory_order_acquire);
+        if (storedKey != key) {
+            return false;
+        }
+        const qint32 storedValue = entry.value.load(std::memory_order_acquire);
+        if (entry.key.load(std::memory_order_acquire) != storedKey) {
+            return false;
+        }
+        *value = storedValue;
+        return true;
+    }
+
+    void store(quint64 key, int value) {
+        EvalCacheEntry &entry = entries_[key & Mask];
+        entry.key.store(0, std::memory_order_release);
+        entry.value.store(static_cast<qint32>(value), std::memory_order_release);
+        entry.key.store(key, std::memory_order_release);
+    }
+
+    void clear() {
+        for (EvalCacheEntry &entry : entries_) {
+            entry.key.store(0, std::memory_order_release);
+            entry.value.store(0, std::memory_order_release);
+        }
+    }
+
+private:
+    static constexpr quint64 Bits = 16;
+    static constexpr quint64 Mask = (quint64{1} << Bits) - 1;
+    std::array<EvalCacheEntry, static_cast<std::size_t>(quint64{1} << Bits)>
+        entries_{};
+};
+
 // Heuristic move ordering state and a pointer to the table. Killers and
 // history are per root worker so that their effect stays out of the result;
 // the shared table only ever returns exact bounds, so the value does not
@@ -1762,11 +1819,19 @@ MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
 }
 
 // Classical evaluation seen from the side to move, without the terminal checks
-// the search performs itself, capped below the mate range.
+// the search performs itself, capped below the mate range. The score is a
+// function of the position alone (the caller's `inCheck` is that of the side to
+// move, which the key already covers), so it is read from the cache and only
+// computed on a miss.
 int leafScore(const Rules &rules, bool inCheck) {
     const Rules::Color side = rules.currentPlayer();
-    const Board board = snapshotBoard(rules);
-    const int white = evaluateBoard(board, side, inCheck, nullptr);
+    const quint64 key = rules.zobristKey();
+    int white = 0;
+    if (!EvalCache::instance().lookup(key, &white)) {
+        const Board board = snapshotBoard(rules);
+        white = evaluateBoard(board, side, inCheck, nullptr);
+        EvalCache::instance().store(key, white);
+    }
     return std::clamp(signFor(side) * white, -MaxEvalScore, MaxEvalScore);
 }
 
@@ -2389,11 +2454,13 @@ void HeuristicEval::setParams(const EvalParams &params) {
     activeParams = params;
     // Every cached score was computed with the previous weights.
     TranspositionTable::instance().clear();
+    EvalCache::instance().clear();
 }
 
 void HeuristicEval::resetParams() {
     activeParams = EvalParams{};
     TranspositionTable::instance().clear();
+    EvalCache::instance().clear();
 }
 
 void HeuristicEval::setSearchThreads(int threads) {
@@ -2407,6 +2474,7 @@ int HeuristicEval::searchThreads() {
 
 void HeuristicEval::clearSearchCache() {
     TranspositionTable::instance().clear();
+    EvalCache::instance().clear();
 }
 
 int HeuristicEval::evaluateCentipawns(const Rules &rules) {

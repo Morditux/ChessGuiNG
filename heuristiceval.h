@@ -20,7 +20,7 @@ public:
     // are expected to configure for the live evaluation (deeper searches see
     // more tactics but make a whole-game curve much slower).
     static constexpr int DefaultSearchDepth = 2;
-    static constexpr int MaxSearchDepth = 4;
+    static constexpr int MaxSearchDepth = 8;
 
     // Every tunable weight of the classical evaluation, in centipawns unless
     // the name says otherwise. Each term carries a middle-game and an

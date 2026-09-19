@@ -108,6 +108,8 @@ add_library(chesscore OBJECT
         computergamesettings.cpp
         computergamesettings.h
         craftyhashkeys.h
+        curveworker.cpp
+        curveworker.h
         auditreports.cpp
         auditreports.h
         enginebackend.cpp

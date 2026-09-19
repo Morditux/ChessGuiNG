@@ -37,6 +37,8 @@ class QHBoxLayout;
 class QKeyEvent;
 class QLabel;
 class QMimeData;
+class QProgressBar;
+class QPushButton;
 class QNetworkAccessManager;
 class QNetworkReply;
 class QSplitter;
@@ -186,6 +188,8 @@ private:
     void applyConfiguredEngineOptions();
     // Opens the evaluator settings dialog and applies what it returns.
     void configureEvaluationParams();
+    // Shows or hides the background-curve progress bar and its cancel button.
+    void updateCurveProgress(int completed, int total);
     void setShowEvaluationScore(bool show);
     void setShowCentreLine(bool show);
     void refreshEngineStateUi();
@@ -254,6 +258,8 @@ private:
     // window then stops collapsing it while it is empty.
     bool gameInformationTouched_ = false;
     QLabel *visionStatusLabel_ = nullptr;
+    QProgressBar *curveProgressBar_ = nullptr;
+    QPushButton *cancelCurveButton_ = nullptr;
     QNetworkAccessManager *networkManager_ = nullptr;
     QNetworkReply *remoteImageReply_ = nullptr;
 
