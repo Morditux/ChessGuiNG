@@ -55,7 +55,69 @@ QString mirrorFen(const QString &fen) {
            QLatin1Char(' ') + castling + QStringLiteral(" - 0 1");
 }
 
+// Mirrors a UCI move the same way mirrorFen() mirrors a position.
+QString mirrorUci(const QString &uci) {
+    QString mirrored = uci;
+    for (int i = 1; i < mirrored.size(); i += 2) {
+        mirrored[i] = QChar(QLatin1Char('9').unicode() - mirrored.at(i).digitValue());
+    }
+    return mirrored;
+}
+
+// Independent mate oracle used by the reference suite: a plain minimax over the
+// rules engine, so the mate distances the evaluator reports are checked against
+// something that shares none of its code. `plies` is odd, so the side to move
+// delivers the mate.
+bool forcedMateIn(Rules &rules, int plies, const Rules::Move *first = nullptr) {
+    if (plies <= 0) {
+        return false;
+    }
+    Rules::Move moves[256];
+    const int count = rules.generatePseudoLegalMoves(moves, 256);
+    for (int i = 0; i < count; ++i) {
+        if (first != nullptr && !(moves[i] == *first)) {
+            continue;
+        }
+        Rules::Undo undo;
+        if (!rules.makeMove(moves[i], undo)) {
+            continue;
+        }
+        bool mate = false;
+        if (rules.isCheckmate(rules.currentPlayer())) {
+            mate = true;
+        } else if (plies >= 3) {
+            // A defender with no legal move and no check is stalemated, not
+            // mated, and every answer it does have must lose to a mate one move
+            // further on.
+            bool anyReply = false;
+            bool allLose = true;
+            Rules::Move replies[256];
+            const int replyCount = rules.generatePseudoLegalMoves(replies, 256);
+            for (int j = 0; j < replyCount; ++j) {
+                Rules::Undo replyUndo;
+                if (!rules.makeMove(replies[j], replyUndo)) {
+                    continue;
+                }
+                anyReply = true;
+                const bool loses = forcedMateIn(rules, plies - 2);
+                rules.unmakeMove(replies[j], replyUndo);
+                if (!loses) {
+                    allLose = false;
+                    break;
+                }
+            }
+            mate = anyReply && allLose;
+        }
+        rules.unmakeMove(moves[i], undo);
+        if (mate) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
+
 
 class HeuristicEvalTest : public QObject {
     Q_OBJECT
@@ -102,6 +164,10 @@ private slots:
     void testSearchReportsBestMoveAndVariation();
     void testSearchHonoursNodeLimit();
     void testSearchHonoursCancellationAndDeadline();
+    void testSearchReferenceSignatures();
+    void testSearchMatchesTheMateOracle();
+    void testSearchWinsTheFreeMaterial();
+    void testSearchDefendsAgainstMateInOne();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -964,6 +1030,202 @@ void HeuristicEvalTest::testReferenceScores() {
                  reference.fen);
         QCOMPARE(HeuristicEval::evaluateCentipawns(rules), reference.centipawns);
     }
+}
+
+void HeuristicEvalTest::testSearchReferenceSignatures() {
+    // Cold, single-threaded signatures of a spread of positions, so that a change
+    // to the search cannot move a score, a root move or a node count without the
+    // suite saying so. Each search starts from an empty transposition table and
+    // with one worker, which makes it a function of the position, the depth and
+    // the code alone; update a value only when the change is intended.
+    struct Reference {
+        const char *fen;
+        int depth;
+        int centipawns;
+        const char *best; // "-" for a position the search refuses to enter
+        int nodes;
+        int mateIn; // 0 when the position is not a mate
+    };
+    const Reference references[] = {
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "g1f3", 3265, 0},
+        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "d2d3",
+         12529, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 70, "e2a6",
+         11204, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 510, "d7c8q", 4610, 0},
+        {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2,
+         HeuristicEval::MateScore, "h5f7", 89, 1},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 58, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 138, "b4f4", 2289, 0},
+        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 671, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -98,
+         "c6d4", 23584, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 982, "d2e3", 8977, 0},
+        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 16, "d2d3",
+         9575, 0},
+        // A materially drawn position is not searched at all: no line, no nodes.
+        {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
+        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 179, "e4d5", 141, 0},
+        {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 571, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 958, "a7a8q", 148, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 990, "e1e2", 195, 0},
+    };
+
+    HeuristicEval::resetParams();
+    HeuristicEval::setSearchThreads(1);
+    for (const Reference &reference : references) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(reference.fen)), reference.fen);
+        HeuristicEval::clearSearchCache();
+        const auto result = HeuristicEval::search(rules, reference.depth);
+        QVERIFY2(!result.aborted, reference.fen);
+        QCOMPARE(result.nodes, reference.nodes);
+        QCOMPARE(result.centipawns, reference.centipawns);
+        QCOMPARE(result.mateIn.value_or(0), reference.mateIn);
+        if (QLatin1String(reference.best) == QLatin1String("-")) {
+            // The position is a draw: the search bottoms out before a single
+            // node, without a depth, a line or a move.
+            QVERIFY2(!result.bestMove.has_value(), reference.fen);
+            QVERIFY(result.principalVariation.empty());
+            QCOMPARE(result.depth, 0);
+            continue;
+        }
+        QCOMPARE(result.depth, reference.depth);
+        QVERIFY2(result.bestMove.has_value(), reference.fen);
+        QCOMPARE(Rules::toUci(*result.bestMove), QString::fromLatin1(reference.best));
+        QVERIFY(!result.principalVariation.empty());
+        QCOMPARE(result.principalVariation.front(), *result.bestMove);
+        // The rest of the line is read back from the table and has to be playable.
+        Rules replay = rules.detachedCopy();
+        for (const Rules::Move &move : result.principalVariation) {
+            QVERIFY2(replay.isValidMove(move), qPrintable(Rules::toUci(move)));
+            Rules::Undo undo;
+            QVERIFY(replay.makeMove(move, undo));
+        }
+    }
+    HeuristicEval::setSearchThreads(0);
+}
+
+void HeuristicEvalTest::testSearchMatchesTheMateOracle() {
+    // Every position is a forced mate whose exact distance is established by the
+    // independent minimax in `forcedMateIn()`, which shares none of the
+    // evaluator's code, so this pins the mate reporting instead of trusting it.
+    // One ply past the mate is enough for the search to see it. Each case runs
+    // again on its mirrored position, which turns White's mate into Black's and
+    // checks that the search is colour-symmetric.
+    struct Reference {
+        const char *fen;
+        int mateIn; // always positive: the sign follows the side to move
+    };
+    const Reference references[] = {
+        {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 1},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 1},
+        {"7k/6pp/8/8/8/8/5PPP/4R1K1 w - - 0 1", 1},
+        {"6rk/6pp/8/6N1/8/8/8/6K1 w - - 0 1", 1},
+        {"1k6/8/1K6/8/8/8/8/6R1 w - - 0 1", 1},
+        {"7k/8/6K1/8/8/8/8/3Q4 w - - 0 1", 1},
+        {"7k/8/5K2/8/8/8/8/1Q6 w - - 0 1", 2},
+        {"6k1/8/5K2/8/8/8/8/1Q6 w - - 0 1", 2},
+    };
+
+    HeuristicEval::resetParams();
+    HeuristicEval::setSearchThreads(1);
+    for (const Reference &reference : references) {
+        for (const bool mirror : {false, true}) {
+            const QString fen = mirror ? mirrorFen(QString::fromLatin1(reference.fen))
+                                       : QString::fromLatin1(reference.fen);
+            Rules rules;
+            QVERIFY2(rules.loadFen(fen), qPrintable(fen));
+            const int plies = 2 * reference.mateIn - 1;
+            // The oracle says the mate is exactly as long as the table claims.
+            QVERIFY2(forcedMateIn(rules, plies), qPrintable(fen));
+            QVERIFY2(!forcedMateIn(rules, plies - 2), qPrintable(fen));
+
+            const int side = rules.currentPlayer() == Rules::Color::White ? 1 : -1;
+            HeuristicEval::clearSearchCache();
+            const auto result = HeuristicEval::search(rules, plies + 1);
+            QVERIFY2(result.mateIn.has_value(), qPrintable(fen));
+            QCOMPARE(*result.mateIn, side * reference.mateIn);
+            QCOMPARE(result.centipawns, side * HeuristicEval::MateScore);
+            QVERIFY(result.bestMove.has_value());
+            // The move it played really starts the mate, and the line it reports
+            // ends on the mate itself.
+            QVERIFY2(forcedMateIn(rules, plies, &*result.bestMove), qPrintable(fen));
+            QCOMPARE(result.principalVariation.size(), static_cast<size_t>(plies));
+        }
+    }
+    HeuristicEval::setSearchThreads(0);
+}
+
+void HeuristicEvalTest::testSearchWinsTheFreeMaterial() {
+    // Tactics whose answer is unambiguous, with no mate involved: a pawn takes a
+    // hanging queen or knight, a knight forks king and rook, a pawn promotes and
+    // a king takes the queen that checks it. Each case also runs on its mirrored
+    // position, so both colours are covered.
+    struct Reference {
+        const char *fen;
+        int depth;
+        const char *best;
+    };
+    const Reference references[] = {
+        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 3, "e4d5"},
+        {"4k3/8/8/3n4/4P3/8/8/4K3 w - - 0 1", 3, "e4d5"},
+        {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, "d5c7"},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, "a7a8q"},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, "e1e2"},
+        {"4k3/8/8/8/8/8/1p6/4K3 b - - 0 1", 3, "b2b1q"},
+    };
+
+    HeuristicEval::resetParams();
+    HeuristicEval::setSearchThreads(1);
+    for (const Reference &reference : references) {
+        for (const bool mirror : {false, true}) {
+            const QString fen = mirror ? mirrorFen(QString::fromLatin1(reference.fen))
+                                       : QString::fromLatin1(reference.fen);
+            Rules rules;
+            QVERIFY2(rules.loadFen(fen), qPrintable(fen));
+            HeuristicEval::clearSearchCache();
+            const auto result = HeuristicEval::search(rules, reference.depth);
+            QVERIFY2(result.bestMove.has_value(), qPrintable(fen));
+            const QString expected = mirror ? mirrorUci(QString::fromLatin1(reference.best))
+                                            : QString::fromLatin1(reference.best);
+            QCOMPARE(Rules::toUci(*result.bestMove), expected);
+        }
+    }
+    HeuristicEval::setSearchThreads(0);
+}
+
+void HeuristicEvalTest::testSearchDefendsAgainstMateInOne() {
+    // A threat the search has to answer rather than a move it has to find: White
+    // threatens Qxf7#, so whatever Black plays must leave White without a mate in
+    // one, which the oracle confirms on the position the search actually reached.
+    // The mirrored position tests White answering the same threat.
+    HeuristicEval::resetParams();
+    HeuristicEval::setSearchThreads(1);
+    const QString threats[] = {
+        QStringLiteral("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 4 4"),
+        mirrorFen(QStringLiteral(
+            "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 4 4")),
+    };
+
+    for (const QString &fen : threats) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(fen), qPrintable(fen));
+        // The side to move is not the one that mates, so the threat is real only
+        // after its move.
+        QVERIFY(!forcedMateIn(rules, 1));
+        const auto result = HeuristicEval::search(rules, 3);
+        QVERIFY2(result.bestMove.has_value(), qPrintable(fen));
+        // A mate scored against the side to move would mean it walked into the
+        // threat instead of answering it.
+        const int side = rules.currentPlayer() == Rules::Color::White ? 1 : -1;
+        QVERIFY2(result.centipawns != -side * HeuristicEval::MateScore, qPrintable(fen));
+        Rules::Undo undo;
+        QVERIFY(rules.makeMove(*result.bestMove, undo));
+        QVERIFY2(!forcedMateIn(rules, 1), qPrintable(Rules::toUci(*result.bestMove)));
+        rules.unmakeMove(*result.bestMove, undo);
+    }
+    HeuristicEval::setSearchThreads(0);
 }
 
 QTEST_MAIN(HeuristicEvalTest)
