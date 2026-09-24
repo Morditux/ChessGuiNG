@@ -222,9 +222,33 @@ inline const std::vector<Field> &all() {
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
             1000),
         CHESSGUI_EVAL_FIELD(
+            kingAttackPawnPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a pawn (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackKnightPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a knight (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackBishopPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a bishop (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackRookPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a rook (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackQueenPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a queen (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
             kingShelterBonus, QT_TRANSLATE_NOOP("EvalParams", "Pawn shelter bonus"),
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
             1000),
+        CHESSGUI_EVAL_FIELD(
+            kingShelterAdjacentFilePercent, QT_TRANSLATE_NOOP("EvalParams", "Shelter on an adjacent file (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            100),
         CHESSGUI_EVAL_FIELD(
             kingShelterSecondRankPercent, QT_TRANSLATE_NOOP("EvalParams", "Shelter on the second rank (%)"),
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,

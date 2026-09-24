@@ -203,10 +203,6 @@ struct BoardAnalysis {
     // smallest row for Black (8 when empty).
     std::array<int, 8> whiteRearRows{};
     std::array<int, 8> blackRearRows{};
-    // Most advanced pawn per file: smallest row for White (8 when empty),
-    // greatest row for Black (-1 when empty).
-    std::array<int, 8> whiteFrontRows{};
-    std::array<int, 8> blackFrontRows{};
     // Pawn totals and pawns per square colour, indexed by colour then by
     // (row + column) % 2.
     std::array<int, 2> pawnTotals{};
@@ -235,6 +231,9 @@ struct AttackInfo {
     AttackMap pawnSquares{};
     // Cheapest attacker value per square (0 when the square is not attacked).
     ValueMap cheapest{};
+    // Strongest (most valuable) attacker on each square, used to weigh a king
+    // attack by the piece that delivers it. `None` when nothing attacks it.
+    std::array<std::array<Rules::PieceType, 8>, 8> strongestType{};
     // Mobility of this colour's pieces, already weighted with the tapered
     // per-piece weights: the attack walk is the same walk that counts it.
     TaperedScore mobility{};
@@ -312,8 +311,6 @@ BoardAnalysis analyzeBoard(const Board &board) {
     BoardAnalysis analysis;
     analysis.whiteRearRows.fill(NoFile);
     analysis.blackRearRows.fill(EmptyRow);
-    analysis.whiteFrontRows.fill(EmptyRow);
-    analysis.blackFrontRows.fill(NoFile);
 
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
@@ -336,15 +333,11 @@ BoardAnalysis analyzeBoard(const Board &board) {
                     analysis.whitePawnRows[column] |= static_cast<quint8>(1 << row);
                     analysis.whiteRearRows[column] =
                         std::max(analysis.whiteRearRows[column], row);
-                    analysis.whiteFrontRows[column] =
-                        std::min(analysis.whiteFrontRows[column], row);
                 } else {
                     ++analysis.blackPawnCounts[column];
                     analysis.blackPawnRows[column] |= static_cast<quint8>(1 << row);
                     analysis.blackRearRows[column] =
                         std::min(analysis.blackRearRows[column], row);
-                    analysis.blackFrontRows[column] =
-                        std::max(analysis.blackFrontRows[column], row);
                 }
                 analysis.hasPawnOrMajor = true;
                 break;
@@ -414,6 +407,16 @@ void addCheapestAttacker(AttackInfo &info, int row, int column, int value) {
     }
 }
 
+// Keeps the most valuable attacker seen on a square. Kings are never recorded:
+// their value is zero, so a square only a king attacks stays `None`.
+void addStrongestAttacker(AttackInfo &info, int row, int column,
+                          Rules::PieceType type) {
+    const int value = HeuristicEval::pieceValue(type);
+    if (value > HeuristicEval::pieceValue(info.strongestType[row][column])) {
+        info.strongestType[row][column] = type;
+    }
+}
+
 bool occupiedByColour(const Board &board, Rules::Color color, int row, int column) {
     const auto &target = board[row][column];
     return target.has_value() && target->color == color;
@@ -444,6 +447,8 @@ void buildAttackInfo(const Board &board, AttackInfo &white, AttackInfo &black) {
                     info.pawnSquares[targetRow][targetColumn] = true;
                     addCheapestAttacker(info, targetRow, targetColumn,
                                         P.pawnValue);
+                    addStrongestAttacker(info, targetRow, targetColumn,
+                                         Rules::PieceType::Pawn);
                 }
             }
 
@@ -501,6 +506,8 @@ void buildAttackInfo(const Board &board, AttackInfo &white, AttackInfo &black) {
                     }
                     info.squares[targetRow][targetColumn] = true;
                     addCheapestAttacker(info, targetRow, targetColumn, value);
+                    addStrongestAttacker(info, targetRow, targetColumn,
+                                         piece->type);
                     if (!enemyPawnAttacks[targetRow][targetColumn] &&
                         !occupiedByColour(board, piece->color, targetRow,
                                           targetColumn)) {
@@ -528,6 +535,8 @@ void buildAttackInfo(const Board &board, AttackInfo &white, AttackInfo &black) {
                             info.squares[targetRow][targetColumn] = true;
                             addCheapestAttacker(info, targetRow, targetColumn,
                                                 value);
+                            addStrongestAttacker(info, targetRow, targetColumn,
+                                                 piece->type);
                             const auto &target = board[targetRow][targetColumn];
                             if (!target.has_value()) {
                                 if (!enemyPawnAttacks[targetRow][targetColumn]) {
@@ -554,7 +563,12 @@ void buildAttackInfo(const Board &board, AttackInfo &white, AttackInfo &black) {
                 }
             }
 
-            info.mobility += moves * mobilityWeight(piece->type);
+            // The king's mobility is not counted here: its legal moves depend on
+            // the enemy attacks, which are only complete once both maps are
+            // built. `kingMobility` adds it afterwards.
+            if (piece->type != Rules::PieceType::King) {
+                info.mobility += moves * mobilityWeight(piece->type);
+            }
         }
     }
 }
@@ -608,7 +622,28 @@ void evaluateMaterialAndPlacement(const BoardAnalysis &analysis,
     }
 }
 
+// Rows strictly ahead of `row` in the direction of play, as a bit mask: bit
+// `r` is set when row `r` lies further along than `row` (smaller rows for
+// White, larger rows for Black).
+constexpr quint8 rowsAhead(int row, int direction) {
+    if (direction < 0) {
+        return row == 0 ? 0 : static_cast<quint8>((1u << row) - 1);
+    }
+    return row >= 7 ? 0
+                    : static_cast<quint8>(0xFF & ~((1u << (row + 1)) - 1));
+}
+
 bool isPassedPawn(const BoardAnalysis &analysis, const PieceOnBoard &pawn) {
+    // A pawn with a friendly pawn still ahead on its own file is not passed:
+    // the leading pawn of a doubled pair is the passed one.
+    const auto &ownRows = pawn.color == Rules::Color::White
+                              ? analysis.whitePawnRows
+                              : analysis.blackPawnRows;
+    if (ownRows[pawn.column] &
+        rowsAhead(pawn.row, forwardDirection(pawn.color))) {
+        return false;
+    }
+
     for (int file = std::max(0, pawn.column - 1);
          file <= std::min(7, pawn.column + 1); ++file) {
         if (pawn.color == Rules::Color::White) {
@@ -631,16 +666,12 @@ int countPawnsAhead(const BoardAnalysis &analysis, Rules::Color color, int row,
     const auto &pawnRows =
         color == Rules::Color::White ? analysis.whitePawnRows
                                      : analysis.blackPawnRows;
-    // Rows strictly ahead of `row` in the direction of play.
-    const int ahead = direction < 0
-                          ? (row == 0 ? 0 : (1 << row) - 1)
-                          : (row >= 7 ? 0
-                                      : 0xFF & ~((1 << (row + 1)) - 1));
+    const quint8 ahead = rowsAhead(row, direction);
     int count = 0;
     for (int file = std::max(0, column - 1); file <= std::min(7, column + 1);
          ++file) {
         count += std::popcount(
-            static_cast<unsigned>(pawnRows[file] & static_cast<quint8>(ahead)));
+            static_cast<unsigned>(pawnRows[file] & ahead));
     }
     return count;
 }
@@ -663,8 +694,8 @@ bool hasRookBehindPawn(const Board &board, const PieceOnBoard &pawn,
 
 TaperedScore evaluatePawnStructure(const Board &board,
                                    const BoardAnalysis &analysis,
-                                   const AttackMap &whitePawnAttacks,
-                                   const AttackMap &blackPawnAttacks) {
+                                   const AttackInfo &whiteAttacks,
+                                   const AttackInfo &blackAttacks) {
     TaperedScore score;
 
     for (const Rules::Color color :
@@ -702,8 +733,8 @@ TaperedScore evaluatePawnStructure(const Board &board,
         // A friendly pawn attacks the square the pawn stands on exactly when
         // it is defended by one.
         const AttackMap &friendlyPawnAttacks =
-            piece.color == Rules::Color::White ? whitePawnAttacks
-                                               : blackPawnAttacks;
+            piece.color == Rules::Color::White ? whiteAttacks.pawnSquares
+                                               : blackAttacks.pawnSquares;
         const bool supportedByPawn =
             friendlyPawnAttacks[piece.row][piece.column];
         if (supportedByPawn) {
@@ -768,14 +799,17 @@ TaperedScore evaluatePawnStructure(const Board &board,
                 P.passedPawnBaseMG + rank * P.passedPawnRankBonusMG,
                 P.passedPawnBaseEG + rank * P.passedPawnRankBonusEG};
 
+            const AttackMap &enemyAttacks =
+                piece.color == Rules::Color::White ? blackAttacks.squares
+                                                   : whiteAttacks.squares;
             const int aheadRow = piece.row + direction;
             if (isInside(aheadRow, piece.column)) {
                 if (board[aheadRow][piece.column].has_value()) {
                     bonus -= TaperedScore{P.passedPawnBlockedPenaltyMG,
                                           P.passedPawnBlockedPenaltyEG};
-                } else if ((piece.color == Rules::Color::White
-                                ? analysis.blackPawnCounts
-                                : analysis.whitePawnCounts)[piece.column] > 0) {
+                } else if (enemyAttacks[aheadRow][piece.column]) {
+                    // The advance square is empty but controlled by an enemy
+                    // piece, so the pawn cannot step forward safely.
                     bonus -= TaperedScore{P.passedPawnControlledPenaltyMG,
                                           P.passedPawnControlledPenaltyEG};
                 }
@@ -934,8 +968,24 @@ TaperedScore evaluateConnectedRooks(const Board &board,
     return score;
 }
 
+// How much of `kingAttackPenalty` one attacked king-zone square carries, given
+// the strongest enemy piece attacking it. A knight or bishop keeps the full
+// penalty (100), a pawn is lighter and a queen heavier.
+int kingAttackPercent(Rules::PieceType type) {
+    switch (type) {
+    case Rules::PieceType::Pawn:   return P.kingAttackPawnPercent;
+    case Rules::PieceType::Knight: return P.kingAttackKnightPercent;
+    case Rules::PieceType::Bishop: return P.kingAttackBishopPercent;
+    case Rules::PieceType::Rook:   return P.kingAttackRookPercent;
+    case Rules::PieceType::Queen:  return P.kingAttackQueenPercent;
+    case Rules::PieceType::King:
+    case Rules::PieceType::None:   return 0;
+    }
+    return 0;
+}
+
 TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
-                        Rules::Color color, const AttackMap &enemyAttacks) {
+                        Rules::Color color, const AttackInfo &enemy) {
     const int kingRow = color == Rules::Color::White ? analysis.whiteKingRow
                                                      : analysis.blackKingRow;
     const int kingColumn = color == Rules::Color::White
@@ -960,16 +1010,19 @@ TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
         score += middleGameOnly(P.castlingRightsBonus);
     }
 
-    // Attacked squares in the king's neighbourhood expose it to tactics.
-    int attackedSquares = 0;
+    // Attacked squares in the king's neighbourhood expose it to tactics, and
+    // each one is weighted by the strongest enemy piece attacking it: a queen
+    // bearing down on the king is far more dangerous than a pawn.
+    int attackWeight = 0;
     for (int row = kingRow - 1; row <= kingRow + 1; ++row) {
         for (int column = kingColumn - 1; column <= kingColumn + 1; ++column) {
-            if (isInside(row, column) && enemyAttacks[row][column]) {
-                ++attackedSquares;
+            if (isInside(row, column) && enemy.squares[row][column]) {
+                attackWeight +=
+                    kingAttackPercent(enemy.strongestType[row][column]);
             }
         }
     }
-    score -= attackedSquares * middleGameOnly(P.kingAttackPenalty);
+    score -= middleGameOnly(P.kingAttackPenalty * attackWeight / 100);
 
     // The pawns in front of the king form its shelter; the closer they are,
     // the better. The shelter keeps a reduced endgame value: even with few
@@ -1001,8 +1054,16 @@ TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
                                     : (distance == 2
                                            ? P.kingShelterSecondRankPercent
                                            : P.kingShelterThirdRankPercent);
-            score += TaperedScore{shelter.middleGame * percent / 100,
-                                  shelter.endGame * percent / 100};
+            // In the middlegame the pawn directly in front of the king shields
+            // it best and the adjacent files count only a share of the bonus.
+            // In the endgame the file matters less, so the reduced shelter is
+            // not split further.
+            const int filePercent = file == kingColumn
+                                        ? 100
+                                        : P.kingShelterAdjacentFilePercent;
+            score += TaperedScore{
+                shelter.middleGame * percent * filePercent / 10000,
+                shelter.endGame * percent / 100};
         }
     }
 
@@ -1044,12 +1105,40 @@ TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
 
 TaperedScore evaluateKingSafety(const Board &board,
                                 const BoardAnalysis &analysis,
-                                const AttackMap &whiteAttacks,
-                                const AttackMap &blackAttacks) {
+                                const AttackInfo &whiteAttacks,
+                                const AttackInfo &blackAttacks) {
     TaperedScore score =
         kingSafety(board, analysis, Rules::Color::White, blackAttacks);
     score -= kingSafety(board, analysis, Rules::Color::Black, whiteAttacks);
     return score;
+}
+
+// Mobility of a king, counted against the enemy's full attack map: a king
+// cannot step onto a square an enemy piece controls, so those squares are not
+// real moves. The attack walk cannot count this itself, because the enemy map
+// is only complete once every piece has been walked.
+TaperedScore kingMobility(const Board &board, const BoardAnalysis &analysis,
+                          Rules::Color color, const AttackMap &enemyAttacks) {
+    const int kingRow = color == Rules::Color::White ? analysis.whiteKingRow
+                                                     : analysis.blackKingRow;
+    const int kingColumn = color == Rules::Color::White
+                               ? analysis.whiteKingColumn
+                               : analysis.blackKingColumn;
+    if (kingRow == NoKingRow) {
+        return {};
+    }
+
+    int moves = 0;
+    for (const Offset &offset : KingOffsets) {
+        const int row = kingRow + offset.rowDelta;
+        const int column = kingColumn + offset.columnDelta;
+        if (!isInside(row, column) || enemyAttacks[row][column] ||
+            occupiedByColour(board, color, row, column)) {
+            continue;
+        }
+        ++moves;
+    }
+    return moves * mobilityWeight(Rules::PieceType::King);
 }
 
 // Chessboard distance from the centre: zero in the middle, three on an edge or
@@ -1249,14 +1338,17 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     TaperedScore placement;
     evaluateMaterialAndPlacement(analysis, &material, &placement);
     const TaperedScore pawns =
-        evaluatePawnStructure(board, analysis, attacksByWhite.pawnSquares,
-                              attacksByBlack.pawnSquares);
-    // Collected by the attack walk, from each colour's point of view.
+        evaluatePawnStructure(board, analysis, attacksByWhite, attacksByBlack);
+    // Collected by the attack walk, from each colour's point of view. The king
+    // is added here because its safe moves need both attack maps.
     TaperedScore mobility = attacksByWhite.mobility;
     mobility -= attacksByBlack.mobility;
+    mobility += kingMobility(board, analysis, Rules::Color::White,
+                             attacksByBlack.squares);
+    mobility -= kingMobility(board, analysis, Rules::Color::Black,
+                             attacksByWhite.squares);
     const TaperedScore kingSafety =
-        evaluateKingSafety(board, analysis, attacksByWhite.squares,
-                           attacksByBlack.squares);
+        evaluateKingSafety(board, analysis, attacksByWhite, attacksByBlack);
     TaperedScore threats;
     TaperedScore outposts;
     TaperedScore badBishops;

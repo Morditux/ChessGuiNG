@@ -950,8 +950,38 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
     </message>
     <message>
         <location filename="../evalparamfields.h" line="225"/>
+        <source>King attack by a pawn (%)</source>
+        <translation>Attaque du roi par un pion (%)</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="229"/>
+        <source>King attack by a knight (%)</source>
+        <translation>Attaque du roi par un cavalier (%)</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="233"/>
+        <source>King attack by a bishop (%)</source>
+        <translation>Attaque du roi par un fou (%)</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="237"/>
+        <source>King attack by a rook (%)</source>
+        <translation>Attaque du roi par une tour (%)</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="241"/>
+        <source>King attack by a queen (%)</source>
+        <translation>Attaque du roi par une dame (%)</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="245"/>
         <source>Pawn shelter bonus</source>
         <translation>Bonus d&apos;abri de pions</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="249"/>
+        <source>Shelter on an adjacent file (%)</source>
+        <translation>Abri sur une colonne adjacente (%)</translation>
     </message>
     <message>
         <location filename="../evalparamfields.h" line="229"/>

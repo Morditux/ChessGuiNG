@@ -85,8 +85,19 @@ public:
         // value so that a king still prefers pawns in front of it).
         int castledBonus = 15;
         int castlingRightsBonus = 10;
+        // Per attacked square near the king, weighted by the strongest enemy
+        // attacker on that square (`kingAttack*Percent` are percentages of this
+        // penalty, so 100 keeps a knight or bishop attack at its old value).
         int kingAttackPenalty = 12;
+        int kingAttackPawnPercent = 50;
+        int kingAttackKnightPercent = 100;
+        int kingAttackBishopPercent = 100;
+        int kingAttackRookPercent = 150;
+        int kingAttackQueenPercent = 250;
         int kingShelterBonus = 8;
+        // The pawn directly in front of the king shields it best; the pawns on
+        // the adjacent files are worth this percentage of the same bonus.
+        int kingShelterAdjacentFilePercent = 60;
         int kingShelterSecondRankPercent = 75;
         int kingShelterThirdRankPercent = 50;
         int kingShelterEndgamePercent = 50;

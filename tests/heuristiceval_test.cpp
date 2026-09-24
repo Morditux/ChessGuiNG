@@ -183,6 +183,11 @@ private slots:
     void testSearchWinsTheFreeMaterial();
     void testSearchDefendsAgainstMateInOne();
     void testPositionalKnowledge();
+    void testOnlyLeadingDoubledPawnIsPassed();
+    void testKingMobilityRespectsEnemyAttacks();
+    void testControlledPassedPawnPenalty();
+    void testKingShelterPrefersThePawnInFront();
+    void testKingAttackWeightedByAttacker();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1042,17 +1047,17 @@ void HeuristicEvalTest::testReferenceScores() {
     const Reference references[] = {
         {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 10},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -32},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -31},
         {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
          -HeuristicEval::MateScore},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -42},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -43},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 154},
         {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 200},
         {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 142},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 292},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 138},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -62},
-        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 288},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 293},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 142},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -63},
+        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 289},
     };
 
     for (const Reference &reference : references) {
@@ -1078,27 +1083,27 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1946, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1994, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         5819, 0},
+         5735, 0},
         {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 84, "e2a6",
-         8341, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 510, "d7c8q", 1527, 0},
+         8910, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 443, "d7c8q", 1560, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2,
          HeuristicEval::MateScore, "h5f7", 85, 1},
-        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 67, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 112, "b4f4", 1724, 0},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 84, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 117, "b4f4", 3885, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 685, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -98, "c6d4",
-         4472, 0},
-        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 982, "e1e2", 13912, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -99, "c6d4",
+         4280, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
         {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
-         5500, 0},
+         5554, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 179, "e4d5", 156, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 368, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 958, "a7a8q", 173, 0},
-        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 990, "e1e2", 280, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 978, "a7a8q", 188, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1011, "e1e2", 151, 0},
     };
 
     HeuristicEval::resetParams();
@@ -1312,6 +1317,154 @@ void HeuristicEvalTest::testPositionalKnowledge() {
                                                 .arg(feature)
                                                 .arg(mirrored)));
     }
+}
+
+void HeuristicEvalTest::testOnlyLeadingDoubledPawnIsPassed() {
+    // A doubled pawn pair holds one passed pawn: the leading one. The rear pawn
+    // is blocked by its own piece, so adding it under the leader must lower the
+    // pawn term (doubled and isolated) rather than collect a passed bonus.
+    HeuristicEval::resetParams();
+    Rules leading;
+    QVERIFY(leading.loadFen(QStringLiteral("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")));
+    Rules doubled;
+    QVERIFY(doubled.loadFen(QStringLiteral("4k3/P7/8/P7/8/8/8/4K3 w - - 0 1")));
+
+    const int leaderPawns = HeuristicEval::evaluateBreakdown(leading).pawns;
+    const int doubledPawns = HeuristicEval::evaluateBreakdown(doubled).pawns;
+    QVERIFY2(doubledPawns < leaderPawns,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(doubledPawns)
+                            .arg(leaderPawns)));
+}
+
+void HeuristicEvalTest::testKingMobilityRespectsEnemyAttacks() {
+    // The black rook on a5 attacks e5, one of the white king's escape squares,
+    // which is therefore not a real move. On a1 the same rook leaves the king's
+    // mobility untouched (both rooks have the same mobility themselves).
+    HeuristicEval::resetParams();
+    Rules attacked;
+    QVERIFY(attacked.loadFen(QStringLiteral("4k3/8/8/r7/4K3/8/8/8 w - - 0 1")));
+    Rules free;
+    QVERIFY(free.loadFen(QStringLiteral("4k3/8/8/8/4K3/8/8/r7 w - - 0 1")));
+
+    const int attackedMobility =
+        HeuristicEval::evaluateBreakdown(attacked).mobility;
+    const int freeMobility = HeuristicEval::evaluateBreakdown(free).mobility;
+    QVERIFY2(attackedMobility < freeMobility,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(attackedMobility)
+                            .arg(freeMobility)));
+
+    // Mirroring hands the rook to White and the king to Black, so the sign of
+    // the mobility gap has to flip.
+    Rules mirroredAttacked;
+    Rules mirroredFree;
+    QVERIFY(mirroredAttacked.loadFen(mirrorFen(
+        QStringLiteral("4k3/8/8/r7/4K3/8/8/8 w - - 0 1"))));
+    QVERIFY(mirroredFree.loadFen(mirrorFen(
+        QStringLiteral("4k3/8/8/8/4K3/8/8/r7 w - - 0 1"))));
+    QVERIFY(HeuristicEval::evaluateBreakdown(mirroredAttacked).mobility >
+            HeuristicEval::evaluateBreakdown(mirroredFree).mobility);
+}
+
+void HeuristicEvalTest::testControlledPassedPawnPenalty() {
+    // The white e6 pawn is passed in both positions, but only in the first does
+    // the black rook control e7, the square the pawn must step onto. An empty
+    // but controlled advance square has to cost the pawn term something.
+    HeuristicEval::resetParams();
+    Rules controlled;
+    QVERIFY(controlled.loadFen(
+        QStringLiteral("1k2r3/8/4P3/8/8/8/8/4K3 w - - 0 1")));
+    Rules free;
+    QVERIFY(free.loadFen(
+        QStringLiteral("rk6/8/4P3/8/8/8/8/4K3 w - - 0 1")));
+
+    const int controlledPawns =
+        HeuristicEval::evaluateBreakdown(controlled).pawns;
+    const int freePawns = HeuristicEval::evaluateBreakdown(free).pawns;
+    QVERIFY2(controlledPawns < freePawns,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(controlledPawns)
+                            .arg(freePawns)));
+
+    // Mirrored, Black owns the passed pawn, so the penalty appears with the
+    // opposite sign.
+    Rules mirroredControlled;
+    Rules mirroredFree;
+    QVERIFY(mirroredControlled.loadFen(mirrorFen(
+        QStringLiteral("1k2r3/8/4P3/8/8/8/8/4K3 w - - 0 1"))));
+    QVERIFY(mirroredFree.loadFen(mirrorFen(
+        QStringLiteral("rk6/8/4P3/8/8/8/8/4K3 w - - 0 1"))));
+    QVERIFY(HeuristicEval::evaluateBreakdown(mirroredControlled).pawns >
+            HeuristicEval::evaluateBreakdown(mirroredFree).pawns);
+}
+
+void HeuristicEvalTest::testKingShelterPrefersThePawnInFront() {
+    // Same full material and the same castled king; only the surviving seventh
+    // white pawn moves between g2 (directly in front of the king) and f2 (on an
+    // adjacent file). The phase is maximal, so the middlegame shelter, the half
+    // this preference applies to, is what the comparison sees.
+    HeuristicEval::resetParams();
+    Rules inFront;
+    QVERIFY(inFront.loadFen(
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPP1PP/RNBQ1RK1 w kq - 0 1")));
+    Rules beside;
+    QVERIFY(beside.loadFen(
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPP1P/RNBQ1RK1 w kq - 0 1")));
+
+    const int inFrontSafety =
+        HeuristicEval::evaluateBreakdown(inFront).kingSafety;
+    const int besideSafety =
+        HeuristicEval::evaluateBreakdown(beside).kingSafety;
+    QVERIFY2(inFrontSafety > besideSafety,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(inFrontSafety)
+                            .arg(besideSafety)));
+
+    // Mirrored, the shelter belongs to Black, so the sign flips.
+    Rules mirroredInFront;
+    Rules mirroredBeside;
+    QVERIFY(mirroredInFront.loadFen(mirrorFen(
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPP1PP/RNBQ1RK1 w kq - 0 1"))));
+    QVERIFY(mirroredBeside.loadFen(mirrorFen(
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPP1P/RNBQ1RK1 w kq - 0 1"))));
+    QVERIFY(HeuristicEval::evaluateBreakdown(mirroredInFront).kingSafety <
+            HeuristicEval::evaluateBreakdown(mirroredBeside).kingSafety);
+}
+
+void HeuristicEvalTest::testKingAttackWeightedByAttacker() {
+    // Both positions attack exactly one square of the white king's
+    // neighbourhood, g2 and f2 respectively, and both carry the same phase (a
+    // knight is one, a queen four, so the knight position pads with three
+    // harmless knights). The queen attack has to cost the king safety more than
+    // the knight attack.
+    HeuristicEval::resetParams();
+    Rules knight;
+    QVERIFY(knight.loadFen(
+        QStringLiteral("7k/8/8/nnn5/5n2/8/5PPP/6K1 w - - 0 1")));
+    Rules queen;
+    QVERIFY(queen.loadFen(
+        QStringLiteral("7k/8/8/8/3q4/8/5PPP/6K1 w - - 0 1")));
+
+    const int knightSafety =
+        HeuristicEval::evaluateBreakdown(knight).kingSafety;
+    const int queenSafety =
+        HeuristicEval::evaluateBreakdown(queen).kingSafety;
+    QVERIFY2(queenSafety < knightSafety,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(queenSafety)
+                            .arg(knightSafety)));
+
+    // Mirrored, the attacker is White, so the king safety of the black king is
+    // what suffers and the gap flips direction for White.
+    Rules mirroredKnight;
+    Rules mirroredQueen;
+    QVERIFY(mirroredKnight.loadFen(mirrorFen(
+        QStringLiteral("7k/8/8/nnn5/5n2/8/5PPP/6K1 w - - 0 1"))));
+    QVERIFY(mirroredQueen.loadFen(mirrorFen(
+        QStringLiteral("7k/8/8/8/3q4/8/5PPP/6K1 w - - 0 1"))));
+    QVERIFY(HeuristicEval::evaluateBreakdown(mirroredQueen).kingSafety >
+            HeuristicEval::evaluateBreakdown(mirroredKnight).kingSafety);
 }
 
 QTEST_MAIN(HeuristicEvalTest)
