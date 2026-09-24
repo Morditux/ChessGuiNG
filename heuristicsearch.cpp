@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -378,6 +379,7 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
     }
     TtEntry &entry = state.table[key & state.tableMask];
 
+    Rules::Move moveToStore = move;
     // Depth-preferred replacement: a shallow entry must not evict a deeper one
     // from the slot, since the deeper bound is the valuable one. The key is
     // read twice around the payload so that a torn write by another worker is
@@ -391,161 +393,132 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
             if (storedDepth > depth) {
                 return;
             }
+            // Preserve the existing best move if the incoming move is empty
+            // (e.g. on a fail-low / TtUpper node where no move raised alpha).
+            if (moveToStore.from.row < 0) {
+                const Rules::Move existingMove = unpackMove(storedData >> 42);
+                if (existingMove.from.row >= 0) {
+                    moveToStore = existingMove;
+                }
+            }
         }
     }
 
     // Store the payload before the key so that a reader which sees the new key
     // also sees the matching payload.
     entry.key.store(0, std::memory_order_release);
-    entry.data.store(packEntry(score, depth, flag, move),
+    entry.data.store(packEntry(score, depth, flag, moveToStore),
                      std::memory_order_release);
     entry.key.store(key, std::memory_order_release);
-}
-
-// Everything the search needs to know about a move besides its legality:
-// ordering score, whether it is a capture or promotion (and so worth searching
-// in the quiescence) and the material it wins outright for delta pruning. The
-// two squares are inspected once, where the old code looked them up again for
-// each of those questions.
-struct MoveOrdering {
-    int score = 0;
-    bool tactical = false;
-    int gain = 0;
-};
-
-MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
-                                 const SearchState &state, int ply,
-                                 const Rules::Move &tableMove,
-                                 bool hasTableMove) {
-    MoveOrdering ordering;
-
-    const auto target = rules.pieceAt(move.to);
-    const auto from = rules.pieceAt(move.from);
-    // En passant: a pawn moving diagonally onto an otherwise empty square.
-    const bool enPassant = !target.has_value() && from.has_value() &&
-                           from->type == Rules::PieceType::Pawn &&
-                           move.from.column != move.to.column;
-
-    ordering.tactical = move.promotion != Rules::PieceType::None ||
-                        target.has_value() || enPassant;
-    if (target.has_value()) {
-        ordering.gain += HeuristicEval::pieceValue(target->type);
-    } else if (enPassant) {
-        ordering.gain += HeuristicEval::params().pawnValue;
-    }
-    if (move.promotion != Rules::PieceType::None) {
-        ordering.gain += HeuristicEval::pieceValue(move.promotion);
-    }
-
-    if (hasTableMove && move == tableMove) {
-        ordering.score = 2'000'000;
-    } else if (target.has_value()) {
-        ordering.score =
-            1'000'000 + 10 * HeuristicEval::pieceValue(target->type);
-        if (from.has_value()) {
-            ordering.score -= HeuristicEval::pieceValue(from->type);
-        }
-    } else if (move.promotion != Rules::PieceType::None) {
-        ordering.score = 900'000 + HeuristicEval::pieceValue(move.promotion);
-    } else if (ply < MaxSearchPly && move == state.killers[ply][0]) {
-        ordering.score = 800'000;
-    } else if (ply < MaxSearchPly && move == state.killers[ply][1]) {
-        ordering.score = 799'000;
-    } else {
-        const int color = rules.currentPlayer() == Rules::Color::White ? 0 : 1;
-        ordering.score =
-            state.history[color][move.from.row * 8 + move.from.column]
-                         [move.to.row * 8 + move.to.column];
-    }
-    return ordering;
 }
 
 // Pieces the swap below may trade before it gives up, which bounds the loop.
 constexpr int MaxSeePlies = 32;
 
-// True when the piece sitting on `from` attacks `to` on this board, which is a
-// plain copy the caller owns, so no pin or turn rule is consulted.
-bool pieceAttacks(const Board &board, Rules::Position from, Rules::Position to) {
-    const auto piece = board[from.row][from.column];
-    if (!piece.has_value()) {
-        return false;
-    }
-    const int rowStep = to.row - from.row;
-    const int columnStep = to.column - from.column;
-    const int rowDistance = std::abs(rowStep);
-    const int columnDistance = std::abs(columnStep);
-    switch (piece->type) {
-    case Rules::PieceType::Pawn:
-        // A pawn captures one step diagonally forward, and "forward" follows
-        // its colour.
-        return columnDistance == 1 &&
-               rowStep == (piece->color == Rules::Color::White ? -1 : 1);
-    case Rules::PieceType::Knight:
-        return (rowDistance == 2 && columnDistance == 1) ||
-               (rowDistance == 1 && columnDistance == 2);
-    case Rules::PieceType::King:
-        return rowDistance <= 1 && columnDistance <= 1 &&
-               (rowDistance != 0 || columnDistance != 0);
-    case Rules::PieceType::Bishop:
-        if (rowDistance != columnDistance) {
-            return false;
-        }
-        break;
-    case Rules::PieceType::Rook:
-        if (rowStep != 0 && columnStep != 0) {
-            return false;
-        }
-        break;
-    case Rules::PieceType::Queen:
-        if (rowDistance != columnDistance && rowStep != 0 && columnStep != 0) {
-            return false;
-        }
-        break;
-    case Rules::PieceType::None:
-        return false;
-    }
+struct Offset {
+    int rowDelta;
+    int columnDelta;
+};
 
-    // A sliding piece needs an empty path: the walk stops on the first occupied
-    // square, which is the target when nothing stands in between.
-    const int rowDirection = (rowStep > 0) - (rowStep < 0);
-    const int columnDirection = (columnStep > 0) - (columnStep < 0);
-    int row = from.row + rowDirection;
-    int column = from.column + columnDirection;
-    while (row != to.row || column != to.column) {
-        if (!isInside(row, column) || board[row][column].has_value()) {
-            return false;
-        }
-        row += rowDirection;
-        column += columnDirection;
-    }
-    return true;
-}
+constexpr std::array<Offset, 8> KnightOffsets = {{
+    {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
+    {1, -2},  {1, 2},  {2, -1},  {2, 1}
+}};
+
+constexpr std::array<Offset, 4> BishopDirections = {{
+    {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
+}};
+
+constexpr std::array<Offset, 4> RookDirections = {{
+    {-1, 0}, {1, 0}, {0, -1}, {0, 1}
+}};
 
 // Cheapest piece of `side` that attacks `to`, kings left out: a king taking
 // back on a defended square is not a legal exchange, and counting it would make
-// every defended piece look worthless.
+// every defended piece look worthless. Rays are cast outwards from `to` directly
+// to avoid scanning the entire board.
 std::optional<Rules::Position> leastValuableAttacker(const Board &board,
                                                      Rules::Position to,
                                                      Rules::Color side) {
     std::optional<Rules::Position> best;
-    int bestValue = 0;
-    for (int row = 0; row < 8; ++row) {
-        for (int column = 0; column < 8; ++column) {
-            const auto &square = board[row][column];
-            if (!square.has_value() || square->color != side ||
-                square->type == Rules::PieceType::King) {
-                continue;
+    int bestValue = std::numeric_limits<int>::max();
+
+    const auto consider = [&](int r, int c, Rules::PieceType expectedType) {
+        const auto &sq = board[r][c];
+        if (sq.has_value() && sq->color == side && sq->type == expectedType) {
+            const int val = HeuristicEval::pieceValue(sq->type);
+            if (val < bestValue) {
+                bestValue = val;
+                best = Rules::Position{r, c};
             }
-            const int value = HeuristicEval::pieceValue(square->type);
-            if (best.has_value() && value >= bestValue) {
-                continue;
-            }
-            if (pieceAttacks(board, {row, column}, to)) {
-                best = Rules::Position{row, column};
-                bestValue = value;
+        }
+    };
+
+    // 1. Pawns of `side` attacking `to`.
+    // White pawns move forward (row - 1), so they attack `to` from row + 1.
+    // Black pawns move forward (row + 1), so they attack `to` from row - 1.
+    const int pawnRow = to.row + (side == Rules::Color::White ? 1 : -1);
+    if (pawnRow >= 0 && pawnRow < 8) {
+        for (const int pawnCol : {to.column - 1, to.column + 1}) {
+            if (pawnCol >= 0 && pawnCol < 8) {
+                consider(pawnRow, pawnCol, Rules::PieceType::Pawn);
             }
         }
     }
+
+    // 2. Knights
+    for (const auto &offset : KnightOffsets) {
+        const int r = to.row + offset.rowDelta;
+        const int c = to.column + offset.columnDelta;
+        if (isInside(r, c)) {
+            consider(r, c, Rules::PieceType::Knight);
+        }
+    }
+
+    // 3. Diagonal sliders (Bishops and Queens)
+    for (const auto &dir : BishopDirections) {
+        int r = to.row + dir.rowDelta;
+        int c = to.column + dir.columnDelta;
+        while (isInside(r, c)) {
+            const auto &sq = board[r][c];
+            if (sq.has_value()) {
+                if (sq->color == side && (sq->type == Rules::PieceType::Bishop ||
+                                          sq->type == Rules::PieceType::Queen)) {
+                    const int val = HeuristicEval::pieceValue(sq->type);
+                    if (val < bestValue) {
+                        bestValue = val;
+                        best = Rules::Position{r, c};
+                    }
+                }
+                break;
+            }
+            r += dir.rowDelta;
+            c += dir.columnDelta;
+        }
+    }
+
+    // 4. Orthogonal sliders (Rooks and Queens)
+    for (const auto &dir : RookDirections) {
+        int r = to.row + dir.rowDelta;
+        int c = to.column + dir.columnDelta;
+        while (isInside(r, c)) {
+            const auto &sq = board[r][c];
+            if (sq.has_value()) {
+                if (sq->color == side && (sq->type == Rules::PieceType::Rook ||
+                                          sq->type == Rules::PieceType::Queen)) {
+                    const int val = HeuristicEval::pieceValue(sq->type);
+                    if (val < bestValue) {
+                        bestValue = val;
+                        best = Rules::Position{r, c};
+                    }
+                }
+                break;
+            }
+            r += dir.rowDelta;
+            c += dir.columnDelta;
+        }
+    }
+
     return best;
 }
 
@@ -618,6 +591,87 @@ int seeValue(const Rules &rules, const Rules::Move &move) {
         --depth;
     }
     return gain[0];
+}
+
+// Everything the search needs to know about a move besides its legality:
+// ordering score, whether it is a capture or promotion (and so worth searching
+// in the quiescence) and the material it wins outright for delta pruning. The
+// two squares are inspected once, where the old code looked them up again for
+// each of those questions.
+struct MoveOrdering {
+    int score = 0;
+    bool tactical = false;
+    int gain = 0;
+};
+
+MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
+                                 const SearchState &state, int ply,
+                                 const Rules::Move &tableMove,
+                                 bool hasTableMove) {
+    MoveOrdering ordering;
+
+    const auto target = rules.pieceAt(move.to);
+    const auto from = rules.pieceAt(move.from);
+    // En passant: a pawn moving diagonally onto an otherwise empty square.
+    const bool enPassant = !target.has_value() && from.has_value() &&
+                           from->type == Rules::PieceType::Pawn &&
+                           move.from.column != move.to.column;
+
+    const bool isCapture = target.has_value() || enPassant;
+    const bool isPromotion = move.promotion != Rules::PieceType::None;
+
+    ordering.tactical = isPromotion || isCapture;
+    if (target.has_value()) {
+        ordering.gain += HeuristicEval::pieceValue(target->type);
+    } else if (enPassant) {
+        ordering.gain += HeuristicEval::params().pawnValue;
+    }
+    if (isPromotion) {
+        ordering.gain += HeuristicEval::pieceValue(move.promotion);
+    }
+
+    if (hasTableMove && move == tableMove) {
+        ordering.score = 2'000'000;
+    } else if (isCapture) {
+        const int targetValue = target.has_value()
+                                    ? HeuristicEval::pieceValue(target->type)
+                                    : HeuristicEval::params().pawnValue;
+        const int fromValue =
+            from.has_value() ? HeuristicEval::pieceValue(from->type) : 0;
+        const int promoBonus =
+            isPromotion ? HeuristicEval::pieceValue(move.promotion) : 0;
+
+        // When capturing a piece of equal or greater value, the exchange
+        // cannot lose material (SEE >= 0). For potential sacrifices (capturing
+        // with a more valuable piece), evaluate the exchange with SEE: winning
+        // and equal captures are searched before killers, losing captures
+        // are pushed behind quiet moves.
+        const bool clearlyGood = targetValue >= fromValue;
+        if (clearlyGood) {
+            ordering.score =
+                1'000'000 + 10 * targetValue - fromValue + promoBonus;
+        } else {
+            const int see = seeValue(rules, move);
+            if (see >= 0) {
+                ordering.score =
+                    1'000'000 + 10 * targetValue - fromValue + promoBonus;
+            } else {
+                ordering.score = -100'000 + see;
+            }
+        }
+    } else if (isPromotion) {
+        ordering.score = 900'000 + HeuristicEval::pieceValue(move.promotion);
+    } else if (ply < MaxSearchPly && move == state.killers[ply][0]) {
+        ordering.score = 800'000;
+    } else if (ply < MaxSearchPly && move == state.killers[ply][1]) {
+        ordering.score = 799'000;
+    } else {
+        const int color = rules.currentPlayer() == Rules::Color::White ? 0 : 1;
+        ordering.score =
+            state.history[color][move.from.row * 8 + move.from.column]
+                         [move.to.row * 8 + move.to.column];
+    }
+    return ordering;
 }
 
 // Classical evaluation seen from the side to move, without the terminal checks
@@ -1297,6 +1351,52 @@ std::vector<Rules::Move> extractPrincipalVariation(const Rules &rules,
 } // namespace
 
 namespace HeuristicSearch {
+
+int seeValue(const Rules &rules, const Rules::Move &move) {
+    return ::seeValue(rules, move);
+}
+
+int moveOrderingScore(const Rules &rules, const Rules::Move &move,
+                      const Rules::Move &tableMove,
+                      const Rules::Move &killer0,
+                      const Rules::Move &killer1) {
+    SearchState state;
+    state.killers[0][0] = killer0;
+    state.killers[0][1] = killer1;
+    return computeMoveOrdering(rules, move, state, 0, tableMove,
+                               tableMove.from.row >= 0)
+        .score;
+}
+
+void storeTransposition(quint64 key, int depth, int score, int flag,
+                        const Rules::Move &move) {
+    TranspositionTable &table = TranspositionTable::instance();
+    table.ensureSize(15);
+    SearchState state;
+    state.table = table.data();
+    state.tableMask = table.mask();
+    storeTable(state, key, depth, score, flag, move);
+}
+
+bool probeTranspositionMove(quint64 key, Rules::Move &outMove) {
+    TranspositionTable &table = TranspositionTable::instance();
+    if (table.data() == nullptr) {
+        return false;
+    }
+    SearchState state;
+    state.table = table.data();
+    state.tableMask = table.mask();
+    bool hasBestMove = false;
+    int value = 0;
+    Rules::Move bestMove{};
+    probeTable(state, key, 0, 0, -SearchInfinity, SearchInfinity, bestMove,
+               hasBestMove, value);
+    if (hasBestMove) {
+        outMove = bestMove;
+        return true;
+    }
+    return false;
+}
 
 void clearCaches() {
     TranspositionTable::instance().clear();

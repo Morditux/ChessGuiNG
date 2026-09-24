@@ -7,8 +7,10 @@
 #include <algorithm>
 
 #include "heuristiceval.h"
-#include "winprobability.h"
+#include "heuristicsearch.h"
 #include "rules.h"
+#include "uciparser.h"
+#include "winprobability.h"
 
 namespace {
 
@@ -189,6 +191,9 @@ private slots:
     void testKingShelterPrefersThePawnInFront();
     void testKingAttackWeightedByAttacker();
     void testCentralSpaceCountsAdvancedPawns();
+    void testSeeValueRayCasting();
+    void testMoveOrderingEnhancements();
+    void testTranspositionTablePreservesMoveOnFailLow();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1086,20 +1091,20 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
     const Reference references[] = {
         {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 2489, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         5963, 0},
+         6054, 0},
         {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 82, "e2a6",
-         8897, 0},
+         9505, 0},
         {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 443, "d7c8q", 1560, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2,
          HeuristicEval::MateScore, "h5f7", 85, 1},
         {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 84, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 118, "b4f4", 3369, 0},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 118, "b4f4", 3286, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 685, 0},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -99, "c6d4",
-         4287, 0},
+         4045, 0},
         {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
         {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 64, "d2d3",
-         5729, 0},
+         5758, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 181, "e4d5", 156, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 368, 0},
@@ -1496,6 +1501,124 @@ void HeuristicEvalTest::testCentralSpaceCountsAdvancedPawns() {
         QStringLiteral("4k3/8/8/8/8/3PP3/8/4K3 w - - 0 1"))));
     QVERIFY(HeuristicEval::evaluateBreakdown(mirroredAdvanced).space <
             HeuristicEval::evaluateBreakdown(mirroredHome).space);
+}
+
+void HeuristicEvalTest::testSeeValueRayCasting() {
+    HeuristicEval::resetParams();
+
+    // 1. Undefended piece: Black queen on d5, white pawn on e4.
+    Rules undefended;
+    QVERIFY(undefended.loadFen(QStringLiteral("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1")));
+    const auto pTakesQ = UciParser::parseMove(QStringLiteral("e4d5"));
+    QVERIFY(pTakesQ.has_value());
+    QCOMPARE(HeuristicSearch::seeValue(undefended, *pTakesQ),
+             HeuristicEval::params().queenValue);
+
+    // 2. Defended piece sacrifice: Queen takes d5 defended by pawn on c6.
+    Rules sacrifice;
+    QVERIFY(sacrifice.loadFen(QStringLiteral("4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1")));
+    const auto qTakesD5 = UciParser::parseMove(QStringLiteral("d1d5"));
+    QVERIFY(qTakesD5.has_value());
+    // White Queen (900) takes pawn (100) on d5 defended by c6 pawn. 100 - 900 = -800.
+    QCOMPARE(HeuristicSearch::seeValue(sacrifice, *qTakesD5),
+             HeuristicEval::params().pawnValue - HeuristicEval::params().queenValue);
+
+    // 3. Equal exchange: White rook takes Black rook defended by Black rook.
+    Rules equal;
+    QVERIFY(equal.loadFen(QStringLiteral("4k3/4r3/8/8/4r3/8/8/4R1K1 w - - 0 1")));
+    const auto rTakesR = UciParser::parseMove(QStringLiteral("e1e4"));
+    QVERIFY(rTakesR.has_value());
+    QCOMPARE(HeuristicSearch::seeValue(equal, *rTakesR), 0);
+
+    // 4. Battery / X-ray: White rooks on e1 and e2 vs Black rooks on e6 and e7.
+    Rules battery;
+    QVERIFY(battery.loadFen(QStringLiteral("4k3/4r3/4r3/8/8/8/4R3/4R1K1 w - - 0 1")));
+    const auto r2TakesR = UciParser::parseMove(QStringLiteral("e2e6"));
+    QVERIFY(r2TakesR.has_value());
+    // White plays Rxe6 (+500), Black plays Rxe6 (-500), White x-ray plays Rxe6 (+500). Net +500.
+    QCOMPARE(HeuristicSearch::seeValue(battery, *r2TakesR),
+             HeuristicEval::params().rookValue);
+}
+
+void HeuristicEvalTest::testMoveOrderingEnhancements() {
+    HeuristicEval::resetParams();
+
+    // 1. Capture with promotion vs quiet promotion vs underpromotion.
+    // White pawn on d7, black knight on c8, black king on a8.
+    Rules promo;
+    QVERIFY(promo.loadFen(QStringLiteral("k1n5/3P4/8/8/8/8/8/4K3 w - - 0 1")));
+    const auto capPromoQ = UciParser::parseMove(QStringLiteral("d7c8q"));
+    const auto quietPromoQ = UciParser::parseMove(QStringLiteral("d7d8q"));
+    const auto capPromoR = UciParser::parseMove(QStringLiteral("d7c8r"));
+    QVERIFY(capPromoQ.has_value() && quietPromoQ.has_value() && capPromoR.has_value());
+
+    const int scoreCapPromoQ = HeuristicSearch::moveOrderingScore(promo, *capPromoQ);
+    const int scoreQuietPromoQ = HeuristicSearch::moveOrderingScore(promo, *quietPromoQ);
+    const int scoreCapPromoR = HeuristicSearch::moveOrderingScore(promo, *capPromoR);
+
+    // Capture + promotion must score higher than quiet promotion:
+    QVERIFY2(scoreCapPromoQ > scoreQuietPromoQ,
+             qPrintable(QStringLiteral("%1 vs %2").arg(scoreCapPromoQ).arg(scoreQuietPromoQ)));
+    // Queen promotion must score higher than Rook promotion:
+    QVERIFY2(scoreCapPromoQ > scoreCapPromoR,
+             qPrintable(QStringLiteral("%1 vs %2").arg(scoreCapPromoQ).arg(scoreCapPromoR)));
+
+    // 2. Good capture vs Killer move vs Quiet move vs Bad capture (losing sacrifice).
+    // Position: White Queen on h5, Rook on e1, Pawn on e4.
+    // Black Queen on d5 (undefended), Black pawn on f7 (defended by King), Black Pawn on a7.
+    Rules orderingPos;
+    QVERIFY(orderingPos.loadFen(QStringLiteral("rnb1kbnr/p4ppp/8/3q3Q/4P3/8/PPPP1PPP/RNB1K2R w KQkq - 0 1")));
+    const auto goodCapture = UciParser::parseMove(QStringLiteral("e4d5")); // PxQ (winning)
+    const auto badCapture = UciParser::parseMove(QStringLiteral("h5f7")); // QxP defended by king (losing)
+    const auto quietMove = UciParser::parseMove(QStringLiteral("e1g1")); // quiet (castling)
+    QVERIFY(goodCapture.has_value() && badCapture.has_value() && quietMove.has_value());
+
+    const Rules::Move killer = *quietMove;
+    const int scoreGoodCap = HeuristicSearch::moveOrderingScore(orderingPos, *goodCapture);
+    const int scoreKiller = HeuristicSearch::moveOrderingScore(orderingPos, killer, {}, killer);
+    const int scoreQuiet = HeuristicSearch::moveOrderingScore(orderingPos, *quietMove);
+    const int scoreBadCap = HeuristicSearch::moveOrderingScore(orderingPos, *badCapture);
+
+    // Good capture >= 1'000'000:
+    QVERIFY(scoreGoodCap >= 1'000'000);
+    // Killer == 800'000:
+    QCOMPARE(scoreKiller, 800'000);
+    // Quiet move >= 0:
+    QVERIFY(scoreQuiet >= 0);
+    // Bad capture < 0 (relegated after quiet moves):
+    QVERIFY(scoreBadCap < 0);
+    // Complete ordering verification:
+    QVERIFY(scoreGoodCap > scoreKiller);
+    QVERIFY(scoreKiller > scoreQuiet);
+    QVERIFY(scoreQuiet > scoreBadCap);
+}
+
+void HeuristicEvalTest::testTranspositionTablePreservesMoveOnFailLow() {
+    HeuristicEval::resetParams();
+    HeuristicSearch::clearCaches();
+
+    const quint64 key = 0x123456789ABCDEF0ULL;
+    const auto moveA = UciParser::parseMove(QStringLiteral("e2e4"));
+    QVERIFY(moveA.has_value());
+
+    // 1. Store exact entry at depth 2 with best move e2e4.
+    constexpr int TtExact = 1;
+    constexpr int TtUpper = 3;
+    HeuristicSearch::storeTransposition(key, 2, 50, TtExact, *moveA);
+
+    Rules::Move probed{};
+    QVERIFY(HeuristicSearch::probeTranspositionMove(key, probed));
+    QCOMPARE(Rules::toUci(probed), QStringLiteral("e2e4"));
+
+    // 2. Now store fail-low (TtUpper) at depth 3 with empty move {}.
+    HeuristicSearch::storeTransposition(key, 3, -100, TtUpper, Rules::Move{});
+
+    // 3. Probing the key must STILL have preserved move e2e4!
+    Rules::Move probedAfterFailLow{};
+    QVERIFY(HeuristicSearch::probeTranspositionMove(key, probedAfterFailLow));
+    QCOMPARE(Rules::toUci(probedAfterFailLow), QStringLiteral("e2e4"));
+
+    HeuristicSearch::clearCaches();
 }
 
 QTEST_MAIN(HeuristicEvalTest)

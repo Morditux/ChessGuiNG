@@ -48,6 +48,20 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
 // `Rules::hasLegalMove` would do.
 [[nodiscard]] bool hasAnyLegalMove(const Rules &rules);
 
+// Static exchange evaluation of `move`: material the exchange is worth for the mover.
+[[nodiscard]] int seeValue(const Rules &rules, const Rules::Move &move);
+
+// Ordering score for a move, used by the search and testable in unit tests.
+[[nodiscard]] int moveOrderingScore(const Rules &rules, const Rules::Move &move,
+                                    const Rules::Move &tableMove = {},
+                                    const Rules::Move &killer0 = {},
+                                    const Rules::Move &killer1 = {});
+
+// Test helpers to inspect transposition table behavior.
+void storeTransposition(quint64 key, int depth, int score, int flag,
+                        const Rules::Move &move);
+[[nodiscard]] bool probeTranspositionMove(quint64 key, Rules::Move &outMove);
+
 // Taken by the evaluator: drops the transposition table and the evaluation
 // cache, which it must do whenever the weights change because every cached
 // score was computed with the previous ones.
