@@ -1141,6 +1141,31 @@ TaperedScore kingMobility(const Board &board, const BoardAnalysis &analysis,
     return moves * mobilityWeight(Rules::PieceType::King);
 }
 
+// Space: the safe central squares a side's pawns control in the enemy half. A
+// square counts when a friendly pawn attacks it, no enemy pawn does, and it
+// lies on one of the four central files past the middle of the board. More
+// space means the pieces behind the pawns have more room to operate.
+TaperedScore evaluateSpace(const AttackMap &whitePawnAttacks,
+                           const AttackMap &blackPawnAttacks) {
+    int white = 0;
+    int black = 0;
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 2; column <= 5; ++column) {
+            if (row <= 3) {
+                if (whitePawnAttacks[row][column] &&
+                    !blackPawnAttacks[row][column]) {
+                    ++white;
+                }
+            } else if (blackPawnAttacks[row][column] &&
+                       !whitePawnAttacks[row][column]) {
+                ++black;
+            }
+        }
+    }
+    const int advantage = white - black;
+    return {advantage * P.spaceBonusMG, advantage * P.spaceBonusEG};
+}
+
 // Chessboard distance from the centre: zero in the middle, three on an edge or
 // in a corner. The mop-up uses it to push the enemy king outwards.
 int centreDistance(int row, int column) {
@@ -1349,6 +1374,8 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
                              attacksByWhite.squares);
     const TaperedScore kingSafety =
         evaluateKingSafety(board, analysis, attacksByWhite, attacksByBlack);
+    const TaperedScore space = evaluateSpace(attacksByWhite.pawnSquares,
+                                             attacksByBlack.pawnSquares);
     TaperedScore threats;
     TaperedScore outposts;
     TaperedScore badBishops;
@@ -1365,6 +1392,7 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     TaperedScore score = material;
     score += placement;
     score += pawns;
+    score += space;
     score += mobility;
     score += kingSafety;
     score += threats;
@@ -1381,6 +1409,7 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
         breakdown->material = taperedValue(material, analysis.phase);
         breakdown->placement = taperedValue(placement, analysis.phase);
         breakdown->pawns = taperedValue(pawns, analysis.phase);
+        breakdown->space = taperedValue(space, analysis.phase);
         breakdown->mobility = taperedValue(mobility, analysis.phase);
         breakdown->kingSafety = taperedValue(kingSafety, analysis.phase);
         breakdown->threats = taperedValue(threats, analysis.phase);

@@ -1143,6 +1143,7 @@ QString MainWindow::evaluationBreakdownText(
     lines << tr("Material: %1").arg(pawns(breakdown.material));
     lines << tr("Piece placement: %1").arg(pawns(breakdown.placement));
     lines << tr("Pawn structure: %1").arg(pawns(breakdown.pawns));
+    lines << tr("Space: %1").arg(pawns(breakdown.space));
     lines << tr("Mobility: %1").arg(pawns(breakdown.mobility));
     lines << tr("King safety: %1").arg(pawns(breakdown.kingSafety));
     lines << tr("Threats: %1").arg(pawns(breakdown.threats));

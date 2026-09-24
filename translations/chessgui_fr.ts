@@ -922,6 +922,12 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
     </message>
     <message>
         <location filename="../evalparamfields.h" line="213"/>
+        <location filename="../evalparamfields.h" line="217"/>
+        <source>Central space bonus</source>
+        <translation>Bonus d&apos;espace central</translation>
+    </message>
+    <message>
+        <location filename="../evalparamfields.h" line="221"/>
         <source>Castled king bonus</source>
         <translation>Bonus de roi roqué</translation>
     </message>
@@ -1489,6 +1495,11 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <location filename="../mainwindow.cpp" line="1140"/>
         <source>Pawn structure: %1</source>
         <translation>Structure de pions : %1</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="1140"/>
+        <source>Space: %1</source>
+        <translation>Espace : %1</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="1141"/>

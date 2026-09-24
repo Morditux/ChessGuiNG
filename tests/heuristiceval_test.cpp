@@ -188,6 +188,7 @@ private slots:
     void testControlledPassedPawnPenalty();
     void testKingShelterPrefersThePawnInFront();
     void testKingAttackWeightedByAttacker();
+    void testCentralSpaceCountsAdvancedPawns();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1052,12 +1053,12 @@ void HeuristicEvalTest::testReferenceScores() {
          -HeuristicEval::MateScore},
         {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -43},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 154},
-        {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 200},
+        {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 202},
         {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 142},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 293},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 295},
         {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 142},
         {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -63},
-        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 289},
+        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 290},
     };
 
     for (const Reference &reference : references) {
@@ -1083,24 +1084,24 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1994, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 2489, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         5735, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 84, "e2a6",
-         8910, 0},
+         5963, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 82, "e2a6",
+         8897, 0},
         {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 443, "d7c8q", 1560, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2,
          HeuristicEval::MateScore, "h5f7", 85, 1},
         {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 84, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 117, "b4f4", 3885, 0},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 118, "b4f4", 3369, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 685, 0},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -99, "c6d4",
-         4280, 0},
+         4287, 0},
         {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
-        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
-         5554, 0},
+        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 64, "d2d3",
+         5729, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
-        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 179, "e4d5", 156, 0},
+        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 181, "e4d5", 156, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 368, 0},
         {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 978, "a7a8q", 188, 0},
         {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1011, "e1e2", 151, 0},
@@ -1465,6 +1466,36 @@ void HeuristicEvalTest::testKingAttackWeightedByAttacker() {
         QStringLiteral("7k/8/8/8/3q4/8/5PPP/6K1 w - - 0 1"))));
     QVERIFY(HeuristicEval::evaluateBreakdown(mirroredQueen).kingSafety >
             HeuristicEval::evaluateBreakdown(mirroredKnight).kingSafety);
+}
+
+void HeuristicEvalTest::testCentralSpaceCountsAdvancedPawns() {
+    // Same two central pawns; on d5/e5 they control four squares in the enemy
+    // half, on d3/e3 none, so only the advanced pair gives space. Nothing else
+    // in the position changes, so the space term is the one that reads it.
+    HeuristicEval::resetParams();
+    Rules advanced;
+    QVERIFY(advanced.loadFen(
+        QStringLiteral("4k3/8/8/3PP3/8/8/8/4K3 w - - 0 1")));
+    Rules home;
+    QVERIFY(home.loadFen(
+        QStringLiteral("4k3/8/8/8/8/3PP3/8/4K3 w - - 0 1")));
+
+    const int advancedSpace = HeuristicEval::evaluateBreakdown(advanced).space;
+    const int homeSpace = HeuristicEval::evaluateBreakdown(home).space;
+    QVERIFY2(advancedSpace > homeSpace,
+             qPrintable(QStringLiteral("%1 vs %2")
+                            .arg(advancedSpace)
+                            .arg(homeSpace)));
+
+    // Mirrored, the advanced pair is Black's, so the sign flips.
+    Rules mirroredAdvanced;
+    Rules mirroredHome;
+    QVERIFY(mirroredAdvanced.loadFen(mirrorFen(
+        QStringLiteral("4k3/8/8/3PP3/8/8/8/4K3 w - - 0 1"))));
+    QVERIFY(mirroredHome.loadFen(mirrorFen(
+        QStringLiteral("4k3/8/8/8/8/3PP3/8/4K3 w - - 0 1"))));
+    QVERIFY(HeuristicEval::evaluateBreakdown(mirroredAdvanced).space <
+            HeuristicEval::evaluateBreakdown(mirroredHome).space);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

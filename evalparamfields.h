@@ -210,6 +210,14 @@ inline const std::vector<Field> &all() {
             QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
             100),
         CHESSGUI_EVAL_FIELD(
+            spaceBonusMG, QT_TRANSLATE_NOOP("EvalParams", "Central space bonus"),
+            QT_TRANSLATE_NOOP("EvalParams", "Space"), 0,
+            100),
+        CHESSGUI_EVAL_FIELD(
+            spaceBonusEG, QT_TRANSLATE_NOOP("EvalParams", "Central space bonus"),
+            QT_TRANSLATE_NOOP("EvalParams", "Space"), 0,
+            100),
+        CHESSGUI_EVAL_FIELD(
             castledBonus, QT_TRANSLATE_NOOP("EvalParams", "Castled king bonus"),
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
             1000),

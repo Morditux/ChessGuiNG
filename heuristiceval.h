@@ -67,6 +67,11 @@ public:
         int passedPawnEnemyRookBehindMG = 15;
         int passedPawnEnemyRookBehindEG = 25;
 
+        // Space: safe central squares a side's pawns control in the enemy
+        // half, per square.
+        int spaceBonusMG = 2;
+        int spaceBonusEG = 1;
+
         // Mobility weights (middlegame, endgame).
         int mobilityPawnMG = 1;
         int mobilityPawnEG = 1;
@@ -175,6 +180,7 @@ public:
         int material = 0;
         int placement = 0;
         int pawns = 0;
+        int space = 0;
         int mobility = 0;
         int kingSafety = 0;
         int threats = 0;
