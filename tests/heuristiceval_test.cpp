@@ -5,6 +5,7 @@
 #include <QTest>
 
 #include <algorithm>
+#include <limits>
 
 #include "evalparamfields.h"
 #include "heuristiceval.h"
@@ -151,16 +152,16 @@ QString mirrorFilesFen(const QString &fen) {
 // what White holds of that feature minus what Black holds, so a test can pin one
 // definition without the others.
 int pawnTermScore(const QString &fen,
-                  int HeuristicEval::EvalParams::*middleGame,
-                  int HeuristicEval::EvalParams::*endGame, int value = 40) {
+                  const std::vector<std::pair<int HeuristicEval::EvalParams::*, int>> &weights) {
     HeuristicEval::EvalParams params = HeuristicEval::params();
     for (const EvalParamFields::Field &field : EvalParamFields::all()) {
         if (QLatin1String(field.group) == QLatin1String("Pawn structure")) {
             params.*field.member = 0;
         }
     }
-    params.*middleGame = value;
-    params.*endGame = value;
+    for (const auto &weight : weights) {
+        params.*weight.first = weight.second;
+    }
     HeuristicEval::setParams(params);
 
     Rules rules;
@@ -169,6 +170,12 @@ int pawnTermScore(const QString &fen,
                              : -99999;
     HeuristicEval::resetParams();
     return pawns;
+}
+
+int pawnTermScore(const QString &fen,
+                  int HeuristicEval::EvalParams::*middleGame,
+                  int HeuristicEval::EvalParams::*endGame, int value = 40) {
+    return pawnTermScore(fen, {{middleGame, value}, {endGame, value}});
 }
 
 } // namespace
@@ -236,6 +243,9 @@ private slots:
     void testTornTranspositionEntryIsRejected();
     void testBackwardPawnDefinition();
     void testCandidatePawnDefinition();
+    void testPassedPawnBonusGrowsWithRank();
+    void testPassedPawnKingsAndRoad();
+    void testPhalanxPawns();
     void testEndgameScalingFlattensUnwinnableAdvantages();
     void testRookEndingScaleFollowsThePawnFlanks();
     void testUnstoppablePassedPawn();
@@ -1110,11 +1120,11 @@ void HeuristicEvalTest::testReferenceScores() {
         {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -57},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 0},
         {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 0},
-        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 142},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 202},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 162},
+        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 176},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 233},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 170},
         {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -76},
-        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 290},
+        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 299},
     };
 
     for (const Reference &reference : references) {
@@ -1140,22 +1150,22 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1508, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1483, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         5588, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 115, "e2a6",
-         8765, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 431, "d7c8q", 1594, 0},
+         4520, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 122, "e2a6",
+         9222, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 429, "d7c8q", 1594, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
          85, 1},
-        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 82, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 90, "b4f4", 3897, 0},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 69, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 47, "b4f4", 2154, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 0, "a2a3", 509, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -109, "c6d4",
-         4120, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -117, "c6d4",
+         4367, 0},
         {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
         {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
-         3866, 0},
+         2797, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 0, "e4d5", 119, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 379, 0},
@@ -1341,6 +1351,18 @@ void HeuristicEvalTest::testPositionalKnowledge() {
         {"connected central pawns",
          "4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1",
          "4k3/8/8/8/3P3P/8/8/4K3 w - - 0 1"},
+        {"an advanced passed pawn",
+         "r4rk1/pp3ppp/3P4/8/8/8/PP3PPP/R4RK1 w - - 0 1",
+         "r4rk1/pp3ppp/8/8/3P4/8/PP3PPP/R4RK1 w - - 0 1"},
+        {"the own king beside a passed pawn and the enemy king far away",
+         "1r6/3K1pp1/8/3P4/8/8/3k1PP1/1R6 w - - 0 1",
+         "1r6/5pp1/8/2kP4/8/8/5PP1/1R3K2 w - - 0 1"},
+        {"the own king beside a passed pawn (second position)",
+         "1r6/5pp1/2KP4/8/8/8/4kPP1/1R6 w - - 0 1",
+         "1r6/5pp1/3Pk3/8/8/8/5PP1/1RK5 w - - 0 1"},
+        {"a pawn phalanx",
+         "r3k3/pp3ppp/8/8/3PP3/8/PP3PPP/R3K3 w - - 0 1",
+         "r3k3/pp3ppp/8/8/3P1P2/8/PP3PPP/R3K3 w - - 0 1"},
         {"an active knight",
          "4k3/pp3ppp/8/8/4N3/8/PP3PPP/4K3 w - - 0 1",
          "4k3/pp3ppp/8/8/8/8/PP3PPP/N3K3 w - - 0 1"},
@@ -1968,6 +1990,95 @@ void HeuristicEvalTest::testBishopAndKnightMateAimsForTheRightCorner() {
     // Mirrored, and with the light-squared bishop: the corners swap.
     QVERIFY(score("7k/8/5K2/8/8/8/8/2B1N3 w - - 0 1") >
             score("7k/8/5K2/8/8/8/8/3BN3 w - - 0 1") + 30);
+}
+
+void HeuristicEvalTest::testPassedPawnBonusGrowsWithRank() {
+    HeuristicEval::resetParams();
+    // A lone passed h-pawn, with a knight each so that the position is judged by
+    // the terms: the pawn term rises with every rank, and the last two ranks are
+    // worth clearly more than the first ones.
+    const char *files[] = {"1n2k3/8/8/8/8/8/7P/1N2K3 w - - 0 1",
+                           "1n2k3/8/8/8/8/7P/8/1N2K3 w - - 0 1",
+                           "1n2k3/8/8/8/7P/8/8/1N2K3 w - - 0 1",
+                           "1n2k3/8/8/7P/8/8/8/1N2K3 w - - 0 1",
+                           "1n2k3/8/7P/8/8/8/8/1N2K3 w - - 0 1",
+                           "1n2k3/7P/8/8/8/8/8/1N2K3 w - - 0 1"};
+    int previous = std::numeric_limits<int>::min();
+    int values[6] = {};
+    for (int rank = 0; rank < 6; ++rank) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(files[rank])), files[rank]);
+        values[rank] = HeuristicEval::evaluateBreakdown(rules).pawns;
+        QVERIFY2(values[rank] > previous,
+                 qPrintable(QStringLiteral("rank %1: %2 after %3")
+                                .arg(rank + 2).arg(values[rank]).arg(previous)));
+        previous = values[rank];
+    }
+    QVERIFY(values[5] - values[3] > values[3] - values[1]);
+
+    // The table is what carries the rank: nothing else grows with it here.
+    using P = HeuristicEval::EvalParams;
+    QCOMPARE(pawnTermScore(QString::fromLatin1(files[4]),
+                           {{&P::passedPawnRank6MG, 77}, {&P::passedPawnRank6EG, 77}}),
+             77);
+}
+
+void HeuristicEvalTest::testPassedPawnKingsAndRoad() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+
+    // Kings: with only the king-distance weights on, the pawn term rewards the
+    // own king near and the enemy king far from the square in front of a passed
+    // pawn. Each colour, since the mirrored positions swap the roles.
+    const auto kings = [](const QString &fen) {
+        return pawnTermScore(fen, {{&P::passedKingDistanceEnemy, 10},
+                                   {&P::passedKingDistanceOwn, 4}});
+    };
+    const QString ownNear = QStringLiteral("1n2k3/8/3P4/3K4/8/8/8/1N6 w - - 0 1");
+    const QString ownFar = QStringLiteral("1n2k3/8/3P4/8/8/8/8/1N5K w - - 0 1");
+    QVERIFY(kings(ownNear) > kings(ownFar));
+    QVERIFY(kings(mirrorFen(ownNear)) < kings(mirrorFen(ownFar)));
+    // The enemy king far from the pawn is worth more than the enemy king close.
+    const QString enemyFar = QStringLiteral("1n5k/8/3P4/3K4/8/8/8/1N6 w - - 0 1");
+    const QString enemyNear = QStringLiteral("1n2k3/8/3P4/3K4/8/8/8/1N6 w - - 0 1");
+    QVERIFY(kings(enemyFar) > kings(enemyNear));
+    // A pawn that has not passed its third rank gets no such term.
+    QCOMPARE(kings(QStringLiteral("1n2k3/8/8/8/8/3P4/3K4/1N6 w - - 0 1")), 0);
+
+    // Road: a passed pawn on the fifth rank earns the free-road bonus per rank
+    // past the third when nothing stands on or attacks its road, and the smaller
+    // safe-stop bonus when a piece stands further up but the stop square is safe.
+    const auto road = [](const QString &fen) {
+        return pawnTermScore(fen, {{&P::passedPawnFreePathMG, 10},
+                                   {&P::passedPawnFreePathEG, 10},
+                                   {&P::passedPawnSafeStopMG, 4},
+                                   {&P::passedPawnSafeStopEG, 4}});
+    };
+    const QString free = QStringLiteral("n6k/8/8/3P4/8/8/8/1N2K3 w - - 0 1");
+    const QString stopSafe = QStringLiteral("7k/3n4/8/3P4/8/8/8/1N2K3 w - - 0 1");
+    QCOMPARE(road(free), 2 * 10);
+    QCOMPARE(road(stopSafe), 2 * 4);
+    // Attacked stop square: no bonus at all.
+    QCOMPARE(road(QStringLiteral("7k/1n6/8/3P4/8/8/8/1N2K3 w - - 0 1")), 0);
+    QCOMPARE(road(mirrorFen(free)), -2 * 10);
+}
+
+void HeuristicEvalTest::testPhalanxPawns() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    const auto phalanx = [](const QString &fen) {
+        return pawnTermScore(fen, {{&P::phalanxPawnBonusMG, 6},
+                                   {&P::phalanxPawnBonusEG, 6}});
+    };
+    // Two pawns side by side on the fourth rank: 3 ranks past the start, 6 each.
+    const QString duo = QStringLiteral("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
+    QCOMPARE(phalanx(duo), 2 * 3 * 6);
+    QCOMPARE(phalanx(mirrorFen(duo)), -2 * 3 * 6);
+    // Not side by side: nothing.
+    QCOMPARE(phalanx(QStringLiteral("4k3/8/8/8/3P1P2/8/8/4K3 w - - 0 1")), 0);
+    // An enemy pawn facing a pawn of the phalanx halves that pawn's bonus.
+    QCOMPARE(phalanx(QStringLiteral("4k3/8/3p4/8/3PP3/8/8/4K3 w - - 0 1")),
+             3 * 6 + 3 * 6 / 2 - 0);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

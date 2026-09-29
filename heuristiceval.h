@@ -26,7 +26,7 @@ public:
     // (or the meaning of a weight) increments it: AppConfig only keeps stored
     // weights written by the same version, so an improvement to the defaults
     // reaches users who saved their configuration under an older one.
-    static constexpr int EvalParamsVersion = 1;
+    static constexpr int EvalParamsVersion = 2;
 
     // Every tunable weight of the classical evaluation, in centipawns unless
     // the name says otherwise. Each term carries a middle-game and an
@@ -60,10 +60,37 @@ public:
         int candidatePawnBonusEG = 12;
         int candidatePawnRankBonusMG = 2;
         int candidatePawnRankBonusEG = 3;
-        int passedPawnBaseMG = 12;
-        int passedPawnBaseEG = 25;
-        int passedPawnRankBonusMG = 6;
-        int passedPawnRankBonusEG = 15;
+        // Passed pawn bonus by relative rank (rank 2 is the pawn's starting
+        // rank, rank 7 the one before promotion): the value is concentrated on
+        // the last ranks rather than growing in a straight line.
+        int passedPawnRank2MG = 0;
+        int passedPawnRank3MG = 0;
+        int passedPawnRank4MG = 5;
+        int passedPawnRank5MG = 20;
+        int passedPawnRank6MG = 60;
+        int passedPawnRank7MG = 110;
+        int passedPawnRank2EG = 5;
+        int passedPawnRank3EG = 10;
+        int passedPawnRank4EG = 20;
+        int passedPawnRank5EG = 40;
+        int passedPawnRank6EG = 100;
+        int passedPawnRank7EG = 170;
+        // Kings and the road to promotion, for a passed pawn from its fourth
+        // rank on, weighted by how far past the third rank it has come: the
+        // enemy king far from the square in front of it and the own king close
+        // to it (per step, at most five), and a road that no piece occupies and
+        // no enemy piece attacks (or, failing that, a safe stop square).
+        int passedKingDistanceEnemy = 5;
+        int passedKingDistanceOwn = 2;
+        int passedPawnFreePathMG = 2;
+        int passedPawnFreePathEG = 8;
+        int passedPawnSafeStopMG = 1;
+        int passedPawnSafeStopEG = 4;
+        // Phalange: a friendly pawn beside a pawn on the same rank, per rank
+        // gained since the starting rank; halved when the pawn is opposed by an
+        // enemy pawn on its file.
+        int phalanxPawnBonusMG = 4;
+        int phalanxPawnBonusEG = 3;
         int passedPawnBlockedPenaltyMG = 8;
         int passedPawnBlockedPenaltyEG = 15;
         int passedPawnControlledPenaltyMG = 4;

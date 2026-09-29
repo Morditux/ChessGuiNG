@@ -1190,6 +1190,50 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <source>Known win: bonus per pawn rank</source>
         <translation>Gain connu : bonus par rangée du pion</translation>
     </message>
+    <message>
+        <source>Passed pawn on the 2nd rank</source>
+        <translation>Pion passé en 2e rangée</translation>
+    </message>
+    <message>
+        <source>Passed pawn on the 3rd rank</source>
+        <translation>Pion passé en 3e rangée</translation>
+    </message>
+    <message>
+        <source>Passed pawn on the 4th rank</source>
+        <translation>Pion passé en 4e rangée</translation>
+    </message>
+    <message>
+        <source>Passed pawn on the 5th rank</source>
+        <translation>Pion passé en 5e rangée</translation>
+    </message>
+    <message>
+        <source>Passed pawn on the 6th rank</source>
+        <translation>Pion passé en 6e rangée</translation>
+    </message>
+    <message>
+        <source>Passed pawn on the 7th rank</source>
+        <translation>Pion passé en 7e rangée</translation>
+    </message>
+    <message>
+        <source>Passed pawn: enemy king distance</source>
+        <translation>Pion passé : distance du roi adverse</translation>
+    </message>
+    <message>
+        <source>Passed pawn: own king distance</source>
+        <translation>Pion passé : distance du roi allié</translation>
+    </message>
+    <message>
+        <source>Passed pawn with a free road</source>
+        <translation>Pion passé à la route libre</translation>
+    </message>
+    <message>
+        <source>Passed pawn with a safe stop square</source>
+        <translation>Pion passé à la case d&apos;arrêt sûre</translation>
+    </message>
+    <message>
+        <source>Pawn phalanx</source>
+        <translation>Phalange de pions</translation>
+    </message>
 </context>
 <context>
     <name>EvalParamsDialog</name>

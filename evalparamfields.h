@@ -114,22 +114,6 @@ inline const std::vector<Field> &all() {
             QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
             1000),
         CHESSGUI_EVAL_FIELD(
-            passedPawnBaseMG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn base bonus"),
-            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            passedPawnBaseEG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn base bonus"),
-            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            passedPawnRankBonusMG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn rank bonus"),
-            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            passedPawnRankBonusEG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn rank bonus"),
-            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
             passedPawnBlockedPenaltyMG, QT_TRANSLATE_NOOP("EvalParams", "Blocked passed pawn penalty"),
             QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
             1000),
@@ -417,6 +401,86 @@ inline const std::vector<Field> &all() {
             knownWinRankBonus, QT_TRANSLATE_NOOP("EvalParams", "Known win: bonus per pawn rank"),
             QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
             500),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank2MG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 2nd rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank3MG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 3rd rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank4MG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 4th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank5MG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 5th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank6MG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 6th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank7MG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 7th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank2EG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 2nd rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank3EG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 3rd rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank4EG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 4th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank5EG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 5th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank6EG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 6th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnRank7EG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn on the 7th rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedKingDistanceEnemy, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn: enemy king distance"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            100),
+        CHESSGUI_EVAL_FIELD(
+            passedKingDistanceOwn, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn: own king distance"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            100),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnFreePathMG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn with a free road"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnFreePathEG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn with a free road"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnSafeStopMG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn with a safe stop square"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            passedPawnSafeStopEG, QT_TRANSLATE_NOOP("EvalParams", "Passed pawn with a safe stop square"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            phalanxPawnBonusMG, QT_TRANSLATE_NOOP("EvalParams", "Pawn phalanx"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            phalanxPawnBonusEG, QT_TRANSLATE_NOOP("EvalParams", "Pawn phalanx"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
     };
     return fields;
 }
