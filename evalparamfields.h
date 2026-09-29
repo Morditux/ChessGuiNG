@@ -210,30 +210,6 @@ inline const std::vector<Field> &all() {
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
             1000),
         CHESSGUI_EVAL_FIELD(
-            kingAttackPenalty, QT_TRANSLATE_NOOP("EvalParams", "Attacked squares near the king"),
-            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            kingAttackPawnPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a pawn (%)"),
-            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            kingAttackKnightPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a knight (%)"),
-            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            kingAttackBishopPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a bishop (%)"),
-            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            kingAttackRookPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a rook (%)"),
-            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
-            kingAttackQueenPercent, QT_TRANSLATE_NOOP("EvalParams", "King attack by a queen (%)"),
-            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
-            1000),
-        CHESSGUI_EVAL_FIELD(
             kingShelterBonus, QT_TRANSLATE_NOOP("EvalParams", "Pawn shelter bonus"),
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
             1000),
@@ -480,6 +456,66 @@ inline const std::vector<Field> &all() {
         CHESSGUI_EVAL_FIELD(
             phalanxPawnBonusEG, QT_TRANSLATE_NOOP("EvalParams", "Pawn phalanx"),
             QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackerWeightKnight, QT_TRANSLATE_NOOP("EvalParams", "King attacker weight: knight"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackerWeightBishop, QT_TRANSLATE_NOOP("EvalParams", "King attacker weight: bishop"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackerWeightRook, QT_TRANSLATE_NOOP("EvalParams", "King attacker weight: rook"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAttackerWeightQueen, QT_TRANSLATE_NOOP("EvalParams", "King attacker weight: queen"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingAdjacentAttackWeight, QT_TRANSLATE_NOOP("EvalParams", "Attack beside the king"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            kingDangerOpenFile, QT_TRANSLATE_NOOP("EvalParams", "Danger of a file without a friendly pawn"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            safeCheckKnight, QT_TRANSLATE_NOOP("EvalParams", "Safe check by a knight"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            safeCheckBishop, QT_TRANSLATE_NOOP("EvalParams", "Safe check by a bishop"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            safeCheckRook, QT_TRANSLATE_NOOP("EvalParams", "Safe check by a rook"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            safeCheckQueen, QT_TRANSLATE_NOOP("EvalParams", "Safe check by a queen"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            queenlessDangerReduction, QT_TRANSLATE_NOOP("EvalParams", "Danger reduction without an attacking queen"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            2000),
+        CHESSGUI_EVAL_FIELD(
+            kingDangerDivisor, QT_TRANSLATE_NOOP("EvalParams", "King danger divisor"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 1,
+            100000),
+        CHESSGUI_EVAL_FIELD(
+            kingSemiOpenFilePercent, QT_TRANSLATE_NOOP("EvalParams", "Half-open file near the king (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            100),
+        CHESSGUI_EVAL_FIELD(
+            kingStormBlockedPercent, QT_TRANSLATE_NOOP("EvalParams", "Blocked storming pawn (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            100),
+        CHESSGUI_EVAL_FIELD(
+            kingCentreOpenFilePenalty, QT_TRANSLATE_NOOP("EvalParams", "King in the centre with an open file"),
+            QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
             1000),
     };
     return fields;

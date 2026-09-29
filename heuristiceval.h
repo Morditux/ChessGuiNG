@@ -26,7 +26,7 @@ public:
     // (or the meaning of a weight) increments it: AppConfig only keeps stored
     // weights written by the same version, so an improvement to the defaults
     // reaches users who saved their configuration under an older one.
-    static constexpr int EvalParamsVersion = 2;
+    static constexpr int EvalParamsVersion = 3;
 
     // Every tunable weight of the classical evaluation, in centipawns unless
     // the name says otherwise. Each term carries a middle-game and an
@@ -129,15 +129,29 @@ public:
         // value so that a king still prefers pawns in front of it).
         int castledBonus = 15;
         int castlingRightsBonus = 10;
-        // Per attacked square near the king, weighted by the strongest enemy
-        // attacker on that square (`kingAttack*Percent` are percentages of this
-        // penalty, so 100 keeps a knight or bishop attack at its old value).
-        int kingAttackPenalty = 12;
-        int kingAttackPawnPercent = 50;
-        int kingAttackKnightPercent = 100;
-        int kingAttackBishopPercent = 100;
-        int kingAttackRookPercent = 150;
-        int kingAttackQueenPercent = 250;
+        // The attack on a king is a danger, quadratic in what the attackers
+        // bring: every knight, bishop, rook or queen that attacks the zone
+        // around the king (its neighbours plus one more row towards the enemy)
+        // counts, the sum of their weights is multiplied by their number, each
+        // attack on a square right beside the king, each file near the king
+        // without a friendly pawn and each safe check square (one an enemy
+        // piece attacks, from which it would check, and that the defence does
+        // not cover) add to it, and it drops by `queenlessDangerReduction` when
+        // the attacker has no queen. The middlegame penalty is `danger^2 /
+        // kingDangerDivisor` (and `danger / 16` in the endgame), charged only
+        // with two attackers, or one attacker when it has a queen.
+        int kingAttackerWeightKnight = 65;
+        int kingAttackerWeightBishop = 42;
+        int kingAttackerWeightRook = 35;
+        int kingAttackerWeightQueen = 8;
+        int kingAdjacentAttackWeight = 20;
+        int kingDangerOpenFile = 40;
+        int safeCheckKnight = 80;
+        int safeCheckBishop = 60;
+        int safeCheckRook = 90;
+        int safeCheckQueen = 100;
+        int queenlessDangerReduction = 200;
+        int kingDangerDivisor = 4096;
         int kingShelterBonus = 8;
         // The pawn directly in front of the king shields it best; the pawns on
         // the adjacent files are worth this percentage of the same bonus.
@@ -145,8 +159,17 @@ public:
         int kingShelterSecondRankPercent = 75;
         int kingShelterThirdRankPercent = 50;
         int kingShelterEndgamePercent = 50;
+        // A file near the king with no friendly pawn, against an opponent who
+        // still has a rook or a queen: the full penalty when no pawn stands on
+        // it at all, this share of it when an enemy pawn does.
         int openFileNearKingPenalty = 12;
+        int kingSemiOpenFilePercent = 50;
         int kingPawnStormPenalty = 6;
+        // A storming pawn that a friendly pawn blocks costs this share.
+        int kingStormBlockedPercent = 50;
+        // A king left in the centre (files d and e) that has lost its castling
+        // rights and has a file without a friendly pawn beside it.
+        int kingCentreOpenFilePenalty = 20;
 
         // Rooks.
         int rookOpenFileMG = 20;

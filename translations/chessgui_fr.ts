@@ -1234,6 +1234,66 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <source>Pawn phalanx</source>
         <translation>Phalange de pions</translation>
     </message>
+    <message>
+        <source>King attacker weight: knight</source>
+        <translation>Poids d&apos;attaquant du roi : cavalier</translation>
+    </message>
+    <message>
+        <source>King attacker weight: bishop</source>
+        <translation>Poids d&apos;attaquant du roi : fou</translation>
+    </message>
+    <message>
+        <source>King attacker weight: rook</source>
+        <translation>Poids d&apos;attaquant du roi : tour</translation>
+    </message>
+    <message>
+        <source>King attacker weight: queen</source>
+        <translation>Poids d&apos;attaquant du roi : dame</translation>
+    </message>
+    <message>
+        <source>Attack beside the king</source>
+        <translation>Attaque à côté du roi</translation>
+    </message>
+    <message>
+        <source>Danger of a file without a friendly pawn</source>
+        <translation>Danger d&apos;une colonne sans pion allié</translation>
+    </message>
+    <message>
+        <source>Safe check by a knight</source>
+        <translation>Échec sûr de cavalier</translation>
+    </message>
+    <message>
+        <source>Safe check by a bishop</source>
+        <translation>Échec sûr de fou</translation>
+    </message>
+    <message>
+        <source>Safe check by a rook</source>
+        <translation>Échec sûr de tour</translation>
+    </message>
+    <message>
+        <source>Safe check by a queen</source>
+        <translation>Échec sûr de dame</translation>
+    </message>
+    <message>
+        <source>Danger reduction without an attacking queen</source>
+        <translation>Réduction du danger sans dame attaquante</translation>
+    </message>
+    <message>
+        <source>King danger divisor</source>
+        <translation>Diviseur du danger pour le roi</translation>
+    </message>
+    <message>
+        <source>Half-open file near the king (%)</source>
+        <translation>Colonne semi-ouverte près du roi (%)</translation>
+    </message>
+    <message>
+        <source>Blocked storming pawn (%)</source>
+        <translation>Pion d&apos;assaut bloqué (%)</translation>
+    </message>
+    <message>
+        <source>King in the centre with an open file</source>
+        <translation>Roi au centre avec une colonne ouverte</translation>
+    </message>
 </context>
 <context>
     <name>EvalParamsDialog</name>

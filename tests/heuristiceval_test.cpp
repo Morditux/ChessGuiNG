@@ -178,6 +178,23 @@ int pawnTermScore(const QString &fen,
     return pawnTermScore(fen, {{middleGame, value}, {endGame, value}});
 }
 
+// The king-safety term of a position under modified weights, restored afterwards.
+int kingSafetyWith(
+    const QString &fen,
+    const std::vector<std::pair<int HeuristicEval::EvalParams::*, int>> &weights) {
+    HeuristicEval::EvalParams params = HeuristicEval::params();
+    for (const auto &weight : weights) {
+        params.*weight.first = weight.second;
+    }
+    HeuristicEval::setParams(params);
+    Rules rules;
+    const bool loaded = rules.loadFen(fen);
+    const int safety = loaded ? HeuristicEval::evaluateBreakdown(rules).kingSafety
+                              : -99999;
+    HeuristicEval::resetParams();
+    return safety;
+}
+
 } // namespace
 
 
@@ -247,6 +264,11 @@ private slots:
     void testPassedPawnKingsAndRoad();
     void testPhalanxPawns();
     void testPawnCacheIsTransparent();
+    void testKingDangerGrowsFasterThanTheAttackers();
+    void testKingDangerFallsWithoutAQueen();
+    void testSafeChecksAddToTheKingDanger();
+    void testOpenFilesNearTheKing();
+    void testKingSafetyInTheCentreAndUnderStorm();
     void testEndgameScalingFlattensUnwinnableAdvantages();
     void testRookEndingScaleFollowsThePawnFlanks();
     void testUnstoppablePassedPawn();
@@ -1116,15 +1138,15 @@ void HeuristicEvalTest::testReferenceScores() {
     const Reference references[] = {
         {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 10},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -31},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -38},
         {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", -HeuristicEval::MateScore},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -57},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -55},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 0},
         {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 0},
-        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 176},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 233},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 170},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -76},
+        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 175},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 232},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 166},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -74},
         {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 299},
     };
 
@@ -1151,27 +1173,27 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1483, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1707, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         4520, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 122, "e2a6",
-         9222, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 429, "d7c8q", 1594, 0},
+         4750, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 107, "e2a6",
+         9712, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 456, "d7c8q", 1539, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
          85, 1},
         {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 69, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 47, "b4f4", 2154, 0},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 39, "b4f4", 2062, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 0, "a2a3", 509, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -117, "c6d4",
-         4367, 0},
-        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
-        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
-         2797, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -123, "c6d4",
+         4053, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1108, "e1e2", 20630, 0},
+        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 59, "b1c3",
+         3362, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 0, "e4d5", 119, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 379, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 978, "a7a8q", 222, 0},
-        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1011, "e1e2", 151, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1085, "a7a8q", 169, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1109, "e1e2", 195, 0},
     };
 
     HeuristicEval::resetParams();
@@ -1361,6 +1383,15 @@ void HeuristicEvalTest::testPositionalKnowledge() {
         {"the own king beside a passed pawn (second position)",
          "1r6/5pp1/2KP4/8/8/8/4kPP1/1R6 w - - 0 1",
          "1r6/5pp1/3Pk3/8/8/8/5PP1/1RK5 w - - 0 1"},
+        {"an attack on the castled king (queen, knight and bishop)",
+         "r1b2rk1/ppp2ppp/2nq4/6N1/2B5/8/PPP2PPP/R2Q1RK1 w - - 0 1",
+         "r1b2rk1/ppp2ppp/2nq4/8/8/8/PPP2PPP/RNBQ1RK1 w - - 0 1"},
+        {"an attack on the castled king (second position)",
+         "r1b2rk1/ppp2ppp/2nq4/4N3/2B4Q/8/PPP2PPP/R4RK1 w - - 0 1",
+         "r1b2rk1/ppp2ppp/2nq4/8/8/8/PPPNQPPP/R1B2RK1 w - - 0 1"},
+        {"an attack on the castled king (bishop and knight)",
+         "r1b2rk1/ppp2ppp/2nq4/6N1/8/1B6/PPP2PPP/R2Q1RK1 w - - 0 1",
+         "r1b2rk1/ppp2ppp/2nq4/8/8/8/PPPB1PPP/RN1Q1RK1 w - - 0 1"},
         {"a pawn phalanx",
          "r3k3/pp3ppp/8/8/3PP3/8/PP3PPP/R3K3 w - - 0 1",
          "r3k3/pp3ppp/8/8/3P1P2/8/PP3PPP/R3K3 w - - 0 1"},
@@ -2149,6 +2180,131 @@ void HeuristicEvalTest::testPawnCacheIsTransparent() {
     QVERIFY(HeuristicEval::evaluateBreakdown(pawns).pawns < before);
     HeuristicEval::resetParams();
     QCOMPARE(HeuristicEval::evaluateBreakdown(pawns).pawns, before);
+}
+
+void HeuristicEvalTest::testKingDangerGrowsFasterThanTheAttackers() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    // Only the attackers count, with a weight of 100 each for a knight and a
+    // bishop and a divisor of 100, so the penalty is the square of the danger.
+    const std::vector<std::pair<int P::*, int>> weights = {
+        {&P::kingAttackerWeightKnight, 100}, {&P::kingAttackerWeightBishop, 100},
+        {&P::kingAttackerWeightRook, 0}, {&P::kingAttackerWeightQueen, 0},
+        {&P::kingAdjacentAttackWeight, 0}, {&P::kingDangerOpenFile, 0},
+        {&P::safeCheckKnight, 0}, {&P::safeCheckBishop, 0},
+        {&P::safeCheckRook, 0}, {&P::safeCheckQueen, 0},
+        {&P::queenlessDangerReduction, 0}, {&P::kingDangerDivisor, 100}};
+    // The same white pieces in three places. Far away from the black king they
+    // attack nothing; with the knight on g5 one piece attacks its zone (the
+    // queen keeps that enough to be charged); with the bishop on d3 as well
+    // there are two.
+    const QString none = QStringLiteral("6k1/p4ppp/8/8/8/N7/P7/3QK2B w - - 0 1");
+    const QString one = QStringLiteral("6k1/p4ppp/8/6N1/8/8/P7/3QK2B w - - 0 1");
+    const QString two = QStringLiteral("6k1/p4ppp/8/6N1/8/3B4/P7/3QK3 w - - 0 1");
+    for (const bool mirrored : {false, true}) {
+        const auto safety = [&](const QString &fen) {
+            return kingSafetyWith(mirrored ? mirrorFen(fen) : fen, weights);
+        };
+        const int sign = mirrored ? -1 : 1;
+        const int base = sign * safety(none);
+        const int gainOne = sign * safety(one) - base;
+        const int gainTwo = sign * safety(two) - base;
+        QVERIFY2(gainOne > 0, qPrintable(QString::number(gainOne)));
+        // Two attackers cost far more than twice what one costs.
+        QVERIFY2(gainTwo > 2 * gainOne,
+                 qPrintable(QStringLiteral("%1 vs %2").arg(gainTwo).arg(gainOne)));
+    }
+
+    // Without a queen a lone attacker does nothing at all.
+    const QString loneKnight =
+        QStringLiteral("6k1/p4ppp/8/6N1/8/8/P7/4K2B w - - 0 1");
+    const QString farKnight =
+        QStringLiteral("6k1/p4ppp/8/8/8/N7/P7/4K2B w - - 0 1");
+    QCOMPARE(kingSafetyWith(loneKnight, weights), kingSafetyWith(farKnight, weights));
+}
+
+void HeuristicEvalTest::testKingDangerFallsWithoutAQueen() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    // A knight and a bishop against the black king: with the reduction for a
+    // queenless attacker the white side gains less than without it.
+    const QString queenless = QStringLiteral("6k1/p4ppp/8/6N1/8/3B4/P7/4K3 w - - 0 1");
+    QVERIFY(kingSafetyWith(queenless, {{&P::queenlessDangerReduction, 400}}) <
+            kingSafetyWith(queenless, {{&P::queenlessDangerReduction, 0}}));
+    // With a queen on the board the reduction does not apply.
+    const QString withQueen = QStringLiteral("6k1/p4ppp/8/6N1/8/3B4/P7/3QK3 w - - 0 1");
+    QCOMPARE(kingSafetyWith(withQueen, {{&P::queenlessDangerReduction, 400}}),
+             kingSafetyWith(withQueen, {{&P::queenlessDangerReduction, 0}}));
+    // The same, seen from the other colour.
+    QVERIFY(kingSafetyWith(mirrorFen(queenless), {{&P::queenlessDangerReduction, 400}}) >
+            kingSafetyWith(mirrorFen(queenless), {{&P::queenlessDangerReduction, 0}}));
+}
+
+void HeuristicEvalTest::testSafeChecksAddToTheKingDanger() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    // Black knight on f4 and bishop on b6 against the white king on g1: the
+    // knight would give check from e2, which nothing but the king could cover.
+    const QString uncovered =
+        QStringLiteral("6k1/p4ppp/1b6/8/5n2/8/P4PPP/6K1 w - - 0 1");
+    // A white bishop on f1 covers e2, so that check square is not safe.
+    const QString covered =
+        QStringLiteral("6k1/p4ppp/1b6/8/5n2/8/P4PPP/5BK1 w - - 0 1");
+    const auto knightChecks = [&](const QString &fen) {
+        return kingSafetyWith(fen, {{&P::safeCheckKnight, 200}}) -
+               kingSafetyWith(fen, {{&P::safeCheckKnight, 0}});
+    };
+    QVERIFY2(knightChecks(uncovered) < 0,
+             qPrintable(QString::number(knightChecks(uncovered))));
+    QCOMPARE(knightChecks(covered), 0);
+    QVERIFY(knightChecks(mirrorFen(uncovered)) > 0);
+}
+
+void HeuristicEvalTest::testOpenFilesNearTheKing() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    const auto penalty = [&](const QString &fen) {
+        return kingSafetyWith(fen, {{&P::openFileNearKingPenalty, 100}}) -
+               kingSafetyWith(fen, {{&P::openFileNearKingPenalty, 0}});
+    };
+    // The g-file is open (no pawn of either colour) and White has a rook: the
+    // black king pays, which is a gain for White.
+    const QString open = QStringLiteral("6k1/p4p1p/8/8/8/8/P4P1P/R3K3 w - - 0 1");
+    // Half open: a white pawn still stands on the file.
+    const QString half = QStringLiteral("6k1/p4p1p/8/8/8/8/P4PPP/R3K3 w - - 0 1");
+    // The same open file against an opponent with only a knight: no penalty.
+    const QString noRook = QStringLiteral("6k1/p4p1p/8/8/8/8/P4P1P/N3K3 w - - 0 1");
+    QVERIFY(penalty(open) > 0);
+    QVERIFY(penalty(half) > 0);
+    QVERIFY(penalty(half) < penalty(open));
+    QCOMPARE(penalty(noRook), 0);
+    QVERIFY(penalty(mirrorFen(open)) < 0);
+}
+
+void HeuristicEvalTest::testKingSafetyInTheCentreAndUnderStorm() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    // A black king that stayed on e8 without castling rights and has files
+    // without pawns beside it, against a rook.
+    const auto centre = [&](const QString &fen) {
+        return kingSafetyWith(fen, {{&P::kingCentreOpenFilePenalty, 100}}) -
+               kingSafetyWith(fen, {{&P::kingCentreOpenFilePenalty, 0}});
+    };
+    QVERIFY(centre(QStringLiteral("4k3/p4ppp/8/8/8/8/P4PPP/R3K3 w - - 0 1")) > 0);
+    // With its castling rights (White keeps its own too, or its king in the
+    // centre would be the one charged), or on the g-file, it does not count.
+    QCOMPARE(centre(QStringLiteral("4k2r/p4ppp/8/8/8/8/P4PPP/R3K3 w Qk - 0 1")), 0);
+    QCOMPARE(centre(QStringLiteral("6k1/p4ppp/8/8/8/8/P4PPP/R3K3 w - - 0 1")), 0);
+    QVERIFY(centre(mirrorFen(QStringLiteral("4k3/p4ppp/8/8/8/8/P4PPP/R3K3 w - - 0 1"))) < 0);
+
+    // A white pawn on g5 storms the black king; a black pawn on g6 right in
+    // front of it blocks the storm and reduces the penalty.
+    const auto storm = [&](const QString &fen) {
+        return kingSafetyWith(fen, {{&P::kingStormBlockedPercent, 100}}) -
+               kingSafetyWith(fen, {{&P::kingStormBlockedPercent, 0}});
+    };
+    QVERIFY(storm(QStringLiteral("q5k1/p4p1p/6p1/6P1/8/8/P7/Q3K3 w - - 0 1")) > 0);
+    QCOMPARE(storm(QStringLiteral("q5k1/p4p1p/8/6P1/8/8/P7/Q3K3 w - - 0 1")), 0);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

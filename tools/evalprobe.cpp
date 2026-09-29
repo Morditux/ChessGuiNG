@@ -4,6 +4,8 @@
 //   evalprobe breakdown < positions.txt   per-term breakdown of every position
 //   evalprobe bench                       node throughput and evaluation cost
 //   evalprobe score < positions.txt       static score of every position
+//   any command also takes `key=value` arguments that override a weight of the
+//   evaluation (the keys of chessGui.conf) before it runs, for experiments
 //   evalprobe kpk < fens.txt              win/draw of king-pawn-king positions
 //   evalprobe signature DEPTH < fens.txt  cold single-thread search signature
 //                                         (score, move, nodes, mate distance),
@@ -13,6 +15,7 @@
 // starting with '#' are skipped. Build it with -DCHESSGUI_BUILD_TOOLS=ON.
 //
 
+#include "evalparamfields.h"
 #include "heuristiceval.h"
 #include "kpkbitbase.h"
 #include "rules.h"
@@ -156,7 +159,6 @@ int kpkCommand() {
 }
 
 int signatureCommand(int depth) {
-    HeuristicEval::resetParams();
     HeuristicEval::setSearchThreads(1);
     std::string label;
     std::string fen;
@@ -221,9 +223,37 @@ int benchCommand() {
 
 } // namespace
 
+// Applies the `key=value` arguments to the evaluation weights.
+bool applyOverrides(int argc, char **argv) {
+    HeuristicEval::EvalParams params = HeuristicEval::params();
+    for (int index = 2; index < argc; ++index) {
+        const std::string argument = argv[index];
+        const auto equals = argument.find('=');
+        if (equals == std::string::npos) {
+            continue;
+        }
+        bool found = false;
+        for (const EvalParamFields::Field &field : EvalParamFields::all()) {
+            if (argument.substr(0, equals) == field.key) {
+                params.*field.member = std::atoi(argument.c_str() + equals + 1);
+                found = true;
+            }
+        }
+        if (!found) {
+            std::fprintf(stderr, "unknown weight: %s\n", argument.c_str());
+            return false;
+        }
+    }
+    HeuristicEval::setParams(params);
+    return true;
+}
+
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     const std::string command = argc > 1 ? argv[1] : "";
+    if (!applyOverrides(argc, argv)) {
+        return 2;
+    }
     if (command == "breakdown") {
         return breakdownCommand();
     }
