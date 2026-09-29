@@ -502,7 +502,7 @@ void AppConfigTest::testLoadAndSaveEvaluationSettings() {
     HeuristicEval::EvalParams tuned;
     tuned.pawnValue = 130;
     tuned.isolatedPawnPenaltyEG = 41;
-    tuned.mobilityQueenMG = 3;
+    tuned.mobilityScaleQueenMG = 3;
     tuned.mopUpMaterialThreshold = 250;
     config.setEvalParams(tuned);
     config.setEvalSearchThreads(3);
@@ -519,7 +519,7 @@ void AppConfigTest::testLoadAndSaveEvaluationSettings() {
         const bool tunedField =
             field.member == &HeuristicEval::EvalParams::pawnValue ||
             field.member == &HeuristicEval::EvalParams::isolatedPawnPenaltyEG ||
-            field.member == &HeuristicEval::EvalParams::mobilityQueenMG ||
+            field.member == &HeuristicEval::EvalParams::mobilityScaleQueenMG ||
             field.member == &HeuristicEval::EvalParams::mopUpMaterialThreshold;
         if (!tunedField) {
             QCOMPARE(loaded.*field.member, defaults.*field.member);
@@ -527,7 +527,7 @@ void AppConfigTest::testLoadAndSaveEvaluationSettings() {
     }
     QCOMPARE(loaded.pawnValue, 130);
     QCOMPARE(loaded.isolatedPawnPenaltyEG, 41);
-    QCOMPARE(loaded.mobilityQueenMG, 3);
+    QCOMPARE(loaded.mobilityScaleQueenMG, 3);
     QCOMPARE(loaded.mopUpMaterialThreshold, 250);
     QCOMPARE(loadedConfig.evalSearchThreads(), 3);
     QCOMPARE(loadedConfig.evalDepth(), 3);

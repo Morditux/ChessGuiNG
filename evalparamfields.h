@@ -154,38 +154,6 @@ inline const std::vector<Field> &all() {
             QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
             100),
         CHESSGUI_EVAL_FIELD(
-            mobilityKnightMG, QT_TRANSLATE_NOOP("EvalParams", "Knight mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityKnightEG, QT_TRANSLATE_NOOP("EvalParams", "Knight mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityBishopMG, QT_TRANSLATE_NOOP("EvalParams", "Bishop mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityBishopEG, QT_TRANSLATE_NOOP("EvalParams", "Bishop mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityRookMG, QT_TRANSLATE_NOOP("EvalParams", "Rook mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityRookEG, QT_TRANSLATE_NOOP("EvalParams", "Rook mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityQueenMG, QT_TRANSLATE_NOOP("EvalParams", "Queen mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
-            mobilityQueenEG, QT_TRANSLATE_NOOP("EvalParams", "Queen mobility"),
-            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
-            100),
-        CHESSGUI_EVAL_FIELD(
             mobilityKingMG, QT_TRANSLATE_NOOP("EvalParams", "King mobility"),
             QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
             100),
@@ -516,6 +484,50 @@ inline const std::vector<Field> &all() {
         CHESSGUI_EVAL_FIELD(
             kingCentreOpenFilePenalty, QT_TRANSLATE_NOOP("EvalParams", "King in the centre with an open file"),
             QT_TRANSLATE_NOOP("EvalParams", "King safety"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleKnightMG, QT_TRANSLATE_NOOP("EvalParams", "Knight mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleKnightEG, QT_TRANSLATE_NOOP("EvalParams", "Knight mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleBishopMG, QT_TRANSLATE_NOOP("EvalParams", "Bishop mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleBishopEG, QT_TRANSLATE_NOOP("EvalParams", "Bishop mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleRookMG, QT_TRANSLATE_NOOP("EvalParams", "Rook mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleRookEG, QT_TRANSLATE_NOOP("EvalParams", "Rook mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleQueenMG, QT_TRANSLATE_NOOP("EvalParams", "Queen mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            mobilityScaleQueenEG, QT_TRANSLATE_NOOP("EvalParams", "Queen mobility scale (%)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            400),
+        CHESSGUI_EVAL_FIELD(
+            trappedRookPenalty, QT_TRANSLATE_NOOP("EvalParams", "Rook shut in by its king"),
+            QT_TRANSLATE_NOOP("EvalParams", "Mobility"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            outpostReachableKnightMG, QT_TRANSLATE_NOOP("EvalParams", "Knight one move from an outpost"),
+            QT_TRANSLATE_NOOP("EvalParams", "Piece specific"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            outpostReachableKnightEG, QT_TRANSLATE_NOOP("EvalParams", "Knight one move from an outpost"),
+            QT_TRANSLATE_NOOP("EvalParams", "Piece specific"), 0,
             1000),
     };
     return fields;

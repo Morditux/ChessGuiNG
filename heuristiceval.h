@@ -26,7 +26,7 @@ public:
     // (or the meaning of a weight) increments it: AppConfig only keeps stored
     // weights written by the same version, so an improvement to the defaults
     // reaches users who saved their configuration under an older one.
-    static constexpr int EvalParamsVersion = 3;
+    static constexpr int EvalParamsVersion = 4;
 
     // Every tunable weight of the classical evaluation, in centipawns unless
     // the name says otherwise. Each term carries a middle-game and an
@@ -114,14 +114,22 @@ public:
         // Mobility weights (middlegame, endgame).
         int mobilityPawnMG = 1;
         int mobilityPawnEG = 1;
-        int mobilityKnightMG = 4;
-        int mobilityKnightEG = 4;
-        int mobilityBishopMG = 4;
-        int mobilityBishopEG = 5;
-        int mobilityRookMG = 2;
-        int mobilityRookEG = 4;
-        int mobilityQueenMG = 1;
-        int mobilityQueenEG = 2;
+        // The knight, bishop, rook and queen follow shaped tables (see
+        // `shapedMobility()` in heuristiceval.cpp): the first squares count
+        // most and a piece with almost none is heavily penalised. These weights
+        // scale those tables, in percent.
+        int mobilityScaleKnightMG = 100;
+        int mobilityScaleKnightEG = 100;
+        int mobilityScaleBishopMG = 100;
+        int mobilityScaleBishopEG = 100;
+        int mobilityScaleRookMG = 100;
+        int mobilityScaleRookEG = 100;
+        int mobilityScaleQueenMG = 100;
+        int mobilityScaleQueenEG = 100;
+        // A rook on the first rank that its own king shuts in (three squares or
+        // fewer, no castling to free it), doubled without any castling right.
+        // Counted with the mobility.
+        int trappedRookPenalty = 40;
         int mobilityKingMG = 2;
         int mobilityKingEG = 1;
 
@@ -203,6 +211,9 @@ public:
         int outpostKnightEG = 10;
         int outpostBishopMG = 10;
         int outpostBishopEG = 5;
+        // A knight that can reach an outpost in one move.
+        int outpostReachableKnightMG = 10;
+        int outpostReachableKnightEG = 5;
         int badBishopPenalty = 3;
         int badBishopCap = 20;
         int connectedRooksMG = 30;

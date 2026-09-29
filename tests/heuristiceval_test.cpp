@@ -179,9 +179,10 @@ int pawnTermScore(const QString &fen,
 }
 
 // The king-safety term of a position under modified weights, restored afterwards.
-int kingSafetyWith(
+int termWith(
     const QString &fen,
-    const std::vector<std::pair<int HeuristicEval::EvalParams::*, int>> &weights) {
+    const std::vector<std::pair<int HeuristicEval::EvalParams::*, int>> &weights,
+    int HeuristicEval::EvalBreakdown::*term) {
     HeuristicEval::EvalParams params = HeuristicEval::params();
     for (const auto &weight : weights) {
         params.*weight.first = weight.second;
@@ -189,10 +190,16 @@ int kingSafetyWith(
     HeuristicEval::setParams(params);
     Rules rules;
     const bool loaded = rules.loadFen(fen);
-    const int safety = loaded ? HeuristicEval::evaluateBreakdown(rules).kingSafety
-                              : -99999;
+    const int value = loaded ? HeuristicEval::evaluateBreakdown(rules).*term
+                             : -99999;
     HeuristicEval::resetParams();
-    return safety;
+    return value;
+}
+
+int kingSafetyWith(
+    const QString &fen,
+    const std::vector<std::pair<int HeuristicEval::EvalParams::*, int>> &weights) {
+    return termWith(fen, weights, &HeuristicEval::EvalBreakdown::kingSafety);
 }
 
 } // namespace
@@ -269,6 +276,10 @@ private slots:
     void testSafeChecksAddToTheKingDanger();
     void testOpenFilesNearTheKing();
     void testKingSafetyInTheCentreAndUnderStorm();
+    void testMobilityIsShapedAndPenalisesShutInPieces();
+    void testRookOnTheSeventhNeedsATarget();
+    void testRookShutInByItsKing();
+    void testOutpostsAreOutOfReachOfEnemyPawns();
     void testEndgameScalingFlattensUnwinnableAdvantages();
     void testRookEndingScaleFollowsThePawnFlanks();
     void testUnstoppablePassedPawn();
@@ -1138,14 +1149,14 @@ void HeuristicEvalTest::testReferenceScores() {
     const Reference references[] = {
         {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 10},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -38},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -32},
         {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", -HeuristicEval::MateScore},
         {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -55},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 0},
         {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 0},
         {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 175},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 232},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 166},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 219},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 165},
         {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -74},
         {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 299},
     };
@@ -1173,27 +1184,27 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1707, 0},
-        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         4750, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 107, "e2a6",
-         9712, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 456, "d7c8q", 1539, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "e2e4", 2148, 0},
+        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "d2d3",
+         7248, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 82, "e2a6",
+         10109, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 497, "d7c8q", 1933, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
          85, 1},
         {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 69, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 39, "b4f4", 2062, 0},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 12, "b4f4", 2178, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 0, "a2a3", 509, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -123, "c6d4",
-         4053, 0},
-        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1108, "e1e2", 20630, 0},
-        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 59, "b1c3",
-         3362, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -113, "c6d4",
+         3887, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1081, "e1e2", 16332, 0},
+        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
+         3409, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 0, "e4d5", 119, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 379, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1085, "a7a8q", 169, 0},
-        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1109, "e1e2", 195, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1051, "a7a8q", 171, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1075, "e1e2", 195, 0},
     };
 
     HeuristicEval::resetParams();
@@ -2305,6 +2316,122 @@ void HeuristicEvalTest::testKingSafetyInTheCentreAndUnderStorm() {
     };
     QVERIFY(storm(QStringLiteral("q5k1/p4p1p/6p1/6P1/8/8/P7/Q3K3 w - - 0 1")) > 0);
     QCOMPARE(storm(QStringLiteral("q5k1/p4p1p/8/6P1/8/8/P7/Q3K3 w - - 0 1")), 0);
+}
+
+void HeuristicEvalTest::testMobilityIsShapedAndPenalisesShutInPieces() {
+    HeuristicEval::resetParams();
+    const auto mobility = [](const QString &fen) {
+        return termWith(fen, {}, &HeuristicEval::EvalBreakdown::mobility);
+    };
+    // The same pawns and pieces, the bishop shut in on c1 by its own pawns or
+    // free on e3: the shaped table charges the shut-in bishop far more than a
+    // straight-line weight of a few centipawns per square would.
+    const QString shut = QStringLiteral("4k3/8/8/8/8/8/1P1P4/2B1K3 w - - 0 1");
+    const QString free = QStringLiteral("4k3/8/8/8/8/4B3/1P1P4/4K3 w - - 0 1");
+    QVERIFY2(mobility(free) - mobility(shut) > 40,
+             qPrintable(QStringLiteral("%1 vs %2").arg(mobility(free)).arg(mobility(shut))));
+    // Mirrored, the good side is Black.
+    QVERIFY(mobility(mirrorFen(shut)) - mobility(mirrorFen(free)) > 40);
+
+    // The first squares are worth more than the last: going from 0 to 4 squares
+    // gains more than going from 9 to 13 for a bishop, and the scale weights
+    // stretch the whole curve.
+    using P = HeuristicEval::EvalParams;
+    const QString roomy = QStringLiteral("4k3/8/8/8/3B4/8/1P1P4/4K3 w - - 0 1");
+    const int base = mobility(shut);
+    const int mid = mobility(roomy);
+    QVERIFY(mid > base);
+    QVERIFY(termWith(free, {{&P::mobilityScaleBishopMG, 200}, {&P::mobilityScaleBishopEG, 200}},
+                     &HeuristicEval::EvalBreakdown::mobility) >
+            mobility(free));
+    QCOMPARE(termWith(free, {{&P::mobilityScaleBishopMG, 0}, {&P::mobilityScaleBishopEG, 0}},
+                      &HeuristicEval::EvalBreakdown::mobility) -
+                 termWith(shut, {{&P::mobilityScaleBishopMG, 0}, {&P::mobilityScaleBishopEG, 0}},
+                          &HeuristicEval::EvalBreakdown::mobility),
+             0);
+}
+
+void HeuristicEvalTest::testRookOnTheSeventhNeedsATarget() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    const auto seventh = [](const QString &fen) {
+        return termWith(fen, {{&P::rookSeventhRankMG, 100}, {&P::rookSeventhRankEG, 100}},
+                        &HeuristicEval::EvalBreakdown::placement) -
+               termWith(fen, {{&P::rookSeventhRankMG, 0}, {&P::rookSeventhRankEG, 0}},
+                        &HeuristicEval::EvalBreakdown::placement);
+    };
+    // The black king on its back rank: the rook on the seventh counts.
+    QCOMPARE(seventh(QStringLiteral("4k3/R7/8/8/8/8/8/4K3 w - - 0 1")), 100);
+    // Black pawns still on their seventh rank: it counts as well.
+    QCOMPARE(seventh(QStringLiteral("8/Rp6/4k3/8/8/8/8/4K3 w - - 0 1")), 100);
+    // Neither the king on the back rank nor a pawn on the seventh: nothing.
+    QCOMPARE(seventh(QStringLiteral("8/R7/4k3/8/8/8/8/4K3 w - - 0 1")), 0);
+    // The same for Black's rook on its seventh rank.
+    QCOMPARE(seventh(mirrorFen(QStringLiteral("4k3/R7/8/8/8/8/8/4K3 w - - 0 1"))), -100);
+    QCOMPARE(seventh(mirrorFen(QStringLiteral("8/R7/4k3/8/8/8/8/4K3 w - - 0 1"))), 0);
+}
+
+void HeuristicEvalTest::testRookShutInByItsKing() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    const auto trapped = [](const QString &fen) {
+        return termWith(fen, {{&P::trappedRookPenalty, 100}},
+                        &HeuristicEval::EvalBreakdown::mobility) -
+               termWith(fen, {{&P::trappedRookPenalty, 0}},
+                        &HeuristicEval::EvalBreakdown::mobility);
+    };
+    // Ke1 with the rook on h1 behind a knight on g1 and a bishop on f1, and no
+    // castling right left: the rook is shut in, and the penalty is doubled.
+    const QString shutIn = QStringLiteral("r3k3/pppppppp/8/8/8/8/PPPPPPPP/4KNBR w - - 0 1");
+    QVERIFY(trapped(shutIn) < 0);
+    // Keeping the kingside right, the rook can still be freed by castling: no
+    // penalty. Keeping the queenside right only, the penalty is single.
+    const QString withRight =
+        QStringLiteral("r3k3/pppppppp/8/8/8/8/PPPPPPPP/R3KNBR w KQ - 0 1");
+    QCOMPARE(trapped(withRight), 0);
+    const QString queenSideOnly =
+        QStringLiteral("r3k3/pppppppp/8/8/8/8/PPPPPPPP/R3KNBR w Q - 0 1");
+    QVERIFY(trapped(queenSideOnly) < 0);
+    QVERIFY(trapped(shutIn) < trapped(queenSideOnly));
+    // A rook with room to move is not shut in.
+    QCOMPARE(trapped(QStringLiteral("r3k3/pppppppp/8/8/8/8/PPPPPPP1/4K2R w - - 0 1")), 0);
+    // Mirrored, the penalty falls on Black.
+    QVERIFY(trapped(mirrorFen(shutIn)) > 0);
+}
+
+void HeuristicEvalTest::testOutpostsAreOutOfReachOfEnemyPawns() {
+    HeuristicEval::resetParams();
+    using P = HeuristicEval::EvalParams;
+    const auto outposts = [](const QString &fen,
+                             std::vector<std::pair<int P::*, int>> weights) {
+        weights.push_back({&P::outpostBishopMG, 0});
+        weights.push_back({&P::outpostBishopEG, 0});
+        return termWith(fen, weights, &HeuristicEval::EvalBreakdown::outposts);
+    };
+    const std::vector<std::pair<int P::*, int>> knightOnly = {
+        {&P::outpostKnightMG, 100}, {&P::outpostKnightEG, 100},
+        {&P::outpostReachableKnightMG, 0}, {&P::outpostReachableKnightEG, 0}};
+    // A knight on d5, held by the e4 pawn. With no black pawn left on the c and
+    // e files it can never be driven away: an outpost.
+    const QString safe = QStringLiteral("4k3/pp3ppp/8/3N4/4P3/8/PP3PPP/4K3 w - - 0 1");
+    QCOMPARE(outposts(safe, knightOnly), 100);
+    // A black pawn on c7 can still advance and attack d5: not an outpost, even
+    // though nothing attacks the knight yet.
+    QCOMPARE(outposts(QStringLiteral("4k3/ppp2ppp/8/3N4/4P3/8/PP3PPP/4K3 w - - 0 1"),
+                      knightOnly), 0);
+    // A black pawn on c5 has gone past d5 and cannot attack it.
+    QCOMPARE(outposts(QStringLiteral("4k3/pp3ppp/8/2pN4/4P3/8/PP3PPP/4K3 w - - 0 1"),
+                      knightOnly), 100);
+    QCOMPARE(outposts(mirrorFen(safe), knightOnly), -100);
+
+    // A knight that can jump to such a square earns the reduced bonus.
+    const std::vector<std::pair<int P::*, int>> reachable = {
+        {&P::outpostKnightMG, 0}, {&P::outpostKnightEG, 0},
+        {&P::outpostReachableKnightMG, 100}, {&P::outpostReachableKnightEG, 100}};
+    QCOMPARE(outposts(QStringLiteral("4k3/pp3ppp/8/8/1N2P3/8/PP3PPP/4K3 w - - 0 1"),
+                      reachable), 100);
+    QCOMPARE(outposts(QStringLiteral("4k3/ppp2ppp/8/8/1N2P3/8/PP3PPP/4K3 w - - 0 1"),
+                      reachable), 0);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

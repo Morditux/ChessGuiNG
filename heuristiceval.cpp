@@ -246,6 +246,15 @@ struct AttackInfo {
     int kingAttackersWeight = 0;
     int kingAdjacentAttacks = 0;
     std::array<quint64, 4> checkCandidates{};
+    // The rooks of this colour with the squares each can move to, for the rook
+    // that its own king shuts in.
+    struct RookMobility {
+        int row = 0;
+        int column = 0;
+        int moves = 0;
+    };
+    std::array<RookMobility, 10> rooks{};
+    int rookCount = 0;
 };
 
 // Kinds of piece that give a check, indexing `AttackInfo::checkCandidates` and
@@ -314,22 +323,72 @@ int taperedValue(const TaperedScore &score, int phase) {
     return interpolate(score.middleGame, score.endGame, phase);
 }
 
-// Mobility weights are tapered so that rooks and queens matter more once the
-// board opens up.
+// Pawns and kings keep a linear mobility weight: a pawn's few moves and the king's
+// safe squares are not a matter of shape.
 TaperedScore mobilityWeight(Rules::PieceType type) {
     switch (type) {
     case Rules::PieceType::Pawn:
         return {P.mobilityPawnMG, P.mobilityPawnEG};
-    case Rules::PieceType::Knight:
-        return {P.mobilityKnightMG, P.mobilityKnightEG};
-    case Rules::PieceType::Bishop:
-        return {P.mobilityBishopMG, P.mobilityBishopEG};
-    case Rules::PieceType::Rook:
-        return {P.mobilityRookMG, P.mobilityRookEG};
-    case Rules::PieceType::Queen:
-        return {P.mobilityQueenMG, P.mobilityQueenEG};
     case Rules::PieceType::King:
         return {P.mobilityKingMG, P.mobilityKingEG};
+    case Rules::PieceType::Knight:
+    case Rules::PieceType::Bishop:
+    case Rules::PieceType::Rook:
+    case Rules::PieceType::Queen:
+    case Rules::PieceType::None:
+        return {};
+    }
+    return {};
+}
+
+// What a knight, bishop, rook or queen is worth for the number of squares it can
+// move to, in centipawns, indexed by that number. The shape is what matters: the
+// first squares count for far more than the last ones, and a piece with almost
+// none is heavily penalised. Each table is the saturating curve
+// `A * n / (n + h)`, shifted so that a typical mobility is worth zero (knight 4,
+// bishop 6, rook 7, queen 13); the `mobilityScale*` weights scale them in percent.
+constexpr std::array<int, 9> KnightMobilityMG = {
+    -27, -17, -10, -4, 0, 3, 6, 8, 10};
+constexpr std::array<int, 9> KnightMobilityEG = {
+    -28, -18, -10, -5, 0, 4, 7, 10, 12};
+constexpr std::array<int, 14> BishopMobilityMG = {
+    -39, -29, -21, -14, -9, -4, 0, 3, 6, 9, 11, 14, 15, 17};
+constexpr std::array<int, 14> BishopMobilityEG = {
+    -47, -35, -25, -17, -10, -5, 0, 4, 8, 11, 14, 17, 19, 21};
+constexpr std::array<int, 15> RookMobilityMG = {
+    -38, -28, -20, -14, -10, -6, -3, 0, 2, 4, 6, 8, 9, 10, 11};
+constexpr std::array<int, 15> RookMobilityEG = {
+    -65, -49, -36, -26, -18, -11, -5, 0, 4, 8, 11, 14, 17, 20, 22};
+constexpr std::array<int, 28> QueenMobilityMG = {
+    -28, -24, -20, -17, -14, -12, -10, -8, -6, -5, -3, -2, -1, 0,
+    1, 2, 3, 3, 4, 4, 5, 6, 6, 7, 7, 7, 8, 8};
+constexpr std::array<int, 28> QueenMobilityEG = {
+    -52, -44, -38, -32, -27, -23, -19, -15, -12, -9, -7, -4, -2, 0,
+    2, 4, 5, 7, 8, 9, 10, 12, 13, 14, 15, 16, 16, 17};
+
+template <std::size_t Size>
+constexpr int tableValue(const std::array<int, Size> &table, int moves) {
+    return table[static_cast<std::size_t>(std::clamp(moves, 0,
+                                                     static_cast<int>(Size) - 1))];
+}
+
+// Mobility of a knight, bishop, rook or queen with `moves` squares to go to.
+TaperedScore shapedMobility(Rules::PieceType type, int moves) {
+    switch (type) {
+    case Rules::PieceType::Knight:
+        return {tableValue(KnightMobilityMG, moves) * P.mobilityScaleKnightMG / 100,
+                tableValue(KnightMobilityEG, moves) * P.mobilityScaleKnightEG / 100};
+    case Rules::PieceType::Bishop:
+        return {tableValue(BishopMobilityMG, moves) * P.mobilityScaleBishopMG / 100,
+                tableValue(BishopMobilityEG, moves) * P.mobilityScaleBishopEG / 100};
+    case Rules::PieceType::Rook:
+        return {tableValue(RookMobilityMG, moves) * P.mobilityScaleRookMG / 100,
+                tableValue(RookMobilityEG, moves) * P.mobilityScaleRookEG / 100};
+    case Rules::PieceType::Queen:
+        return {tableValue(QueenMobilityMG, moves) * P.mobilityScaleQueenMG / 100,
+                tableValue(QueenMobilityEG, moves) * P.mobilityScaleQueenEG / 100};
+    case Rules::PieceType::Pawn:
+    case Rules::PieceType::King:
     case Rules::PieceType::None:
         return {};
     }
@@ -623,9 +682,11 @@ void buildAttackInfo(const Board &board, const KingMasks &masks,
                 const quint64 bit = squareBit(targetRow, targetColumn);
                 touchesZone = touchesZone || (masks.zone[enemyIndex] & bit) != 0;
                 adjacentHits += (masks.adjacent[enemyIndex] & bit) != 0;
-                if (!occupiedByColour(board, piece->color, targetRow,
+                const quint64 checkSquare = masks.checks[enemyIndex][kind] & bit;
+                if (checkSquare != 0 &&
+                    !occupiedByColour(board, piece->color, targetRow,
                                       targetColumn)) {
-                    candidates |= masks.checks[enemyIndex][kind] & bit;
+                    candidates |= checkSquare;
                 }
             };
 
@@ -702,7 +763,11 @@ void buildAttackInfo(const Board &board, const KingMasks &masks,
             // the enemy attacks, which are only complete once both maps are
             // built. `kingMobility` adds it afterwards.
             if (piece->type != Rules::PieceType::King) {
-                info.mobility += moves * mobilityWeight(piece->type);
+                info.mobility += shapedMobility(piece->type, moves);
+            }
+            if (piece->type == Rules::PieceType::Rook &&
+                info.rookCount < static_cast<int>(info.rooks.size())) {
+                info.rooks[info.rookCount++] = {row, column, moves};
             }
             if (touchesZone) {
                 ++info.kingAttackers;
@@ -747,9 +812,25 @@ void evaluateMaterialAndPlacement(const BoardAnalysis &analysis,
                                           : TaperedScore{P.rookSemiOpenFileMG,
                                                          P.rookSemiOpenFileEG});
             }
+            // A rook on the seventh rank only earns its bonus when it has
+            // something to attack there: the enemy king still on its back rank,
+            // or enemy pawns that have not left their seventh rank.
             if (relativeRank(piece.color, piece.row) == 7) {
-                *placement += sign * TaperedScore{P.rookSeventhRankMG,
-                                                  P.rookSeventhRankEG};
+                const bool white = piece.color == Rules::Color::White;
+                const int enemyKingRow =
+                    white ? analysis.blackKingRow : analysis.whiteKingRow;
+                const auto &enemyRows =
+                    white ? analysis.blackPawnRows : analysis.whitePawnRows;
+                const quint8 enemySeventh =
+                    static_cast<quint8>(1 << (white ? 1 : 6));
+                bool pawnsOnSeventh = false;
+                for (const quint8 rows : enemyRows) {
+                    pawnsOnSeventh = pawnsOnSeventh || (rows & enemySeventh) != 0;
+                }
+                if (enemyKingRow == (white ? 0 : 7) || pawnsOnSeventh) {
+                    *placement += sign * TaperedScore{P.rookSeventhRankMG,
+                                                      P.rookSeventhRankEG};
+                }
             }
         }
     }
@@ -1290,10 +1371,28 @@ private:
     std::array<Slot, static_cast<std::size_t>(quint64{1} << Bits)> slots_{};
 };
 
+// Whether a square is an outpost for `color`: on the fourth to sixth rank, held by
+// a friendly pawn and out of reach of every enemy pawn for good, that is with no
+// enemy pawn on an adjacent file that is still ahead of it and could advance to
+// attack it.
+bool isOutpost(const BoardAnalysis &analysis, const AttackInfo &own,
+               Rules::Color color, int row, int column) {
+    const int rank = relativeRank(color, row);
+    if (rank < 4 || rank > 6 || !own.pawnSquares[row][column]) {
+        return false;
+    }
+    const auto &enemyRows = color == Rules::Color::White ? analysis.blackPawnRows
+                                                         : analysis.whitePawnRows;
+    const quint8 ahead = rowsAhead(row, forwardDirection(color));
+    return !((column > 0 && (enemyRows[column - 1] & ahead)) ||
+             (column < 7 && (enemyRows[column + 1] & ahead)));
+}
+
 // Threats, outposts and the bad-bishop penalty in one pass over the pieces:
 // they all ask a question about the piece that is already in hand.
-void evaluatePieceTerms(const BoardAnalysis &analysis, const AttackInfo &white,
-                        const AttackInfo &black, TaperedScore *threats,
+void evaluatePieceTerms(const Board &board, const BoardAnalysis &analysis,
+                        const AttackInfo &white, const AttackInfo &black,
+                        TaperedScore *threats,
                         TaperedScore *outposts, TaperedScore *badBishops) {
     for (int index = 0; index < analysis.pieceCount; ++index) {
         const PieceOnBoard &piece = analysis.pieces[index];
@@ -1331,16 +1430,28 @@ void evaluatePieceTerms(const BoardAnalysis &analysis, const AttackInfo &white,
             }
         }
 
-        if ((piece.type == Rules::PieceType::Knight ||
-             piece.type == Rules::PieceType::Bishop) &&
-            relativeRank(piece.color, piece.row) >= 4 &&
-            own.pawnSquares[piece.row][piece.column] &&
-            !enemy.pawnSquares[piece.row][piece.column]) {
-            const TaperedScore bonus =
-                piece.type == Rules::PieceType::Knight
-                    ? TaperedScore{P.outpostKnightMG, P.outpostKnightEG}
-                    : TaperedScore{P.outpostBishopMG, P.outpostBishopEG};
-            *outposts += sign * bonus;
+        if (piece.type == Rules::PieceType::Knight ||
+            piece.type == Rules::PieceType::Bishop) {
+            if (isOutpost(analysis, own, piece.color, piece.row, piece.column)) {
+                *outposts += sign * (piece.type == Rules::PieceType::Knight
+                                         ? TaperedScore{P.outpostKnightMG,
+                                                        P.outpostKnightEG}
+                                         : TaperedScore{P.outpostBishopMG,
+                                                        P.outpostBishopEG});
+            } else if (piece.type == Rules::PieceType::Knight) {
+                // A knight one jump from an outpost is worth a smaller bonus.
+                for (const Offset &offset : KnightOffsets) {
+                    const int row = piece.row + offset.rowDelta;
+                    const int column = piece.column + offset.columnDelta;
+                    if (isInside(row, column) &&
+                        !occupiedByColour(board, piece.color, row, column) &&
+                        isOutpost(analysis, own, piece.color, row, column)) {
+                        *outposts += sign * TaperedScore{P.outpostReachableKnightMG,
+                                                         P.outpostReachableKnightEG};
+                        break;
+                    }
+                }
+            }
         }
     }
 }
@@ -1586,6 +1697,48 @@ TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
     }
 
     score -= kingDanger(analysis, color, own, enemy, filesMissing);
+    return score;
+}
+
+// A rook that its own king shuts in: on the first rank, outside the king (on the
+// wing the king has stepped towards), with three squares or fewer to move to and
+// no castling to free it. The penalty is doubled when the side has lost every
+// castling right.
+TaperedScore evaluateTrappedRooks(const BoardAnalysis &analysis,
+                                  const AttackInfo &white,
+                                  const AttackInfo &black) {
+    TaperedScore score;
+    for (const Rules::Color color :
+         {Rules::Color::White, Rules::Color::Black}) {
+        const bool isWhite = color == Rules::Color::White;
+        const AttackInfo &info = isWhite ? white : black;
+        const int kingRow = isWhite ? analysis.whiteKingRow : analysis.blackKingRow;
+        const int kingColumn =
+            isWhite ? analysis.whiteKingColumn : analysis.blackKingColumn;
+        const int homeRow = isWhite ? 7 : 0;
+        if (kingRow != homeRow) {
+            continue;
+        }
+        const bool kingSide = isWhite ? analysis.whiteCanCastleKingSide
+                                      : analysis.blackCanCastleKingSide;
+        const bool queenSide = isWhite ? analysis.whiteCanCastleQueenSide
+                                       : analysis.blackCanCastleQueenSide;
+        for (int index = 0; index < info.rookCount; ++index) {
+            const AttackInfo::RookMobility &rook = info.rooks[index];
+            if (rook.row != homeRow || rook.moves > 3) {
+                continue;
+            }
+            const bool outsideKing =
+                kingColumn >= 4 ? rook.column > kingColumn
+                                : rook.column < kingColumn;
+            const bool canStillCastle = rook.column > kingColumn ? kingSide
+                                                                 : queenSide;
+            if (outsideKing && !canStillCastle) {
+                score -= signFor(color) * (kingSide || queenSide ? 1 : 2) *
+                         middleGameOnly(P.trappedRookPenalty);
+            }
+        }
+    }
     return score;
 }
 
@@ -1991,6 +2144,7 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     // is added here because its safe moves need both attack maps.
     TaperedScore mobility = attacksByWhite.mobility;
     mobility -= attacksByBlack.mobility;
+    mobility += evaluateTrappedRooks(analysis, attacksByWhite, attacksByBlack);
     mobility += kingMobility(board, analysis, Rules::Color::White,
                              attacksByBlack.squares);
     mobility -= kingMobility(board, analysis, Rules::Color::Black,
@@ -2001,7 +2155,7 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     TaperedScore threats;
     TaperedScore outposts;
     TaperedScore badBishops;
-    evaluatePieceTerms(analysis, attacksByWhite, attacksByBlack, &threats,
+    evaluatePieceTerms(board, analysis, attacksByWhite, attacksByBlack, &threats,
                        &outposts, &badBishops);
     const TaperedScore connectedRooks = evaluateConnectedRooks(board, analysis);
     const TaperedScore mopUp = evaluateEndgameMopUp(analysis);

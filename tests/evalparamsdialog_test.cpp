@@ -97,7 +97,7 @@ void EvalParamsDialogTest::testSearchLimits() {
 void EvalParamsDialogTest::testRestoreDefaults() {
     HeuristicEval::EvalParams tuned;
     tuned.queenValue = 1000;
-    tuned.mobilityRookEG = 9;
+    tuned.mobilityScaleRookEG = 9;
     EvalParamsDialog dialog(tuned, 2, 4);
 
     auto *restore = dialog.findChild<QPushButton *>(

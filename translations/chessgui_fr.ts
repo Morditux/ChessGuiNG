@@ -1294,6 +1294,30 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <source>King in the centre with an open file</source>
         <translation>Roi au centre avec une colonne ouverte</translation>
     </message>
+    <message>
+        <source>Knight mobility scale (%)</source>
+        <translation>Échelle de mobilité du cavalier (%)</translation>
+    </message>
+    <message>
+        <source>Bishop mobility scale (%)</source>
+        <translation>Échelle de mobilité du fou (%)</translation>
+    </message>
+    <message>
+        <source>Rook mobility scale (%)</source>
+        <translation>Échelle de mobilité de la tour (%)</translation>
+    </message>
+    <message>
+        <source>Queen mobility scale (%)</source>
+        <translation>Échelle de mobilité de la dame (%)</translation>
+    </message>
+    <message>
+        <source>Rook shut in by its king</source>
+        <translation>Tour enfermée par son roi</translation>
+    </message>
+    <message>
+        <source>Knight one move from an outpost</source>
+        <translation>Cavalier à un coup d&apos;un avant-poste</translation>
+    </message>
 </context>
 <context>
     <name>EvalParamsDialog</name>
