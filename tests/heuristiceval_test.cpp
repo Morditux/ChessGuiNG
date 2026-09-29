@@ -9,6 +9,7 @@
 #include "evalparamfields.h"
 #include "heuristiceval.h"
 #include "heuristicsearch.h"
+#include "kpkbitbase.h"
 #include "rules.h"
 #include "uciparser.h"
 #include "winprobability.h"
@@ -133,6 +134,18 @@ bool forcedMateIn(Rules &rules, int plies, const Rules::Move *first = nullptr) {
     return false;
 }
 
+// Mirrors a position left to right: the files are reversed, which is a symmetry
+// of the game when no castling right is left.
+QString mirrorFilesFen(const QString &fen) {
+    QStringList parts = fen.split(QLatin1Char(' '));
+    QStringList ranks = parts[0].split(QLatin1Char('/'));
+    for (QString &rank : ranks) {
+        std::reverse(rank.begin(), rank.end());
+    }
+    parts[0] = ranks.join(QLatin1Char('/'));
+    return parts.join(QLatin1Char(' '));
+}
+
 // The pawn-structure term of a position with every pawn-structure weight zeroed
 // but one, which is set to `value` in both phases: the result is `value` times
 // what White holds of that feature minus what Black holds, so a test can pin one
@@ -223,6 +236,11 @@ private slots:
     void testTornTranspositionEntryIsRejected();
     void testBackwardPawnDefinition();
     void testCandidatePawnDefinition();
+    void testEndgameScalingFlattensUnwinnableAdvantages();
+    void testRookEndingScaleFollowsThePawnFlanks();
+    void testUnstoppablePassedPawn();
+    void testKingAndPawnAgainstKingIsSolved();
+    void testBishopAndKnightMateAimsForTheRightCorner();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -300,7 +318,9 @@ void HeuristicEvalTest::testPassedPawnAdvantage() {
     HeuristicEval eval;
     Rules rules;
 
-    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1")));
+    // A knight each keeps the position out of the exactly solved king-and-pawn
+    // endings, so the pawn is judged by the evaluation terms.
+    QVERIFY(rules.loadFen(QStringLiteral("4k1n1/8/8/8/4P3/8/8/4K1N1 w - - 0 1")));
     QVERIFY(eval.evaluateCentipawns(rules) > 100);
 }
 
@@ -426,9 +446,10 @@ void HeuristicEvalTest::testReferencePositions() {
         {"4k3/8/8/8/8/8/8/R3K3 w - - 0 1", true},
         {"r3k3/8/8/8/8/8/8/4K3 b - - 0 1", false},
         {"q3k3/8/8/8/8/8/8/4K3 b - - 0 1", false},
-        {"4k3/8/8/8/8/8/P7/4K2b b - - 0 1", false},
+        // A rook against a pawn; a bishop against a pawn is a draw (the
+        // bishop wins the pawn and cannot mate), which the evaluator now says.
+        {"4k2r/8/8/8/8/8/P7/4K3 b - - 0 1", false},
         {"2b1k3/8/8/8/8/8/8/2B1KB2 w - - 0 1", true},
-        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", true},
         {"4k3/8/8/8/8/8/PP6/4K3 w - - 0 1", true},
     };
 
@@ -480,23 +501,25 @@ void HeuristicEvalTest::testOppositeColorBishopsScaled() {
 void HeuristicEvalTest::testPawnOnSeventhRank() {
     Rules seventh;
     QVERIFY(seventh.loadFen(
-        QStringLiteral("4k3/4P3/8/8/8/8/8/4K3 w - - 0 1")));
+        QStringLiteral("1n2k3/4P3/8/8/8/8/8/1N2K3 w - - 0 1")));
     Rules sixth;
     QVERIFY(sixth.loadFen(
-        QStringLiteral("4k3/8/4P3/8/8/8/8/4K3 w - - 0 1")));
+        QStringLiteral("1n2k3/8/4P3/8/8/8/8/1N2K3 w - - 0 1")));
 
     QVERIFY(HeuristicEval::evaluateCentipawns(seventh) >
             HeuristicEval::evaluateCentipawns(sixth));
 }
 
 void HeuristicEvalTest::testPassedPawnBlocked() {
-    // The black knight blocks the e-pawn on e6; the d-pawn is unobstructed.
+    // The black knight blocks the e-pawn on e6; the d-pawn is unobstructed. A
+    // white rook keeps the position from being a plain knight-against-pawn
+    // draw, where the advantage would be scaled away.
     Rules blocked;
     QVERIFY(blocked.loadFen(
-        QStringLiteral("4k3/8/4n3/4P3/8/8/8/4K3 w - - 0 1")));
+        QStringLiteral("4k3/8/4n3/4P3/8/8/8/R3K3 w - - 0 1")));
     Rules open;
     QVERIFY(open.loadFen(
-        QStringLiteral("4k3/8/4n3/3P4/8/8/8/4K3 w - - 0 1")));
+        QStringLiteral("4k3/8/4n3/3P4/8/8/8/R3K3 w - - 0 1")));
 
     QVERIFY(HeuristicEval::evaluateCentipawns(blocked) <
             HeuristicEval::evaluateCentipawns(open));
@@ -602,7 +625,7 @@ void HeuristicEvalTest::testSearchSeesFreeCapture() {
     // reports a large black advantage, the search must reverse it.
     Rules rules;
     QVERIFY(rules.loadFen(
-        QStringLiteral("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1")));
+        QStringLiteral("1r2k3/8/8/3q4/4P3/8/8/R3K3 w - - 0 1")));
 
     const int staticScore = HeuristicEval::evaluateCentipawns(rules);
     const auto result = HeuristicEval::search(rules);
@@ -715,7 +738,7 @@ void HeuristicEvalTest::testSearchCacheIsReusedConsistently() {
 
 void HeuristicEvalTest::testEvalParamsDrivePieceValues() {
     Rules rules;
-    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/P7/4K3 w - - 0 1")));
+    QVERIFY(rules.loadFen(QStringLiteral("4k1n1/8/8/8/8/8/P7/4K1N1 w - - 0 1")));
 
     HeuristicEval::EvalParams tuned = HeuristicEval::params();
     tuned.pawnValue = 2 * HeuristicEval::params().pawnValue;
@@ -1048,7 +1071,7 @@ void HeuristicEvalTest::testEvaluationCacheIsTransparent() {
 
 void HeuristicEvalTest::testEvaluationCacheFollowsTheParams() {
     Rules rules;
-    QVERIFY(rules.loadFen(QStringLiteral("4k3/8/8/8/8/8/P7/4K3 w - - 0 1")));
+    QVERIFY(rules.loadFen(QStringLiteral("4k1n1/8/8/8/8/8/P7/4K1N1 w - - 0 1")));
 
     HeuristicEval::setSearchThreads(1);
     HeuristicEval::resetParams();
@@ -1084,13 +1107,13 @@ void HeuristicEvalTest::testReferenceScores() {
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -31},
         {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", -HeuristicEval::MateScore},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -63},
-        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 154},
-        {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 202},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -57},
+        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 0},
+        {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 0},
         {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 142},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 295},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 202},
         {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 162},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -83},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -76},
         {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 290},
     };
 
@@ -1125,18 +1148,18 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 431, "d7c8q", 1594, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
          85, 1},
-        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 84, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 98, "b4f4", 1777, 0},
-        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 685, 0},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 82, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 90, "b4f4", 3897, 0},
+        {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 0, "a2a3", 509, 0},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -109, "c6d4",
          4120, 0},
         {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
         {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
          3866, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
-        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 181, "e4d5", 156, 0},
-        {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 368, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 978, "a7a8q", 188, 0},
+        {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 0, "e4d5", 119, 0},
+        {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 379, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 978, "a7a8q", 222, 0},
         {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1011, "e1e2", 151, 0},
     };
 
@@ -1359,9 +1382,9 @@ void HeuristicEvalTest::testOnlyLeadingDoubledPawnIsPassed() {
     // pawn term (doubled and isolated) rather than collect a passed bonus.
     HeuristicEval::resetParams();
     Rules leading;
-    QVERIFY(leading.loadFen(QStringLiteral("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")));
+    QVERIFY(leading.loadFen(QStringLiteral("1n2k3/P7/8/8/8/8/8/1N2K3 w - - 0 1")));
     Rules doubled;
-    QVERIFY(doubled.loadFen(QStringLiteral("4k3/P7/8/P7/8/8/8/4K3 w - - 0 1")));
+    QVERIFY(doubled.loadFen(QStringLiteral("1n2k3/P7/8/P7/8/8/8/1N2K3 w - - 0 1")));
 
     const int leaderPawns = HeuristicEval::evaluateBreakdown(leading).pawns;
     const int doubledPawns = HeuristicEval::evaluateBreakdown(doubled).pawns;
@@ -1737,6 +1760,214 @@ void HeuristicEvalTest::testCandidatePawnDefinition() {
     const QString outnumbered =
         QStringLiteral("4k3/1pp5/8/8/8/8/2P5/4K3 w - - 0 1");
     QCOMPARE(candidates(outnumbered), -40);
+}
+
+void HeuristicEvalTest::testEndgameScalingFlattensUnwinnableAdvantages() {
+    HeuristicEval::resetParams();
+    // Endings the static evaluation used to show as won although an engine
+    // gives them zero or close to it: the stronger side has no pawn and leads by
+    // less than the material it needs, so its advantage is scaled away. Both
+    // colours are checked, which also pins the symmetry of the scaling.
+    struct Case {
+        const char *fen;
+        int limit; // the strong side's score has to stay below it
+    };
+    const Case flat[] = {
+        {"4k3/8/8/3b4/8/8/8/R3K3 w - - 0 1", 20},   // rook against bishop
+        {"4k3/8/8/3n4/8/8/8/R3K3 w - - 0 1", 20},   // rook against knight
+        {"4k3/8/8/3r4/8/8/8/R2BK3 w - - 0 1", 80},  // rook and bishop against rook
+        {"8/5pk1/6p1/3R4/1r5P/6P1/5PK1/8 w - - 0 40", 60}, // three pawns against two
+    };
+    for (const Case &entry : flat) {
+        const QString fen = QString::fromLatin1(entry.fen);
+        Rules rules;
+        QVERIFY2(rules.loadFen(fen), entry.fen);
+        const int score = HeuristicEval::evaluateCentipawns(rules);
+        QVERIFY2(score > -entry.limit && score < entry.limit,
+                 qPrintable(QStringLiteral("%1: %2").arg(fen).arg(score)));
+        QVERIFY2(HeuristicEval::evaluateBreakdown(rules).scaleFactor < 64,
+                 entry.fen);
+
+        Rules mirrored;
+        QVERIFY2(mirrored.loadFen(mirrorFen(fen)), entry.fen);
+        const int mirroredScore = HeuristicEval::evaluateCentipawns(mirrored);
+        QVERIFY2(mirroredScore > -entry.limit && mirroredScore < entry.limit,
+                 qPrintable(QStringLiteral("%1 mirrored: %2")
+                                .arg(fen).arg(mirroredScore)));
+    }
+
+    // A queen against a rook keeps its edge, and a rook and a bishop against a
+    // bare king keeps all of it: only the cases above are flattened.
+    for (const char *fen : {"4k3/8/8/8/8/8/8/r2QK3 w - - 0 1",
+                            "4k3/8/8/8/8/8/8/R2BK3 w - - 0 1"}) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(fen)), fen);
+        QVERIFY2(HeuristicEval::evaluateCentipawns(rules) > 200, fen);
+    }
+    Rules bareKing;
+    QVERIFY(bareKing.loadFen(QStringLiteral("4k3/8/8/8/8/8/8/R2BK3 w - - 0 1")));
+    QCOMPARE(HeuristicEval::evaluateBreakdown(bareKing).scaleFactor, 64);
+
+    // The scaling is part of the explanation the tooltip shows, and the terms
+    // stay unscaled.
+    Rules bishop;
+    QVERIFY(bishop.loadFen(QStringLiteral("4k3/8/8/3b4/8/8/8/R3K3 w - - 0 1")));
+    const auto breakdown = HeuristicEval::evaluateBreakdown(bishop);
+    QCOMPARE(breakdown.material, 170);
+    QCOMPARE(breakdown.scaleFactor, HeuristicEval::params().noPawnsRookVsMinorScale);
+}
+
+void HeuristicEvalTest::testRookEndingScaleFollowsThePawnFlanks() {
+    HeuristicEval::resetParams();
+    const auto scaleOf = [](const char *fen) {
+        Rules rules;
+        return rules.loadFen(QString::fromLatin1(fen))
+                   ? HeuristicEval::evaluateBreakdown(rules).scaleFactor
+                   : -1;
+    };
+    const HeuristicEval::EvalParams defaults;
+
+    // Pawns on one wing, the defending king beside its pawns: the wing rule.
+    QCOMPARE(scaleOf("8/5pk1/6p1/3R4/1r5P/6P1/5PK1/8 w - - 0 40"),
+             defaults.rookEndgameOneFlankScale);
+    QCOMPARE(scaleOf(mirrorFen(QStringLiteral(
+                         "8/5pk1/6p1/3R4/1r5P/6P1/5PK1/8 w - - 0 40"))
+                         .toLatin1().constData()),
+             defaults.rookEndgameOneFlankScale);
+
+    // An outside pawn on the other wing takes the rule away; only the general
+    // reduction for few pawns is left.
+    QCOMPARE(scaleOf("8/5pk1/6p1/3R4/1r5P/P5P1/6K1/8 w - - 0 40"),
+             defaults.generalScaleBase + 3 * defaults.generalScalePerPawn);
+
+    // A bare king has nothing to defend with: the mop-up keeps its full value.
+    QCOMPARE(scaleOf("4k3/8/8/8/8/8/8/K5Q1 w - - 0 1"), 64);
+}
+
+void HeuristicEvalTest::testUnstoppablePassedPawn() {
+    HeuristicEval::resetParams();
+    // The defender has only a king and no piece to stop the a-pawn. With the
+    // king in the corner it cannot catch the pawn (rule of the square); on c8 it
+    // can. Only the black king moves between the two, so the pawn term shows the
+    // unstoppable bonus. A knight for White keeps the position out of the solved
+    // king-and-pawn endings.
+    const auto pawnTerm = [](const QString &fen) {
+        Rules rules;
+        return rules.loadFen(fen) ? HeuristicEval::evaluateBreakdown(rules).pawns
+                                  : -99999;
+    };
+    const QString far = QStringLiteral("7k/8/8/P7/8/8/8/K1N5 b - - 0 1");
+    const QString near = QStringLiteral("2k5/8/8/P7/8/8/8/K1N5 b - - 0 1");
+    const int bonus = HeuristicEval::params().unstoppablePasserBonus;
+    QVERIFY2(pawnTerm(far) - pawnTerm(near) > bonus / 2,
+             qPrintable(QStringLiteral("%1 vs %2").arg(pawnTerm(far)).arg(pawnTerm(near))));
+    // Mirrored: the good side is Black.
+    QVERIFY(pawnTerm(mirrorFen(near)) - pawnTerm(mirrorFen(far)) > bonus / 2);
+
+    // With White to move the king gets no head start on the pawn, so the same
+    // king square that was too late with Black to move is still too late.
+    QVERIFY(pawnTerm(QStringLiteral("2k5/8/8/P7/8/8/8/K1N5 w - - 0 1")) <
+            pawnTerm(far));
+
+    // A piece for the defender switches the rule off.
+    const QString defended = QStringLiteral("6nk/8/8/P7/8/8/8/K1N5 b - - 0 1");
+    QVERIFY(pawnTerm(defended) < pawnTerm(far) - bonus / 2);
+}
+
+void HeuristicEvalTest::testKingAndPawnAgainstKingIsSolved() {
+    HeuristicEval::resetParams();
+    // Results of a spread of positions, each one agreeing with Stockfish at
+    // depth 12 (the whole bitbase was compared with it on 1500 random
+    // positions when it was written). Wins are for the side with the pawn.
+    struct Case {
+        const char *fen;
+        bool win;
+    };
+    const Case cases[] = {
+        {"8/8/8/8/8/7p/6k1/2K5 w - - 0 1", true},
+        {"8/3K4/8/1k6/8/2p5/8/8 b - - 0 1", true},
+        {"8/8/8/8/3P4/8/4K3/2k5 b - - 0 1", true},
+        {"5K2/8/6k1/4p3/8/8/8/8 w - - 0 1", true},
+        {"8/8/8/2K2p2/8/7k/8/8 b - - 0 1", true},
+        {"8/6K1/8/8/6k1/8/p7/8 w - - 0 1", true},
+        {"1K6/6k1/4p3/8/8/8/8/8 b - - 0 1", true},
+        {"8/4k3/8/8/8/1K6/p7/8 b - - 0 1", true},
+        {"4k3/7p/8/8/1K6/8/8/8 w - - 0 1", false},
+        {"8/K1p5/8/6k1/8/8/8/8 w - - 0 1", false},
+        {"6k1/8/3K4/8/8/7P/8/8 w - - 0 1", false},
+        {"8/8/8/8/6K1/8/4Pk2/8 b - - 0 1", false},
+        {"8/1P1k4/8/8/8/K7/8/8 b - - 0 1", false},
+        {"8/8/8/2k5/8/7P/3K4/8 w - - 0 1", false},
+        {"8/8/8/2k3K1/3P4/8/8/8 b - - 0 1", false},
+        {"8/5K2/8/5P2/4k3/8/8/8 b - - 0 1", false},
+    };
+    const HeuristicEval::EvalParams defaults;
+    for (const Case &entry : cases) {
+        // The position, its colour mirror and its file mirror have the same
+        // result, which also exercises the normalisation of the table.
+        const QString fen = QString::fromLatin1(entry.fen);
+        for (const QString &variant :
+             {fen, mirrorFen(fen), mirrorFilesFen(fen)}) {
+            Rules rules;
+            QVERIFY2(rules.loadFen(variant), qPrintable(variant));
+            const int score = HeuristicEval::evaluateCentipawns(rules);
+            const bool whitePawn = variant.split(QLatin1Char(' '))[0]
+                                       .contains(QLatin1Char('P'));
+            if (entry.win) {
+                const int ownScore = whitePawn ? score : -score;
+                QVERIFY2(ownScore >= defaults.knownWinScore &&
+                             ownScore <= defaults.knownWinScore +
+                                             7 * defaults.knownWinRankBonus,
+                         qPrintable(QStringLiteral("%1: %2").arg(variant).arg(score)));
+            } else {
+                QVERIFY2(score == 0,
+                         qPrintable(QStringLiteral("%1: %2").arg(variant).arg(score)));
+            }
+        }
+    }
+
+    // A winning pawn is worth more the further it has advanced, which is the
+    // slope the search follows.
+    Rules farAway;
+    Rules advanced;
+    QVERIFY(farAway.loadFen(QStringLiteral("8/8/8/8/2P5/8/8/K6k w - - 0 1")));
+    QVERIFY(advanced.loadFen(QStringLiteral("8/8/8/2P5/8/8/8/K6k w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(advanced) >
+            HeuristicEval::evaluateCentipawns(farAway));
+
+    // The classic corner draw: the rook pawn cannot promote against a king in
+    // its corner, whoever is to move.
+    for (const char *fen : {"7k/8/6K1/7P/8/8/8/8 w - - 0 1",
+                            "7k/8/6K1/7P/8/8/8/8 b - - 0 1"}) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(fen)), fen);
+        QCOMPARE(HeuristicEval::evaluateCentipawns(rules), 0);
+    }
+
+    // Both pawns and pieces at once: only the exact ending is special-cased.
+    Rules extraKnight;
+    QVERIFY(extraKnight.loadFen(QStringLiteral("8/6k1/8/7P/8/8/8/K5N1 w - - 0 1")));
+    QVERIFY(HeuristicEval::evaluateCentipawns(extraKnight) > 300);
+}
+
+void HeuristicEvalTest::testBishopAndKnightMateAimsForTheRightCorner() {
+    HeuristicEval::resetParams();
+    // The dark-squared bishop mates in a1 or h8 only. The same material with the
+    // defending king in h8 (a corner of the bishop's colour) must be worth much
+    // more than with it in a8, which is the wrong corner.
+    const auto score = [](const char *fen) {
+        Rules rules;
+        return rules.loadFen(QString::fromLatin1(fen))
+                   ? HeuristicEval::evaluateCentipawns(rules)
+                   : -99999;
+    };
+    const int right = score("7k/8/5K2/8/8/8/8/2B1N3 w - - 0 1");
+    const int wrong = score("k7/8/2K5/8/8/8/8/2B1N3 w - - 0 1");
+    QVERIFY2(right > wrong + 30,
+             qPrintable(QStringLiteral("%1 vs %2").arg(right).arg(wrong)));
+    // Mirrored, and with the light-squared bishop: the corners swap.
+    QVERIFY(score("7k/8/5K2/8/8/8/8/2B1N3 w - - 0 1") >
+            score("7k/8/5K2/8/8/8/8/3BN3 w - - 0 1") + 30);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

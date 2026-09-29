@@ -1134,6 +1134,62 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <source>Connected rooks</source>
         <translation>Tours connectées</translation>
     </message>
+    <message>
+        <source>Endgame scaling</source>
+        <translation>Réduction de finale</translation>
+    </message>
+    <message>
+        <source>Unstoppable passed pawn bonus</source>
+        <translation>Bonus du pion passé imparable</translation>
+    </message>
+    <message>
+        <source>Unstoppable passed pawn cost per move</source>
+        <translation>Coût par coup du pion passé imparable</translation>
+    </message>
+    <message>
+        <source>Bishop and knight corner bonus</source>
+        <translation>Bonus du coin pour fou et cavalier</translation>
+    </message>
+    <message>
+        <source>Opposite-coloured bishops (/64)</source>
+        <translation>Fous de couleurs opposées (/64)</translation>
+    </message>
+    <message>
+        <source>Opposite-coloured bishops, no pawns (/64)</source>
+        <translation>Fous de couleurs opposées, sans pions (/64)</translation>
+    </message>
+    <message>
+        <source>No pawns, less than a rook ahead (/64)</source>
+        <translation>Sans pions, moins d&apos;une tour d&apos;avance (/64)</translation>
+    </message>
+    <message>
+        <source>No pawns, rook against a minor piece (/64)</source>
+        <translation>Sans pions, tour contre pièce mineure (/64)</translation>
+    </message>
+    <message>
+        <source>No pawns, a rook or more ahead (/64)</source>
+        <translation>Sans pions, une tour d&apos;avance ou plus (/64)</translation>
+    </message>
+    <message>
+        <source>Few pawns: base (/64)</source>
+        <translation>Peu de pions : base (/64)</translation>
+    </message>
+    <message>
+        <source>Few pawns: per pawn (/64)</source>
+        <translation>Peu de pions : par pion (/64)</translation>
+    </message>
+    <message>
+        <source>Rook ending, pawns on one wing (/64)</source>
+        <translation>Finale de tours, pions sur une aile (/64)</translation>
+    </message>
+    <message>
+        <source>Known win: king and pawn against king</source>
+        <translation>Gain connu : roi et pion contre roi</translation>
+    </message>
+    <message>
+        <source>Known win: bonus per pawn rank</source>
+        <translation>Gain connu : bonus par rangée du pion</translation>
+    </message>
 </context>
 <context>
     <name>EvalParamsDialog</name>
@@ -2361,6 +2417,10 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
     <message>
         <source>The evaluation weights were reset to the new defaults of this version.</source>
         <translation>Les poids d&apos;évaluation ont été réinitialisés aux nouvelles valeurs par défaut de cette version.</translation>
+    </message>
+    <message>
+        <source>Endgame reduced to %1%</source>
+        <translation>Finale réduite à %1 %</translation>
     </message>
 </context>
 <context>

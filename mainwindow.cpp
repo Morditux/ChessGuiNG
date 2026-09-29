@@ -1157,6 +1157,10 @@ QString MainWindow::evaluationBreakdownText(
     lines << tr("Endgame mop-up: %1").arg(pawns(breakdown.mopUp));
     lines << tr("Tempo: %1").arg(pawns(breakdown.tempo));
     lines << tr("In check: %1").arg(pawns(breakdown.inCheck));
+    if (breakdown.scaleFactor < 64) {
+        lines << tr("Endgame reduced to %1%").arg(
+            qRound(breakdown.scaleFactor * 100.0 / 64.0));
+    }
     lines << tr("Total: %1").arg(pawns(breakdown.total));
     return lines.join(QChar('\n'));
 }

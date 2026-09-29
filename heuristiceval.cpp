@@ -4,6 +4,7 @@
 
 #include "heuristiceval.h"
 #include "heuristicsearch.h"
+#include "kpkbitbase.h"
 #include "winprobability.h"
 
 #include <algorithm>
@@ -690,10 +691,72 @@ bool hasRookBehindPawn(const Board &board, const PieceOnBoard &pawn,
     return false;
 }
 
+constexpr Rules::Color opposite(Rules::Color color) {
+    return color == Rules::Color::White ? Rules::Color::Black
+                                        : Rules::Color::White;
+}
+
+// Moves the fastest unstoppable passed pawn of `color` still needs, or zero when
+// it has none. Only a defender with no piece left can be out-run this way: the
+// pawn is unstoppable when the enemy king, on the move if it is its turn, cannot
+// reach the promotion square in time (the rule of the square). The pawn gets one
+// move less from its starting rank, where it can advance two squares, and one
+// more when its own king stands in front of it on its file.
+int unstoppablePasserMoves(const BoardAnalysis &analysis, Rules::Color color,
+                           Rules::Color sideToMove) {
+    const Rules::Color defender = opposite(color);
+    const int defenderIndex = colorIndex(defender);
+    if (analysis.knightCounts[defenderIndex] +
+            analysis.bishopCounts[defenderIndex] +
+            analysis.rookCounts[defenderIndex] +
+            analysis.queenCounts[defenderIndex] != 0) {
+        return 0;
+    }
+    const bool white = color == Rules::Color::White;
+    const int ownKingRow = white ? analysis.whiteKingRow : analysis.blackKingRow;
+    const int ownKingColumn =
+        white ? analysis.whiteKingColumn : analysis.blackKingColumn;
+    const int defenderRow = white ? analysis.blackKingRow : analysis.whiteKingRow;
+    const int defenderColumn =
+        white ? analysis.blackKingColumn : analysis.whiteKingColumn;
+    if (ownKingRow == NoKingRow || defenderRow == NoKingRow) {
+        return 0;
+    }
+
+    const int direction = forwardDirection(color);
+    const int promotionRow = white ? 0 : 7;
+    int best = 0;
+    for (int index = 0; index < analysis.pieceCount; ++index) {
+        const PieceOnBoard &pawn = analysis.pieces[index];
+        if (pawn.type != Rules::PieceType::Pawn || pawn.color != color ||
+            !isPassedPawn(analysis, pawn)) {
+            continue;
+        }
+        const int rank = relativeRank(color, pawn.row);
+        int moves = 8 - rank;
+        if (rank == 2) {
+            --moves;
+        }
+        if (ownKingColumn == pawn.column &&
+            (ownKingRow - pawn.row) * direction > 0) {
+            ++moves;
+        }
+        const int kingMoves =
+            std::max(std::abs(defenderRow - promotionRow),
+                     std::abs(defenderColumn - pawn.column)) -
+            (sideToMove == defender ? 1 : 0);
+        if (moves < kingMoves && (best == 0 || moves < best)) {
+            best = moves;
+        }
+    }
+    return best;
+}
+
 TaperedScore evaluatePawnStructure(const Board &board,
                                    const BoardAnalysis &analysis,
                                    const AttackInfo &whiteAttacks,
-                                   const AttackInfo &blackAttacks) {
+                                   const AttackInfo &blackAttacks,
+                                   Rules::Color sideToMove) {
     TaperedScore score;
 
     for (const Rules::Color color :
@@ -857,6 +920,23 @@ TaperedScore evaluatePawnStructure(const Board &board,
                 }
             }
         }
+    }
+
+    // A passed pawn the defender cannot catch decides the game: the side whose
+    // such pawn promotes first is paid for it, and equal pawns cancel.
+    const int whiteMoves =
+        unstoppablePasserMoves(analysis, Rules::Color::White, sideToMove);
+    const int blackMoves =
+        unstoppablePasserMoves(analysis, Rules::Color::Black, sideToMove);
+    const auto unstoppableBonus = [](int moves) {
+        return TaperedScore{0, std::max(0, P.unstoppablePasserBonus -
+                                               P.unstoppablePasserPerMove * moves)};
+    };
+    if (whiteMoves != 0 && (blackMoves == 0 || whiteMoves < blackMoves)) {
+        score += unstoppableBonus(whiteMoves);
+    } else if (blackMoves != 0 &&
+               (whiteMoves == 0 || blackMoves < whiteMoves)) {
+        score -= unstoppableBonus(blackMoves);
     }
     return score;
 }
@@ -1194,10 +1274,38 @@ TaperedScore mopUpFor(Rules::Color strong, const BoardAnalysis &analysis) {
         return {};
     }
 
-    const int edge = centreDistance(weakRow, weakColumn);
     // The kings are at most fourteen Manhattan steps apart.
     const int proximity =
         14 - manhattanDistance(strongRow, strongColumn, weakRow, weakColumn);
+    const int strongIndex = colorIndex(strong);
+    const int weakIndex = 1 - strongIndex;
+    const bool bishopAndKnightOnly =
+        analysis.bishopCounts[strongIndex] == 1 &&
+        analysis.knightCounts[strongIndex] == 1 &&
+        analysis.rookCounts[strongIndex] == 0 &&
+        analysis.queenCounts[strongIndex] == 0 &&
+        analysis.pawnTotals[strongIndex] == 0 &&
+        analysis.pawnTotals[weakIndex] == 0 &&
+        analysis.knightCounts[weakIndex] == 0 &&
+        analysis.bishopCounts[weakIndex] == 0 &&
+        analysis.rookCounts[weakIndex] == 0 &&
+        analysis.queenCounts[weakIndex] == 0;
+    if (bishopAndKnightOnly) {
+        // Bishop and knight only mate in a corner of the bishop's colour: the
+        // king is driven to the nearest such corner, not to any edge.
+        const int bishopColour =
+            analysis.bishopSquareColourCounts[strongIndex][0] == 1 ? 0 : 1;
+        // Corners are (0, 0), (7, 7) for even squares and (0, 7), (7, 0) for odd.
+        const int firstColumn = bishopColour == 0 ? 0 : 7;
+        const int secondColumn = 7 - firstColumn;
+        const int cornerDistance = std::min(
+            manhattanDistance(weakRow, weakColumn, 0, firstColumn),
+            manhattanDistance(weakRow, weakColumn, 7, secondColumn));
+        return {0, (14 - cornerDistance) * P.mopUpBishopKnightCornerBonus +
+                       proximity * P.mopUpKingProximityBonus};
+    }
+
+    const int edge = centreDistance(weakRow, weakColumn);
     return {0, edge * P.mopUpEdgeBonus + proximity * P.mopUpKingProximityBonus};
 }
 
@@ -1243,8 +1351,7 @@ bool isInsufficientMaterial(const BoardAnalysis &analysis) {
 
 // Returns true when opposite-coloured bishops with no other non-pawn material
 // make a position drawish.
-bool isOppositeColourBishopEnding(const BoardAnalysis &analysis, int *num,
-                                  int *den) {
+bool isOppositeColourBishopEnding(const BoardAnalysis &analysis) {
     if (analysis.bishopCounts[0] != 1 || analysis.bishopCounts[1] != 1) {
         return false;
     }
@@ -1255,19 +1362,112 @@ bool isOppositeColourBishopEnding(const BoardAnalysis &analysis, int *num,
     if (whiteOnEvenSquares == blackOnEvenSquares) {
         return false;
     }
-    if (analysis.knightCounts[0] != 0 || analysis.knightCounts[1] != 0 ||
-        analysis.rookCounts[0] != 0 || analysis.rookCounts[1] != 0 ||
-        analysis.queenCounts[0] != 0 || analysis.queenCounts[1] != 0) {
-        return false;
+    return analysis.knightCounts[0] == 0 && analysis.knightCounts[1] == 0 &&
+           analysis.rookCounts[0] == 0 && analysis.rookCounts[1] == 0 &&
+           analysis.queenCounts[0] == 0 && analysis.queenCounts[1] == 0;
+}
+
+// Non-pawn material of one colour, with the active piece values.
+int nonPawnMaterial(const BoardAnalysis &analysis, int colour) {
+    return analysis.knightCounts[colour] * P.knightValue +
+           analysis.bishopCounts[colour] * P.bishopValue +
+           analysis.rookCounts[colour] * P.rookValue +
+           analysis.queenCounts[colour] * P.queenValue;
+}
+
+// Share out of `ScaleNormal` of the two halves of the score that survives when
+// an advantage cannot be converted. Material that cannot win by itself scales
+// the whole score; a shortage of pawns only scales the endgame half, because
+// with many pieces on the board the position still holds its middlegame chances.
+constexpr int ScaleNormal = 64;
+
+struct EndgameScale {
+    int middleGame = ScaleNormal;
+    int endGame = ScaleNormal;
+
+    void limitBoth(int factor) {
+        middleGame = std::min(middleGame, factor);
+        endGame = std::min(endGame, factor);
     }
-    if (analysis.pawnTotals[0] == 0 && analysis.pawnTotals[1] == 0) {
-        *num = 1;
-        *den = 8;
-    } else {
-        *num = 1;
-        *den = 2;
+    void limitEndGame(int factor) {
+        endGame = std::min(endGame, factor);
     }
-    return true;
+};
+
+// The pawns of `colour` all stand on one wing (files a-d or e-h), and on one only.
+bool pawnsOnOneFlank(const BoardAnalysis &analysis, int colour) {
+    const auto &counts =
+        colour == 0 ? analysis.whitePawnCounts : analysis.blackPawnCounts;
+    int queenSide = 0;
+    int kingSide = 0;
+    for (int file = 0; file < 8; ++file) {
+        (file < 4 ? queenSide : kingSide) += counts[file];
+    }
+    return (queenSide > 0) != (kingSide > 0);
+}
+
+// How much of an advantage `strong` can hope to convert. The cases are the
+// classic ones: opposite-coloured bishops, a side without pawns that leads by no
+// more than a piece, few pawns in general, and the rook ending with the pawns on
+// one wing that is nearly always drawn.
+EndgameScale endgameScale(const BoardAnalysis &analysis, Rules::Color strong) {
+    EndgameScale scale;
+    const int strongIndex = colorIndex(strong);
+    const int weakIndex = 1 - strongIndex;
+    const int strongPawns = analysis.pawnTotals[strongIndex];
+    const int strongMaterial = nonPawnMaterial(analysis, strongIndex);
+    const int weakMaterial = nonPawnMaterial(analysis, weakIndex);
+
+    if (isOppositeColourBishopEnding(analysis)) {
+        scale.limitBoth(analysis.pawnTotals[0] == 0 && analysis.pawnTotals[1] == 0
+                            ? P.oppositeBishopsNoPawnsScale
+                            : P.oppositeBishopsScale);
+    }
+
+    if (strongPawns == 0 && strongMaterial - weakMaterial <= P.bishopValue) {
+        scale.limitBoth(strongMaterial < P.rookValue ? P.noPawnsMinorScale
+                        : weakMaterial <= P.bishopValue
+                            ? P.noPawnsRookVsMinorScale
+                            : P.noPawnsRookScale);
+    }
+
+    // A bare king has nothing to defend with: the mop-up positions keep their
+    // full value.
+    const bool weakIsBareKing =
+        weakMaterial == 0 && analysis.pawnTotals[weakIndex] == 0;
+    if (!weakIsBareKing) {
+        scale.limitEndGame(P.generalScaleBase +
+                           P.generalScalePerPawn * strongPawns);
+    }
+
+    // One rook each, pawns of the stronger side on one wing, a lead of at most
+    // a pawn, and the weaker king next to one of its own pawns.
+    if (analysis.rookCounts[0] == 1 && analysis.rookCounts[1] == 1 &&
+        strongMaterial == P.rookValue && weakMaterial == P.rookValue &&
+        strongPawns - analysis.pawnTotals[weakIndex] <= 1 &&
+        pawnsOnOneFlank(analysis, strongIndex)) {
+        const int kingRow =
+            strong == Rules::Color::White ? analysis.blackKingRow
+                                          : analysis.whiteKingRow;
+        const int kingColumn =
+            strong == Rules::Color::White ? analysis.blackKingColumn
+                                          : analysis.whiteKingColumn;
+        bool kingBesidePawn = false;
+        for (int index = 0; index < analysis.pieceCount; ++index) {
+            const PieceOnBoard &piece = analysis.pieces[index];
+            if (piece.type == Rules::PieceType::Pawn &&
+                piece.color == opposite(strong) && kingRow != NoKingRow &&
+                std::abs(piece.row - kingRow) <= 1 &&
+                std::abs(piece.column - kingColumn) <= 1) {
+                kingBesidePawn = true;
+                break;
+            }
+        }
+        if (kingBesidePawn) {
+            scale.limitEndGame(P.rookEndgameOneFlankScale);
+        }
+    }
+    return scale;
 }
 
 // A lone bishop with only rook pawns of its wrong colour cannot promote
@@ -1323,6 +1523,31 @@ bool isWrongColouredRookPawnEnding(const BoardAnalysis &analysis) {
     return false;
 }
 
+// Exact score of king and pawn against king: zero for a draw, a known win
+// (steeper as the pawn advances) for the side with the pawn otherwise.
+int kpkScore(const BoardAnalysis &analysis, Rules::Color sideToMove) {
+    const PieceOnBoard *pawn = nullptr;
+    for (int index = 0; index < analysis.pieceCount; ++index) {
+        if (analysis.pieces[index].type == Rules::PieceType::Pawn) {
+            pawn = &analysis.pieces[index];
+        }
+    }
+    const bool white = pawn->color == Rules::Color::White;
+    const Rules::Position pawnKing =
+        white ? Rules::Position{analysis.whiteKingRow, analysis.whiteKingColumn}
+              : Rules::Position{analysis.blackKingRow, analysis.blackKingColumn};
+    const Rules::Position bareKing =
+        white ? Rules::Position{analysis.blackKingRow, analysis.blackKingColumn}
+              : Rules::Position{analysis.whiteKingRow, analysis.whiteKingColumn};
+    if (!KpkBitbase::isWin(pawn->color, sideToMove, {pawn->row, pawn->column},
+                           pawnKing, bareKing)) {
+        return 0;
+    }
+    return signFor(pawn->color) *
+           (P.knownWinScore +
+            P.knownWinRankBonus * relativeRank(pawn->color, pawn->row));
+}
+
 // Classical score of a position from White's perspective. It performs no
 // terminal test (checkmate, stalemate, insufficient material beyond the quick
 // board check): the search handles terminals itself, so a leaf can skip the
@@ -1350,6 +1575,18 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     if (isWrongColouredRookPawnEnding(analysis)) {
         return 0;
     }
+    // King and pawn against king has an exact answer, and no term can improve
+    // on it.
+    if (analysis.pieceCount == 3 &&
+        analysis.pawnTotals[0] + analysis.pawnTotals[1] == 1 &&
+        analysis.whiteKingRow != NoKingRow &&
+        analysis.blackKingRow != NoKingRow) {
+        const int value = kpkScore(analysis, sideToMove);
+        if (breakdown != nullptr) {
+            breakdown->total = value;
+        }
+        return value;
+    }
 
     AttackInfo attacksByWhite;
     AttackInfo attacksByBlack;
@@ -1361,7 +1598,8 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     TaperedScore placement;
     evaluateMaterialAndPlacement(analysis, &material, &placement);
     const TaperedScore pawns =
-        evaluatePawnStructure(board, analysis, attacksByWhite, attacksByBlack);
+        evaluatePawnStructure(board, analysis, attacksByWhite, attacksByBlack,
+                              sideToMove);
     // Collected by the attack walk, from each colour's point of view. The king
     // is added here because its safe moves need both attack maps.
     TaperedScore mobility = attacksByWhite.mobility;
@@ -1401,7 +1639,17 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     score += tempo;
     score += inCheckPenalty;
 
-    int value = taperedValue(score, analysis.phase);
+    // The stronger side is the one the endgame half of the score favours; its
+    // advantage may be worth less than it looks.
+    const int lead = score.endGame != 0 ? score.endGame : score.middleGame;
+    const EndgameScale scale =
+        endgameScale(analysis, lead >= 0 ? Rules::Color::White
+                                         : Rules::Color::Black);
+    // C++ division truncates towards zero, so a mirrored position still scores
+    // exactly the opposite.
+    const int value = interpolate(
+        score.middleGame * scale.middleGame / ScaleNormal,
+        score.endGame * scale.endGame / ScaleNormal, analysis.phase);
 
     if (breakdown != nullptr) {
         breakdown->material = taperedValue(material, analysis.phase);
@@ -1420,13 +1668,8 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
         breakdown->inCheck = taperedValue(inCheckPenalty, analysis.phase);
     }
 
-    int scaleNum = 1;
-    int scaleDen = 1;
-    if (isOppositeColourBishopEnding(analysis, &scaleNum, &scaleDen)) {
-        value = value * scaleNum / scaleDen;
-    }
-
     if (breakdown != nullptr) {
+        breakdown->scaleFactor = scale.endGame;
         breakdown->total = value;
     }
     return value;

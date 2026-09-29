@@ -72,6 +72,12 @@ public:
         int passedPawnRookBehindEG = 30;
         int passedPawnEnemyRookBehindMG = 15;
         int passedPawnEnemyRookBehindEG = 25;
+        // A passed pawn the defender (who has no piece left) cannot catch by
+        // the rule of the square is worth `unstoppablePasserBonus` minus
+        // `unstoppablePasserPerMove` for every move it still needs; the side
+        // with the shorter such pawn gets it, in the endgame only.
+        int unstoppablePasserBonus = 700;
+        int unstoppablePasserPerMove = 20;
 
         // Space: safe central squares a side's pawns control in the enemy
         // half, per square.
@@ -129,6 +135,11 @@ public:
         int mopUpMaterialThreshold = 400;
         int mopUpEdgeBonus = 8;
         int mopUpKingProximityBonus = 3;
+        // King, bishop and knight against a bare king: the mate is only forced
+        // in a corner of the bishop's colour, so the stronger side is paid for
+        // driving the enemy king towards the nearest such corner (per step
+        // closer) instead of towards any edge.
+        int mopUpBishopKnightCornerBonus = 10;
 
         // Threats.
         int hangingPieceDivisor = 8;
@@ -146,6 +157,34 @@ public:
         int badBishopCap = 20;
         int connectedRooksMG = 30;
         int connectedRooksEG = 20;
+
+        // Endgame scaling. Each value is a share out of 64 of the score the
+        // stronger side keeps when its advantage cannot be converted. The
+        // first three describe material that cannot win by itself and scale
+        // the whole score; the last three only scale the endgame part.
+        int oppositeBishopsScale = 32;
+        int oppositeBishopsNoPawnsScale = 8;
+        // The stronger side has no pawn and leads by at most a bishop: less
+        // than a rook of material, a rook against a minor piece, or more.
+        int noPawnsMinorScale = 0;
+        int noPawnsRookVsMinorScale = 4;
+        int noPawnsRookScale = 14;
+        // Few pawns make an advantage harder to convert: the share is capped
+        // at base + perPawn * the stronger side's pawns, unless the weaker
+        // side has only its king left.
+        int generalScaleBase = 36;
+        int generalScalePerPawn = 7;
+        // One rook each, pawns on one wing only, the weaker king beside its
+        // own pawns.
+        int rookEndgameOneFlankScale = 16;
+
+        // King and pawn against king is solved exactly (KpkBitbase): a draw
+        // scores zero and a win `knownWinScore` plus `knownWinRankBonus` per
+        // rank the pawn has advanced, which keeps a slope for the search. A
+        // win stays below the value of the queen the pawn becomes, so the
+        // search promotes instead of shuffling the king.
+        int knownWinScore = 700;
+        int knownWinRankBonus = 20;
     };
 
     // Active weights. Configure them before starting a search: reading is not
@@ -196,6 +235,9 @@ public:
         int mopUp = 0;
         int tempo = 0;
         int inCheck = 0;
+        // Share out of 64 of the endgame part that the final score kept
+        // (64 unless an endgame scaling applied).
+        int scaleFactor = 64;
         // Final score, i.e. what evaluateCentipawns() returns for the same
         // position: `±MateScore` for a checkmate and zero for a draw.
         int total = 0;

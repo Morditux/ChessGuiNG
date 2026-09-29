@@ -4,6 +4,7 @@
 //   evalprobe breakdown < positions.txt   per-term breakdown of every position
 //   evalprobe bench                       node throughput and evaluation cost
 //   evalprobe score < positions.txt       static score of every position
+//   evalprobe kpk < fens.txt              win/draw of king-pawn-king positions
 //   evalprobe signature DEPTH < fens.txt  cold single-thread search signature
 //                                         (score, move, nodes, mate distance),
 //                                         the values the reference tests pin
@@ -13,6 +14,7 @@
 //
 
 #include "heuristiceval.h"
+#include "kpkbitbase.h"
 #include "rules.h"
 
 #include <QCoreApplication>
@@ -115,6 +117,44 @@ int scoreCommand() {
     return 0;
 }
 
+// King and pawn against king positions: "win" or "draw" for the side with the
+// pawn, straight from the bitbase.
+int kpkCommand() {
+    std::string label;
+    std::string fen;
+    while (nextPosition(&label, &fen)) {
+        Rules rules;
+        if (!rules.loadFen(QString::fromStdString(fen))) {
+            std::printf("illegal | %s\n", fen.c_str());
+            continue;
+        }
+        Rules::Position pawn;
+        Rules::Position kings[2];
+        Rules::Color pawnColor = Rules::Color::White;
+        for (int row = 0; row < 8; ++row) {
+            for (int column = 0; column < 8; ++column) {
+                const auto piece = rules.pieceAt({row, column});
+                if (!piece) {
+                    continue;
+                }
+                if (piece->type == Rules::PieceType::Pawn) {
+                    pawn = {row, column};
+                    pawnColor = piece->color;
+                } else if (piece->type == Rules::PieceType::King) {
+                    kings[piece->color == Rules::Color::White ? 0 : 1] = {row, column};
+                }
+            }
+        }
+        const int own = pawnColor == Rules::Color::White ? 0 : 1;
+        std::printf("%s | %s\n",
+                    KpkBitbase::isWin(pawnColor, rules.currentPlayer(), pawn,
+                                      kings[own], kings[1 - own])
+                        ? "win" : "draw",
+                    fen.c_str());
+    }
+    return 0;
+}
+
 int signatureCommand(int depth) {
     HeuristicEval::resetParams();
     HeuristicEval::setSearchThreads(1);
@@ -192,6 +232,9 @@ int main(int argc, char **argv) {
     }
     if (command == "score") {
         return scoreCommand();
+    }
+    if (command == "kpk") {
+        return kpkCommand();
     }
     if (command == "signature" && argc > 2) {
         return signatureCommand(std::atoi(argv[2]));

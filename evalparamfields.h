@@ -365,6 +365,58 @@ inline const std::vector<Field> &all() {
             connectedRooksEG, QT_TRANSLATE_NOOP("EvalParams", "Connected rooks"),
             QT_TRANSLATE_NOOP("EvalParams", "Piece specific"), 0,
             1000),
+        CHESSGUI_EVAL_FIELD(
+            unstoppablePasserBonus, QT_TRANSLATE_NOOP("EvalParams", "Unstoppable passed pawn bonus"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            2000),
+        CHESSGUI_EVAL_FIELD(
+            unstoppablePasserPerMove, QT_TRANSLATE_NOOP("EvalParams", "Unstoppable passed pawn cost per move"),
+            QT_TRANSLATE_NOOP("EvalParams", "Pawn structure"), 0,
+            500),
+        CHESSGUI_EVAL_FIELD(
+            mopUpBishopKnightCornerBonus, QT_TRANSLATE_NOOP("EvalParams", "Bishop and knight corner bonus"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame mop-up"), 0,
+            1000),
+        CHESSGUI_EVAL_FIELD(
+            oppositeBishopsScale, QT_TRANSLATE_NOOP("EvalParams", "Opposite-coloured bishops (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            oppositeBishopsNoPawnsScale, QT_TRANSLATE_NOOP("EvalParams", "Opposite-coloured bishops, no pawns (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            noPawnsMinorScale, QT_TRANSLATE_NOOP("EvalParams", "No pawns, less than a rook ahead (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            noPawnsRookVsMinorScale, QT_TRANSLATE_NOOP("EvalParams", "No pawns, rook against a minor piece (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            noPawnsRookScale, QT_TRANSLATE_NOOP("EvalParams", "No pawns, a rook or more ahead (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            generalScaleBase, QT_TRANSLATE_NOOP("EvalParams", "Few pawns: base (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            generalScalePerPawn, QT_TRANSLATE_NOOP("EvalParams", "Few pawns: per pawn (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            rookEndgameOneFlankScale, QT_TRANSLATE_NOOP("EvalParams", "Rook ending, pawns on one wing (/64)"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            64),
+        CHESSGUI_EVAL_FIELD(
+            knownWinScore, QT_TRANSLATE_NOOP("EvalParams", "Known win: king and pawn against king"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            5000),
+        CHESSGUI_EVAL_FIELD(
+            knownWinRankBonus, QT_TRANSLATE_NOOP("EvalParams", "Known win: bonus per pawn rank"),
+            QT_TRANSLATE_NOOP("EvalParams", "Endgame scaling"), 0,
+            500),
     };
     return fields;
 }
