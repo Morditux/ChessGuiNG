@@ -233,6 +233,10 @@ struct SearchState {
     // True while a null move is being searched, which forbids a second one in a
     // row: two passes would prove nothing about the position.
     bool nullMove = false;
+    // Ply of the node that last passed the turn on the line being searched, -1
+    // when none did. A repetition cannot be found across it: the positions
+    // before a null move never occurred in the line that follows it.
+    int lastNullPly = -1;
     // Zobrist key of the position at each ply of the line being searched,
     // used to recognise a repetition inside the search. The root position is
     // seeded at index 0; quiescence is entered at the ply of the node that
@@ -707,7 +711,8 @@ bool hasNonPawnMaterial(const Rules &rules, Rules::Color side) {
 // in the search. Such a node returns a draw score and is never stored in the
 // transposition table, because the value does not belong to the position
 // alone. The repetition scan uses the Zobrist keys of the current line, so the
-// game history before the search root is not consulted.
+// game history before the search root is not consulted, and it stops at the last
+// null move, which no real line passes through.
 bool isPathDraw(const Rules &rules, SearchState &state, int ply, bool inCheck) {
     const quint64 key = rules.zobristKey();
     state.pathKeys[ply] = key;
@@ -719,7 +724,7 @@ bool isPathDraw(const Rules &rules, SearchState &state, int ply, bool inCheck) {
         return true;
     }
 
-    for (int previous = ply - 2; previous >= 0; previous -= 2) {
+    for (int previous = ply - 2; previous > state.lastNullPly; previous -= 2) {
         if (state.pathKeys[previous] == key) {
             return true;
         }
@@ -888,11 +893,14 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         !state.nullMove && hasNonPawnMaterial(rules, side)) {
         Rules::NullUndo nullUndo;
         if (rules.makeNullMove(nullUndo)) {
+            const int previousNullPly = state.lastNullPly;
             state.nullMove = true;
+            state.lastNullPly = ply;
             const int score = -negamax(rules, depth - 1 - NullMoveReduction,
                                        quiescenceDepth, -beta, -beta + 1,
                                        ply + 1, state);
             state.nullMove = false;
+            state.lastNullPly = previousNullPly;
             rules.unmakeNullMove(nullUndo);
             if (state.stopped) {
                 return 0;

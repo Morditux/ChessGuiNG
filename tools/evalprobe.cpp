@@ -3,6 +3,10 @@
 //
 //   evalprobe breakdown < positions.txt   per-term breakdown of every position
 //   evalprobe bench                       node throughput and evaluation cost
+//   evalprobe score < positions.txt       static score of every position
+//   evalprobe signature DEPTH < fens.txt  cold single-thread search signature
+//                                         (score, move, nodes, mate distance),
+//                                         the values the reference tests pin
 //
 // Position files hold one "label | FEN" per line; blank lines and lines
 // starting with '#' are skipped. Build it with -DCHESSGUI_BUILD_TOOLS=ON.
@@ -16,6 +20,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -78,6 +83,60 @@ int breakdownCommand() {
     return failures == 0 ? 0 : 1;
 }
 
+// "label | FEN" or a bare FEN.
+bool nextPosition(std::string *label, std::string *fen) {
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        const auto bar = line.find('|');
+        *label = bar == std::string::npos ? std::string()
+                                          : trim(line.substr(0, bar));
+        *fen = trim(bar == std::string::npos ? line : line.substr(bar + 1));
+        return true;
+    }
+    return false;
+}
+
+int scoreCommand() {
+    std::string label;
+    std::string fen;
+    while (nextPosition(&label, &fen)) {
+        Rules rules;
+        if (!rules.loadFen(QString::fromStdString(fen))) {
+            std::printf("illegal | %s\n", fen.c_str());
+            continue;
+        }
+        std::printf("%+d | %s\n", HeuristicEval::evaluateCentipawns(rules),
+                    fen.c_str());
+    }
+    return 0;
+}
+
+int signatureCommand(int depth) {
+    HeuristicEval::resetParams();
+    HeuristicEval::setSearchThreads(1);
+    std::string label;
+    std::string fen;
+    while (nextPosition(&label, &fen)) {
+        Rules rules;
+        if (!rules.loadFen(QString::fromStdString(fen))) {
+            std::printf("illegal | %s\n", fen.c_str());
+            continue;
+        }
+        HeuristicEval::clearSearchCache();
+        const auto result = HeuristicEval::search(rules, depth);
+        const QString move =
+            result.bestMove ? Rules::toUci(*result.bestMove) : QStringLiteral("-");
+        std::printf("%d %s %d %d | %s\n", result.centipawns,
+                    move.toLatin1().constData(), result.nodes,
+                    result.mateIn.value_or(0), fen.c_str());
+    }
+    return 0;
+}
+
 int benchCommand() {
     using Clock = std::chrono::steady_clock;
     HeuristicEval::setSearchThreads(1);
@@ -131,8 +190,16 @@ int main(int argc, char **argv) {
     if (command == "bench") {
         return benchCommand();
     }
+    if (command == "score") {
+        return scoreCommand();
+    }
+    if (command == "signature" && argc > 2) {
+        return signatureCommand(std::atoi(argv[2]));
+    }
     std::fprintf(stderr,
                  "usage: evalprobe breakdown < positions.txt\n"
-                 "       evalprobe bench\n");
+                 "       evalprobe bench\n"
+                 "       evalprobe score < positions.txt\n"
+                 "       evalprobe signature DEPTH < fens.txt\n");
     return 2;
 }

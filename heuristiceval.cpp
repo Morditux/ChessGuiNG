@@ -407,12 +407,27 @@ void addCheapestAttacker(AttackInfo &info, int row, int column, int value) {
     }
 }
 
-// Keeps the most valuable attacker seen on a square. Kings are never recorded:
-// their value is zero, so a square only a king attacks stays `None`.
+// Order of the pieces by strength, which is all the strongest-attacker map
+// needs: comparing ranks is what comparing their values used to do, without
+// reading the weights twice for every square of every ray.
+constexpr int attackerRank(Rules::PieceType type) {
+    switch (type) {
+    case Rules::PieceType::Pawn:   return 1;
+    case Rules::PieceType::Knight: return 2;
+    case Rules::PieceType::Bishop: return 3;
+    case Rules::PieceType::Rook:   return 4;
+    case Rules::PieceType::Queen:  return 5;
+    case Rules::PieceType::King:
+    case Rules::PieceType::None:   return 0;
+    }
+    return 0;
+}
+
+// Keeps the strongest attacker seen on a square. Kings are never recorded: they
+// rank at zero, so a square only a king attacks stays `None`.
 void addStrongestAttacker(AttackInfo &info, int row, int column,
                           Rules::PieceType type) {
-    const int value = HeuristicEval::pieceValue(type);
-    if (value > HeuristicEval::pieceValue(info.strongestType[row][column])) {
+    if (attackerRank(type) > attackerRank(info.strongestType[row][column])) {
         info.strongestType[row][column] = type;
     }
 }
@@ -659,23 +674,6 @@ bool isPassedPawn(const BoardAnalysis &analysis, const PieceOnBoard &pawn) {
     return true;
 }
 
-// Counts pawns of `color` standing in the span (own and adjacent files) that
-// lies ahead of `row` in the given direction.
-int countPawnsAhead(const BoardAnalysis &analysis, Rules::Color color, int row,
-                    int column, int direction) {
-    const auto &pawnRows =
-        color == Rules::Color::White ? analysis.whitePawnRows
-                                     : analysis.blackPawnRows;
-    const quint8 ahead = rowsAhead(row, direction);
-    int count = 0;
-    for (int file = std::max(0, column - 1); file <= std::min(7, column + 1);
-         ++file) {
-        count += std::popcount(
-            static_cast<unsigned>(pawnRows[file] & ahead));
-    }
-    return count;
-}
-
 // Whether a rook of `colour` stands behind `pawn` on its file: the square the
 // pawn came from and every square further back.
 bool hasRookBehindPawn(const Board &board, const PieceOnBoard &pawn,
@@ -751,43 +749,39 @@ TaperedScore evaluatePawnStructure(const Board &board,
 
         const bool passed = isPassedPawn(analysis, piece);
 
-        // A backward pawn is not isolated, has no friendly pawn on an adjacent
-        // file that could ever support it from behind, and faces an enemy pawn
-        // on an adjacent file ahead of it.
+        const auto &enemyPawnRows = piece.color == Rules::Color::White
+                                        ? analysis.blackPawnRows
+                                        : analysis.whitePawnRows;
+        const auto &ownPawnRows = piece.color == Rules::Color::White
+                                      ? analysis.whitePawnRows
+                                      : analysis.blackPawnRows;
+        const quint8 rowsInFront = rowsAhead(piece.row, direction);
+        // Rows a friendly pawn could still come from to support this one: its
+        // own row (a neighbour beside it steps up to defend it) and the rows
+        // behind.
+        const quint8 rowsBehindOrLevel = static_cast<quint8>(~rowsInFront);
+
+        // A backward pawn is not isolated, passed or supported, has no friendly
+        // pawn on an adjacent file level with it or behind it that could ever
+        // come to its support, and cannot advance safely: the square in front
+        // of it is covered by an enemy pawn. A pair of neighbours on the same
+        // row therefore is not backward, and a distant enemy pawn no longer
+        // makes a pawn backward by itself.
         if (!isolated && !supportedByPawn && !passed) {
-            bool canBeSupported = false;
+            int supporters = 0;
             for (const int columnDelta : {-1, 1}) {
                 const int file = piece.column + columnDelta;
-                if (!isInside(0, file)) {
-                    continue;
-                }
-                if (piece.color == Rules::Color::White) {
-                    if (analysis.whiteRearRows[file] > piece.row) {
-                        canBeSupported = true;
-                    }
-                } else {
-                    if (analysis.blackRearRows[file] < piece.row) {
-                        canBeSupported = true;
-                    }
+                if (file >= 0 && file < 8) {
+                    supporters += std::popcount(static_cast<unsigned>(
+                        ownPawnRows[file] & rowsBehindOrLevel));
                 }
             }
-            bool enemyAhead = false;
-            for (const int columnDelta : {-1, 1}) {
-                const int file = piece.column + columnDelta;
-                if (!isInside(0, file)) {
-                    continue;
-                }
-                if (piece.color == Rules::Color::White) {
-                    if (analysis.blackRearRows[file] < piece.row) {
-                        enemyAhead = true;
-                    }
-                } else {
-                    if (analysis.whiteRearRows[file] > piece.row) {
-                        enemyAhead = true;
-                    }
-                }
-            }
-            if (!canBeSupported && enemyAhead) {
+            const AttackMap &enemyPawnAttacks =
+                piece.color == Rules::Color::White ? blackAttacks.pawnSquares
+                                                   : whiteAttacks.pawnSquares;
+            const int stopRow = piece.row + direction;
+            if (supporters == 0 && isInside(stopRow, piece.column) &&
+                enemyPawnAttacks[stopRow][piece.column]) {
                 score -= sign * TaperedScore{P.backwardPawnPenaltyMG,
                                              P.backwardPawnPenaltyEG};
             }
@@ -833,24 +827,34 @@ TaperedScore evaluatePawnStructure(const Board &board,
                      TaperedScore{std::max(bonus.middleGame, 0),
                                   std::max(bonus.endGame, 0)};
         } else {
-            // A candidate is a non-passed pawn whose span contains at least as
-            // many friendly pawns as enemy ones.
-            const int ownAhead = countPawnsAhead(analysis, piece.color,
-                                                 piece.row, piece.column,
-                                                 direction);
-            const int enemyAhead =
-                countPawnsAhead(analysis,
-                                piece.color == Rules::Color::White
-                                    ? Rules::Color::Black
-                                    : Rules::Color::White,
-                                piece.row, piece.column, direction);
-            if (supportedByPawn && ownAhead > 0 && ownAhead >= enemyAhead) {
-                const int rank = relativeRank(piece.color, piece.row);
-                score += sign * TaperedScore{
-                                    P.candidatePawnBonusMG +
-                                        rank * P.candidatePawnRankBonusMG,
-                                    P.candidatePawnBonusEG +
-                                        rank * P.candidatePawnRankBonusEG};
+            // A candidate is a pawn on a file the enemy has no pawn ahead on,
+            // that is not passed only because enemy pawns guard its path from
+            // the adjacent files, and that has at least as many friendly pawns
+            // beside it or behind it on those files (helpers) as enemy pawns
+            // ahead of it (sentinels). A pawn blocked on its own file is no
+            // candidate, and neither is the rear pawn of a doubled pair.
+            if (!(enemyPawnRows[piece.column] & rowsInFront) &&
+                !(ownPawnRows[piece.column] & rowsInFront)) {
+                int helpers = 0;
+                int sentinels = 0;
+                for (const int columnDelta : {-1, 1}) {
+                    const int file = piece.column + columnDelta;
+                    if (file < 0 || file > 7) {
+                        continue;
+                    }
+                    helpers += std::popcount(static_cast<unsigned>(
+                        ownPawnRows[file] & rowsBehindOrLevel));
+                    sentinels += std::popcount(static_cast<unsigned>(
+                        enemyPawnRows[file] & rowsInFront));
+                }
+                if (helpers >= sentinels) {
+                    const int rank = relativeRank(piece.color, piece.row);
+                    score += sign * TaperedScore{
+                                        P.candidatePawnBonusMG +
+                                            rank * P.candidatePawnRankBonusMG,
+                                        P.candidatePawnBonusEG +
+                                            rank * P.candidatePawnRankBonusEG};
+                }
             }
         }
     }
@@ -1070,16 +1074,10 @@ TaperedScore kingSafety(const Board &board, const BoardAnalysis &analysis,
     // Files with no friendly pawn near the king give attacking pieces a way in.
     for (int file = std::max(0, kingColumn - 1);
          file <= std::min(7, kingColumn + 1); ++file) {
-        bool hasOwnPawn = false;
-        for (int row = 0; row < 8; ++row) {
-            const auto &piece = board[row][file];
-            if (piece.has_value() && piece->type == Rules::PieceType::Pawn &&
-                piece->color == color) {
-                hasOwnPawn = true;
-                break;
-            }
-        }
-        if (!hasOwnPawn) {
+        const auto &ownCounts = color == Rules::Color::White
+                                    ? analysis.whitePawnCounts
+                                    : analysis.blackPawnCounts;
+        if (ownCounts[file] == 0) {
             score -= middleGameOnly(P.openFileNearKingPenalty);
         }
     }

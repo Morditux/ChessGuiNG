@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "evalparamfields.h"
 #include "heuristiceval.h"
 #include "heuristicsearch.h"
 #include "rules.h"
@@ -132,6 +133,31 @@ bool forcedMateIn(Rules &rules, int plies, const Rules::Move *first = nullptr) {
     return false;
 }
 
+// The pawn-structure term of a position with every pawn-structure weight zeroed
+// but one, which is set to `value` in both phases: the result is `value` times
+// what White holds of that feature minus what Black holds, so a test can pin one
+// definition without the others.
+int pawnTermScore(const QString &fen,
+                  int HeuristicEval::EvalParams::*middleGame,
+                  int HeuristicEval::EvalParams::*endGame, int value = 40) {
+    HeuristicEval::EvalParams params = HeuristicEval::params();
+    for (const EvalParamFields::Field &field : EvalParamFields::all()) {
+        if (QLatin1String(field.group) == QLatin1String("Pawn structure")) {
+            params.*field.member = 0;
+        }
+    }
+    params.*middleGame = value;
+    params.*endGame = value;
+    HeuristicEval::setParams(params);
+
+    Rules rules;
+    const bool loaded = rules.loadFen(fen);
+    const int pawns = loaded ? HeuristicEval::evaluateBreakdown(rules).pawns
+                             : -99999;
+    HeuristicEval::resetParams();
+    return pawns;
+}
+
 } // namespace
 
 
@@ -195,6 +221,8 @@ private slots:
     void testMoveOrderingEnhancements();
     void testTranspositionTablePreservesMoveOnFailLow();
     void testTornTranspositionEntryIsRejected();
+    void testBackwardPawnDefinition();
+    void testCandidatePawnDefinition();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1055,15 +1083,14 @@ void HeuristicEvalTest::testReferenceScores() {
         {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 10},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -31},
-        {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
-         -HeuristicEval::MateScore},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -43},
+        {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", -HeuristicEval::MateScore},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -63},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 154},
         {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 202},
         {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 142},
         {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 295},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 142},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -63},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 162},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -83},
         {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 290},
     };
 
@@ -1090,22 +1117,22 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 2489, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "d2d4", 1508, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "e1g1",
-         6054, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 82, "e2a6",
-         9505, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 443, "d7c8q", 1560, 0},
-        {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2,
-         HeuristicEval::MateScore, "h5f7", 85, 1},
+         5588, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 115, "e2a6",
+         8765, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 431, "d7c8q", 1594, 0},
+        {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
+         85, 1},
         {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 84, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 118, "b4f4", 3286, 0},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 98, "b4f4", 1777, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 163, "e1d2", 685, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -99, "c6d4",
-         4045, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -109, "c6d4",
+         4120, 0},
         {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1000, "e1e2", 16733, 0},
-        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 64, "d2d3",
-         5758, 0},
+        {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
+         3866, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 181, "e4d5", 156, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 368, 0},
@@ -1656,6 +1683,60 @@ void HeuristicEvalTest::testTornTranspositionEntryIsRejected() {
     QCOMPARE(Rules::toUci(probed), QStringLiteral("d2d4"));
 
     HeuristicSearch::clearCaches();
+}
+
+void HeuristicEvalTest::testBackwardPawnDefinition() {
+    using P = HeuristicEval::EvalParams;
+    const auto backward = [](const char *fen) {
+        return pawnTermScore(QString::fromLatin1(fen),
+                             &P::backwardPawnPenaltyMG,
+                             &P::backwardPawnPenaltyEG);
+    };
+
+    // A duo on the same row is no backward pawn: each side can be defended by
+    // the other stepping up, and the distant enemy pawns guard nothing.
+    QCOMPARE(backward("4k3/2p1p3/8/8/2PP4/8/8/4K3 w - - 0 1"), 0);
+    QCOMPARE(backward(mirrorFen(QStringLiteral("4k3/2p1p3/8/8/2PP4/8/8/4K3 w - - 0 1"))
+                          .toLatin1().constData()),
+             0);
+
+    // The rear pawn of the c2/d4 pair can still come to the support of d4, so
+    // neither is backward.
+    QCOMPARE(backward("4k3/2p1pp2/8/8/3P4/8/2P2P2/4K3 w - - 0 1"), 0);
+
+    // d4 has only c5 beside it, which is ahead of it, and its stop square d5 is
+    // covered by the e6 pawn: it is backward (a penalty for White).
+    const char *backwardFen = "4k3/8/4p3/2P5/3P4/8/8/4K3 w - - 0 1";
+    QCOMPARE(backward(backwardFen), -40);
+    QCOMPARE(pawnTermScore(mirrorFen(QString::fromLatin1(backwardFen)),
+                           &P::backwardPawnPenaltyMG, &P::backwardPawnPenaltyEG),
+             40);
+}
+
+void HeuristicEvalTest::testCandidatePawnDefinition() {
+    using P = HeuristicEval::EvalParams;
+    const auto candidates = [](const QString &fen) {
+        return pawnTermScore(fen, &P::candidatePawnBonusMG,
+                             &P::candidatePawnBonusEG);
+    };
+
+    // e4 is blocked by e5: a pawn that cannot advance on its own file is no
+    // candidate, whichever pawns stand beside it.
+    const QString blocked = QStringLiteral("4k3/8/8/4pP2/4P3/3P4/8/4K3 w - - 0 1");
+    QCOMPARE(candidates(blocked), 0);
+    QCOMPARE(candidates(mirrorFen(blocked)), 0);
+
+    // Two pawns against one on the wing: the c-pawn has as many helpers as it
+    // has sentinels and an open file, so it is the candidate.
+    const QString majority = QStringLiteral("4k3/1p6/8/8/8/8/1PP5/4K3 w - - 0 1");
+    QCOMPARE(candidates(majority), 40);
+    QCOMPARE(candidates(mirrorFen(majority)), -40);
+
+    // The lone c2 pawn faces an enemy pawn on its own file: no candidate. Black
+    // holds the majority, so its b-pawn is the only one in the position.
+    const QString outnumbered =
+        QStringLiteral("4k3/1pp5/8/8/8/8/2P5/4K3 w - - 0 1");
+    QCOMPARE(candidates(outnumbered), -40);
 }
 
 QTEST_MAIN(HeuristicEvalTest)
