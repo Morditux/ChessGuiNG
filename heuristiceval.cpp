@@ -84,7 +84,7 @@ constexpr TaperedScore operator*(int factor, const TaperedScore &score) {
 // index 0 is that side's home rank and index 7 its promotion rank.
 // The seventh rank matches the sixth: what a pawn about to promote is worth
 // lives in the passed pawn table, which also knows whether the pawn is passed.
-constexpr std::array<int, 64> PawnPST = {
+constexpr std::array<int, 64> PawnMiddleGamePST = {
      0,  0,  0,  0,  0,  0,  0,  0,
      5, 10, 10,-20,-20, 10, 10,  5,
      5, -5,-10,  0,  0,-10, -5,  5,
@@ -95,7 +95,7 @@ constexpr std::array<int, 64> PawnPST = {
      0,  0,  0,  0,  0,  0,  0,  0
 };
 
-constexpr std::array<int, 64> KnightPST = {
+constexpr std::array<int, 64> KnightMiddleGamePST = {
    -50,-40,-30,-30,-30,-30,-40,-50,
    -40,-20,  0,  5,  5,  0,-20,-40,
    -30,  5, 10, 15, 15, 10,  5,-30,
@@ -106,7 +106,7 @@ constexpr std::array<int, 64> KnightPST = {
    -50,-40,-30,-30,-30,-30,-40,-50
 };
 
-constexpr std::array<int, 64> BishopPST = {
+constexpr std::array<int, 64> BishopMiddleGamePST = {
    -20,-10,-10,-10,-10,-10,-10,-20,
    -10,  5,  0,  0,  0,  0,  5,-10,
    -10, 10, 10, 10, 10, 10, 10,-10,
@@ -117,7 +117,7 @@ constexpr std::array<int, 64> BishopPST = {
    -20,-10,-10,-10,-10,-10,-10,-20
 };
 
-constexpr std::array<int, 64> RookPST = {
+constexpr std::array<int, 64> RookMiddleGamePST = {
      0,  0,  0,  5,  5,  0,  0,  0,
     -5,  0,  0,  0,  0,  0,  0, -5,
     -5,  0,  0,  0,  0,  0,  0, -5,
@@ -128,7 +128,7 @@ constexpr std::array<int, 64> RookPST = {
      0,  0,  0,  0,  0,  0,  0,  0
 };
 
-constexpr std::array<int, 64> QueenPST = {
+constexpr std::array<int, 64> QueenMiddleGamePST = {
    -20,-10,-10, -5, -5,-10,-10,-20,
    -10,  0,  5,  0,  0,  0,  0,-10,
    -10,  5,  5,  5,  5,  5,  0,-10,
@@ -160,6 +160,14 @@ constexpr std::array<int, 64> KingEndGamePST = {
    -30,-10, 10, 15, 15, 10,-10,-30,
    -50,-30,-20,-20,-20,-20,-30,-50
 };
+
+// The endgame table of each piece; the king has its own. Until the endgame
+// shapes are written, a piece is worth the same on a square in both phases.
+constexpr std::array<int, 64> PawnEndGamePST = PawnMiddleGamePST;
+constexpr std::array<int, 64> KnightEndGamePST = KnightMiddleGamePST;
+constexpr std::array<int, 64> BishopEndGamePST = BishopMiddleGamePST;
+constexpr std::array<int, 64> RookEndGamePST = RookMiddleGamePST;
+constexpr std::array<int, 64> QueenEndGamePST = QueenMiddleGamePST;
 
 struct Offset {
     int rowDelta;
@@ -297,17 +305,24 @@ constexpr int forwardDirection(Rules::Color color) {
     return color == Rules::Color::White ? -1 : 1;
 }
 
-constexpr const std::array<int, 64> *pieceSquareTable(Rules::PieceType type) {
+// The middlegame and the endgame table of a piece, or null tables for a piece
+// that has none.
+struct SquareTables {
+    const std::array<int, 64> *middleGame = nullptr;
+    const std::array<int, 64> *endGame = nullptr;
+};
+
+constexpr SquareTables pieceSquareTables(Rules::PieceType type) {
     switch (type) {
-    case Rules::PieceType::Pawn:   return &PawnPST;
-    case Rules::PieceType::Knight: return &KnightPST;
-    case Rules::PieceType::Bishop: return &BishopPST;
-    case Rules::PieceType::Rook:   return &RookPST;
-    case Rules::PieceType::Queen:  return &QueenPST;
-    case Rules::PieceType::King:
-    case Rules::PieceType::None:   return nullptr;
+    case Rules::PieceType::Pawn:   return {&PawnMiddleGamePST, &PawnEndGamePST};
+    case Rules::PieceType::Knight: return {&KnightMiddleGamePST, &KnightEndGamePST};
+    case Rules::PieceType::Bishop: return {&BishopMiddleGamePST, &BishopEndGamePST};
+    case Rules::PieceType::Rook:   return {&RookMiddleGamePST, &RookEndGamePST};
+    case Rules::PieceType::Queen:  return {&QueenMiddleGamePST, &QueenEndGamePST};
+    case Rules::PieceType::King:   return {&KingMiddleGamePST, &KingEndGamePST};
+    case Rules::PieceType::None:   return {};
     }
-    return nullptr;
+    return {};
 }
 
 // Rounds to the nearest centipawn, away from zero, so that a mirrored position
@@ -791,11 +806,10 @@ void evaluateMaterialAndPlacement(const BoardAnalysis &analysis,
         *material += sign * bothPhases(HeuristicEval::pieceValue(piece.type));
 
         const int square = relativeSquare(piece.color, piece.row, piece.column);
-        if (piece.type == Rules::PieceType::King) {
-            *placement += sign * TaperedScore{KingMiddleGamePST[square],
-                                              KingEndGamePST[square]};
-        } else if (const auto *pst = pieceSquareTable(piece.type)) {
-            *placement += sign * bothPhases((*pst)[square]);
+        if (const SquareTables tables = pieceSquareTables(piece.type);
+            tables.middleGame != nullptr) {
+            *placement += sign * TaperedScore{(*tables.middleGame)[square],
+                                              (*tables.endGame)[square]};
         }
 
         if (piece.type == Rules::PieceType::Rook) {
