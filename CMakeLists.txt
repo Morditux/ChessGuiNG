@@ -361,6 +361,8 @@ option(CHESSGUI_BUILD_TOOLS "Build the developer tools in tools/" OFF)
 if (CHESSGUI_BUILD_TOOLS)
     qt_add_executable(evalprobe tools/evalprobe.cpp)
     target_link_libraries(evalprobe PRIVATE chesscore)
+    qt_add_executable(texeltune tools/texeltune.cpp)
+    target_link_libraries(texeltune PRIVATE chesscore)
 endif()
 
 if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
