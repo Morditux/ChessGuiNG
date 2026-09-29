@@ -194,6 +194,7 @@ private slots:
     void testSeeValueRayCasting();
     void testMoveOrderingEnhancements();
     void testTranspositionTablePreservesMoveOnFailLow();
+    void testTornTranspositionEntryIsRejected();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1617,6 +1618,42 @@ void HeuristicEvalTest::testTranspositionTablePreservesMoveOnFailLow() {
     Rules::Move probedAfterFailLow{};
     QVERIFY(HeuristicSearch::probeTranspositionMove(key, probedAfterFailLow));
     QCOMPARE(Rules::toUci(probedAfterFailLow), QStringLiteral("e2e4"));
+
+    HeuristicSearch::clearCaches();
+}
+
+void HeuristicEvalTest::testTornTranspositionEntryIsRejected() {
+    HeuristicEval::resetParams();
+    HeuristicSearch::clearCaches();
+
+    constexpr int TtExact = 1;
+    const quint64 key = 0x0F1E2D3C4B5A6978ULL;
+    const auto moveA = UciParser::parseMove(QStringLiteral("e2e4"));
+    const auto moveB = UciParser::parseMove(QStringLiteral("d2d4"));
+    QVERIFY(moveA.has_value() && moveB.has_value());
+
+    // A well-formed entry is found again.
+    HeuristicSearch::storeTransposition(key, 4, 30, TtExact, *moveA);
+    Rules::Move probed{};
+    QVERIFY(HeuristicSearch::probeTranspositionMove(key, probed));
+    QCOMPARE(Rules::toUci(probed), QStringLiteral("e2e4"));
+
+    // The slot two workers left half-written: the key word of position A with
+    // the payload of position B. Position A must not receive B's move.
+    HeuristicSearch::storeTornTransposition(key, 4, 30, TtExact, *moveA, 9, -80,
+                                            TtExact, *moveB);
+    Rules::Move torn{};
+    QVERIFY(!HeuristicSearch::probeTranspositionMove(key, torn));
+
+    // The same forged slot does not answer for a colliding key either.
+    const quint64 collidingKey = key ^ (quint64{1} << 40);
+    QVERIFY(!HeuristicSearch::probeTranspositionMove(collidingKey, torn));
+
+    // A torn slot counts as empty for the depth-preferred replacement, so the
+    // next store simply overwrites it.
+    HeuristicSearch::storeTransposition(key, 1, 10, TtExact, *moveB);
+    QVERIFY(HeuristicSearch::probeTranspositionMove(key, probed));
+    QCOMPARE(Rules::toUci(probed), QStringLiteral("d2d4"));
 
     HeuristicSearch::clearCaches();
 }

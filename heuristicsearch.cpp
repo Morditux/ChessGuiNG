@@ -81,12 +81,16 @@ int valueFromTable(int value, int ply) {
     return value;
 }
 
-// One slot of the shared transposition table. Both fields are atomic so the
-// root workers can share the table without a lock; a reader only trusts an
-// entry when the key it read before and after the payload matches, which rules
-// out a torn read.
+// One slot of the shared transposition table, stored the lockless way: the key
+// word holds `key ^ data`. Both fields are atomic so the root workers can share
+// the table without a lock, and a reader only trusts an entry when
+// `keyWord ^ data` gives back the key it probes with. A slot two workers wrote
+// at the same time holds the key word of one and the payload of the other, which
+// fails that check, so a torn entry is never mistaken for a position it does not
+// describe (the earlier `key = 0; data = ...; key = k` protocol could be, when
+// two different keys interleaved on one slot).
 struct TtEntry {
-    std::atomic<quint64> key{0};
+    std::atomic<quint64> keyWord{0};
     std::atomic<quint64> data{0};
 };
 
@@ -149,13 +153,12 @@ private:
     int bits_ = 0;
 };
 
-// One slot of the classical-evaluation cache. The value is the score of the
-// position from White's perspective, keyed by its Zobrist key; as for the
-// transposition table, the key is written last so a reader that sees it also
-// sees the matching payload.
+// One slot of the classical-evaluation cache: a single atomic word holding the
+// upper 32 bits of the Zobrist key and the score of the position from White's
+// perspective. One word cannot be torn, and the slot index takes the low bits
+// of the key, so the stored half is what tells two positions of a slot apart.
 struct EvalCacheEntry {
-    std::atomic<quint64> key{0};
-    std::atomic<qint32> value{0};
+    std::atomic<quint64> word{0};
 };
 
 // Direct-mapped cache of `evaluateBoard`. The leaf evaluation is the hottest
@@ -172,30 +175,24 @@ public:
     }
 
     bool lookup(quint64 key, int *value) const {
-        const EvalCacheEntry &entry = entries_[key & Mask];
-        const quint64 storedKey = entry.key.load(std::memory_order_acquire);
-        if (storedKey != key) {
+        const quint64 word =
+            entries_[key & Mask].word.load(std::memory_order_relaxed);
+        if ((word >> 32) != (key >> 32)) {
             return false;
         }
-        const qint32 storedValue = entry.value.load(std::memory_order_acquire);
-        if (entry.key.load(std::memory_order_acquire) != storedKey) {
-            return false;
-        }
-        *value = storedValue;
+        *value = static_cast<qint32>(static_cast<quint32>(word));
         return true;
     }
 
     void store(quint64 key, int value) {
-        EvalCacheEntry &entry = entries_[key & Mask];
-        entry.key.store(0, std::memory_order_release);
-        entry.value.store(static_cast<qint32>(value), std::memory_order_release);
-        entry.key.store(key, std::memory_order_release);
+        const quint64 word = (key & 0xFFFFFFFF00000000ULL) |
+                             static_cast<quint32>(static_cast<qint32>(value));
+        entries_[key & Mask].word.store(word, std::memory_order_relaxed);
     }
 
     void clear() {
         for (EvalCacheEntry &entry : entries_) {
-            entry.key.store(0, std::memory_order_release);
-            entry.value.store(0, std::memory_order_release);
+            entry.word.store(0, std::memory_order_relaxed);
         }
     }
 
@@ -335,12 +332,9 @@ bool probeTable(const SearchState &state, quint64 key, int ply, int depth,
         return false;
     }
     const TtEntry &entry = state.table[key & state.tableMask];
-    const quint64 storedKey = entry.key.load(std::memory_order_acquire);
-    if (storedKey != key) {
-        return false;
-    }
-    const quint64 data = entry.data.load(std::memory_order_acquire);
-    if (entry.key.load(std::memory_order_acquire) != storedKey) {
+    const quint64 data = entry.data.load(std::memory_order_relaxed);
+    const quint64 keyWord = entry.keyWord.load(std::memory_order_relaxed);
+    if ((keyWord ^ data) != key) {
         return false;
     }
 
@@ -381,35 +375,28 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
 
     Rules::Move moveToStore = move;
     // Depth-preferred replacement: a shallow entry must not evict a deeper one
-    // from the slot, since the deeper bound is the valuable one. The key is
-    // read twice around the payload so that a torn write by another worker is
-    // treated as an empty slot rather than as a depth.
-    const quint64 storedKey = entry.key.load(std::memory_order_acquire);
-    if (storedKey == key) {
-        const quint64 storedData = entry.data.load(std::memory_order_acquire);
-        if (entry.key.load(std::memory_order_acquire) == storedKey) {
-            const int storedDepth =
-                static_cast<int>((storedData >> 32) & 0xFF);
-            if (storedDepth > depth) {
-                return;
-            }
-            // Preserve the existing best move if the incoming move is empty
-            // (e.g. on a fail-low / TtUpper node where no move raised alpha).
-            if (moveToStore.from.row < 0) {
-                const Rules::Move existingMove = unpackMove(storedData >> 42);
-                if (existingMove.from.row >= 0) {
-                    moveToStore = existingMove;
-                }
+    // from the slot, since the deeper bound is the valuable one. A torn slot
+    // fails the key check and is treated as empty rather than as a depth.
+    const quint64 storedData = entry.data.load(std::memory_order_relaxed);
+    const quint64 storedKeyWord = entry.keyWord.load(std::memory_order_relaxed);
+    if ((storedKeyWord ^ storedData) == key) {
+        const int storedDepth = static_cast<int>((storedData >> 32) & 0xFF);
+        if (storedDepth > depth) {
+            return;
+        }
+        // Preserve the existing best move if the incoming move is empty
+        // (e.g. on a fail-low / TtUpper node where no move raised alpha).
+        if (moveToStore.from.row < 0) {
+            const Rules::Move existingMove = unpackMove(storedData >> 42);
+            if (existingMove.from.row >= 0) {
+                moveToStore = existingMove;
             }
         }
     }
 
-    // Store the payload before the key so that a reader which sees the new key
-    // also sees the matching payload.
-    entry.key.store(0, std::memory_order_release);
-    entry.data.store(packEntry(score, depth, flag, moveToStore),
-                     std::memory_order_release);
-    entry.key.store(key, std::memory_order_release);
+    const quint64 data = packEntry(score, depth, flag, moveToStore);
+    entry.data.store(data, std::memory_order_relaxed);
+    entry.keyWord.store(key ^ data, std::memory_order_relaxed);
 }
 
 // Pieces the swap below may trade before it gives up, which bounds the loop.
@@ -1376,6 +1363,21 @@ void storeTransposition(quint64 key, int depth, int score, int flag,
     state.table = table.data();
     state.tableMask = table.mask();
     storeTable(state, key, depth, score, flag, move);
+}
+
+void storeTornTransposition(quint64 key, int depth, int score, int flag,
+                            const Rules::Move &move, int otherDepth, int otherScore, int otherFlag,
+                            const Rules::Move &otherMove) {
+    TranspositionTable &table = TranspositionTable::instance();
+    table.ensureSize(15);
+    // The interleaving of two workers writing the same slot: the key word of
+    // `key`'s entry next to the payload of the other position's entry.
+    const quint64 keyData = packEntry(score, depth, flag, move);
+    const quint64 otherData =
+        packEntry(otherScore, otherDepth, otherFlag, otherMove);
+    TtEntry &entry = table.data()[key & table.mask()];
+    entry.keyWord.store(key ^ keyData, std::memory_order_relaxed);
+    entry.data.store(otherData, std::memory_order_relaxed);
 }
 
 bool probeTranspositionMove(quint64 key, Rules::Move &outMove) {

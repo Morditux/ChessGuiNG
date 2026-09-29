@@ -60,6 +60,12 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
 // Test helpers to inspect transposition table behavior.
 void storeTransposition(quint64 key, int depth, int score, int flag,
                         const Rules::Move &move);
+// Writes the slot of `key` the way two workers interleaving on it would leave
+// it: the key word of the first entry with the payload of the second. A probe
+// has to reject it rather than hand the second payload to the first position.
+void storeTornTransposition(quint64 key, int depth, int score, int flag,
+                            const Rules::Move &move, int otherDepth, int otherScore, int otherFlag,
+                            const Rules::Move &otherMove);
 [[nodiscard]] bool probeTranspositionMove(quint64 key, Rules::Move &outMove);
 
 // Taken by the evaluator: drops the transposition table and the evaluation
