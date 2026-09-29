@@ -353,6 +353,13 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     include(CPack)
 endif()
 
+# Developer tools (evaluation probe and benchmark), not built by default.
+option(CHESSGUI_BUILD_TOOLS "Build the developer tools in tools/" OFF)
+if (CHESSGUI_BUILD_TOOLS)
+    qt_add_executable(evalprobe tools/evalprobe.cpp)
+    target_link_libraries(evalprobe PRIVATE chesscore)
+endif()
+
 if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     enable_testing()
 

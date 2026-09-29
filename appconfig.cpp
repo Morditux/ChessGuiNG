@@ -183,12 +183,25 @@ bool AppConfig::load() {
                                            auditDepth_).toInt(), 99);
     settings.endGroup();
 
-    // One key per weight, written and read through the same field table the
-    // settings dialog builds its spin boxes from.
+    // One key per weight that differs from the default, written and read
+    // through the same field table the settings dialog builds its spin boxes
+    // from. Weights stored under another defaults version are dropped: they
+    // would freeze the defaults of the release that wrote them, and a weight
+    // whose meaning changed would be read back as nonsense.
     settings.beginGroup(QStringLiteral("Evaluation"));
-    for (const EvalParamFields::Field &field : EvalParamFields::all()) {
-        int &value = evalParams_.*field.member;
-        value = settings.value(QString::fromLatin1(field.key), value).toInt();
+    evalParamsWereReset_ = false;
+    const int storedVersion =
+        settings.value(QStringLiteral("paramsVersion"), 0).toInt();
+    if (storedVersion == HeuristicEval::EvalParamsVersion) {
+        for (const EvalParamFields::Field &field : EvalParamFields::all()) {
+            int &value = evalParams_.*field.member;
+            value = settings.value(QString::fromLatin1(field.key), value)
+                        .toInt();
+        }
+    } else {
+        // Nothing to warn about when the file never held a weight.
+        evalParamsWereReset_ = !settings.childKeys().isEmpty();
+        evalParams_ = HeuristicEval::EvalParams{};
     }
     settings.endGroup();
 
@@ -282,9 +295,16 @@ bool AppConfig::save() const {
     settings.endGroup();
 
     settings.beginGroup(QStringLiteral("Evaluation"));
+    const HeuristicEval::EvalParams defaults;
+    settings.setValue(QStringLiteral("paramsVersion"),
+                      HeuristicEval::EvalParamsVersion);
     for (const EvalParamFields::Field &field : EvalParamFields::all()) {
-        settings.setValue(QString::fromLatin1(field.key),
-                          evalParams_.*field.member);
+        const QString key = QString::fromLatin1(field.key);
+        if (evalParams_.*field.member == defaults.*field.member) {
+            settings.remove(key);
+        } else {
+            settings.setValue(key, evalParams_.*field.member);
+        }
     }
     settings.endGroup();
 
@@ -566,6 +586,10 @@ void AppConfig::setEvalParams(const HeuristicEval::EvalParams &params) {
     evalParams_ = params;
 }
 
+bool AppConfig::evalParamsWereReset() const {
+    return evalParamsWereReset_;
+}
+
 int AppConfig::evalSearchThreads() const {
     return evalSearchThreads_;
 }
@@ -632,6 +656,7 @@ void AppConfig::resetToDefaults() {
     analysisMultiPv_ = 1;
     auditDepth_ = 18;
     evalParams_ = HeuristicEval::EvalParams{};
+    evalParamsWereReset_ = false;
     evalSearchThreads_ = 0;
     evalDepth_ = HeuristicEval::DefaultSearchDepth;
     showEvaluationScore_ = true;

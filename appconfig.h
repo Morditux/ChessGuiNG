@@ -133,6 +133,11 @@ public:
     [[nodiscard]] HeuristicEval::EvalParams evalParams() const;
     void setEvalParams(const HeuristicEval::EvalParams &params);
 
+    // True when load() found weights stored by another
+    // HeuristicEval::EvalParamsVersion and dropped them for the current
+    // defaults, so the interface can tell the user once.
+    [[nodiscard]] bool evalParamsWereReset() const;
+
     // Root workers the heuristic search may use; zero follows the hardware.
     [[nodiscard]] int evalSearchThreads() const;
     void setEvalSearchThreads(int threads);
@@ -183,6 +188,7 @@ private:
     int analysisMultiPv_ = 1;
     int auditDepth_ = 18;
     HeuristicEval::EvalParams evalParams_;
+    bool evalParamsWereReset_ = false;
     int evalSearchThreads_ = 0;
     int evalDepth_ = HeuristicEval::DefaultSearchDepth;
     bool showEvaluationScore_ = true;

@@ -608,6 +608,10 @@ void MainWindow::loadConfiguration(const QString &configFilePath) {
     rightSplitter_->setSizes(historySizes);
 
     HeuristicEval::setParams(config_.evalParams());
+    if (config_.evalParamsWereReset()) {
+        setActivityMessage(tr("The evaluation weights were reset to the new "
+                              "defaults of this version."));
+    }
     HeuristicEval::setSearchThreads(config_.evalSearchThreads());
     gameController_->setEvaluationDepth(config_.evalDepth());
     // Apply the gauge preferences directly and sync the menu without letting

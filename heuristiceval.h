@@ -22,6 +22,12 @@ public:
     static constexpr int DefaultSearchDepth = 2;
     static constexpr int MaxSearchDepth = 8;
 
+    // Version of the default weights. Every change that alters a default value
+    // (or the meaning of a weight) increments it: AppConfig only keeps stored
+    // weights written by the same version, so an improvement to the defaults
+    // reaches users who saved their configuration under an older one.
+    static constexpr int EvalParamsVersion = 1;
+
     // Every tunable weight of the classical evaluation, in centipawns unless
     // the name says otherwise. Each term carries a middle-game and an
     // end-game value (`MG`/`EG`) and the evaluator interpolates between them

@@ -2358,6 +2358,10 @@ Imprécisions %3 — erreurs %4 — gaffes %5</translation>
         <source>Paste or drop a chessboard screenshot to detect its position.</source>
         <translation>Collez ou déposez une capture d&apos;échiquier pour détecter sa position.</translation>
     </message>
+    <message>
+        <source>The evaluation weights were reset to the new defaults of this version.</source>
+        <translation>Les poids d&apos;évaluation ont été réinitialisés aux nouvelles valeurs par défaut de cette version.</translation>
+    </message>
 </context>
 <context>
     <name>MoveListWidget</name>

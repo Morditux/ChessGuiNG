@@ -45,6 +45,7 @@ private slots:
     void testLoadAndSaveRemoteEngineSettings();
     void testLoadAndSaveAnalysisSettings();
     void testLoadAndSaveEvaluationSettings();
+    void testDefaultEvaluationWeightsAreNotPersisted();
     void testResetToDefaults();
     void testLoadNonExistentFileReturnsFalse();
     void testMainWindowAutoCreatesConfigFile();
@@ -553,6 +554,70 @@ void AppConfigTest::testLoadAndSaveEvaluationSettings() {
     clamped.setEvalSearchThreads(-4);
     QCOMPARE(clamped.evalDepth(), HeuristicEval::MaxSearchDepth);
     QCOMPARE(clamped.evalSearchThreads(), 0);
+}
+
+void AppConfigTest::testDefaultEvaluationWeightsAreNotPersisted() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString confPath = tempDir.filePath(QStringLiteral("chessGui.conf"));
+
+    // Only a weight that differs from the default is written.
+    AppConfig config(confPath);
+    HeuristicEval::EvalParams tuned;
+    tuned.pawnValue = 130;
+    config.setEvalParams(tuned);
+    QVERIFY(config.save());
+    {
+        QSettings settings(confPath, QSettings::IniFormat);
+        settings.beginGroup(QStringLiteral("Evaluation"));
+        QVERIFY(settings.contains(QStringLiteral("pawnValue")));
+        QVERIFY(!settings.contains(QStringLiteral("knightValue")));
+        QCOMPARE(settings.value(QStringLiteral("paramsVersion")).toInt(),
+                 HeuristicEval::EvalParamsVersion);
+    }
+
+    // A weight put back to its default disappears from the file again.
+    config.setEvalParams(HeuristicEval::EvalParams{});
+    QVERIFY(config.save());
+    {
+        QSettings settings(confPath, QSettings::IniFormat);
+        settings.beginGroup(QStringLiteral("Evaluation"));
+        QVERIFY(!settings.contains(QStringLiteral("pawnValue")));
+    }
+
+    // Weights written by another defaults version are ignored, and the user is
+    // told once.
+    {
+        QSettings settings(confPath, QSettings::IniFormat);
+        settings.beginGroup(QStringLiteral("Evaluation"));
+        settings.setValue(QStringLiteral("paramsVersion"),
+                          HeuristicEval::EvalParamsVersion + 1);
+        settings.setValue(QStringLiteral("pawnValue"), 250);
+    }
+    AppConfig stale(confPath);
+    QVERIFY(stale.load());
+    QCOMPARE(stale.evalParams().pawnValue, HeuristicEval::EvalParams{}.pawnValue);
+    QVERIFY(stale.evalParamsWereReset());
+
+    // A file from before the version key held every weight: same treatment.
+    {
+        QSettings settings(confPath, QSettings::IniFormat);
+        settings.remove(QStringLiteral("Evaluation/paramsVersion"));
+    }
+    AppConfig legacy(confPath);
+    QVERIFY(legacy.load());
+    QCOMPARE(legacy.evalParams().pawnValue, HeuristicEval::EvalParams{}.pawnValue);
+    QVERIFY(legacy.evalParamsWereReset());
+
+    // A file that never stored a weight has nothing to report.
+    const QString cleanPath = tempDir.filePath(QStringLiteral("clean.conf"));
+    QFile cleanFile(cleanPath);
+    QVERIFY(cleanFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    cleanFile.write("[General]\ngeometry=\n");
+    cleanFile.close();
+    AppConfig clean(cleanPath);
+    QVERIFY(clean.load());
+    QVERIFY(!clean.evalParamsWereReset());
 }
 
 void AppConfigTest::testResetToDefaults() {
