@@ -52,11 +52,18 @@ public:
         friend bool operator==(const Move &, const Move &) = default;
     };
 
+    // The board as a plain array (row 0 is rank 8), for callers that read many
+    // squares and do not want a copy of each one.
+    using Board = std::array<std::array<std::optional<Piece>, 8>, 8>;
+
     Rules();
 
     void reset();
 
     [[nodiscard]] std::optional<Piece> pieceAt(Position position) const;
+    [[nodiscard]] const Board &board() const {
+        return board_;
+    }
     [[nodiscard]] Color currentPlayer() const;
 
     [[nodiscard]] bool isValidMove(Position from, Position to) const;
@@ -91,6 +98,8 @@ public:
         Move lastMove;
         bool pushedRepetition = false;
         quint64 previousHash = 0;
+        quint64 previousPawnHash = 0;
+        std::array<int, 2> previousPieceCounts{};
     };
 
     [[nodiscard]] int generatePseudoLegalMoves(Move *moves, int capacity) const;
@@ -120,6 +129,15 @@ public:
     // Zobrist key of the current position, including the side to move, the
     // castling rights and the en passant file.
     [[nodiscard]] quint64 zobristKey() const;
+
+    // Zobrist key of the pawns alone, maintained like `zobristKey()`: it does
+    // not move when a piece does, so everything that depends on the pawn
+    // structure can be cached under it.
+    [[nodiscard]] quint64 pawnKey() const;
+
+    // Whether `color` still has a knight, bishop, rook or queen, from a counter
+    // kept with the moves rather than a scan of the board.
+    [[nodiscard]] bool hasNonPawnMaterial(Color color) const;
 
     // When disabled, `tryMove`/`makeMove` no longer record positions for
     // repetition detection. The search turns it off because it never consults
@@ -187,8 +205,6 @@ public:
                  QStringList *outComments = nullptr);
 
 private:
-    using Board = std::array<std::array<std::optional<Piece>, 8>, 8>;
-
     Board board_{};
     Color currentPlayer_ = Color::White;
     std::optional<Move> lastMove_;
@@ -196,6 +212,9 @@ private:
     int fullmoveNumber_ = 1;
     bool trackRepetition_ = true;
     quint64 hash_ = 0;
+    quint64 pawnHash_ = 0;
+    // Knights, bishops, rooks and queens of each colour (White = 0, Black = 1).
+    std::array<int, 2> pieceCounts_{};
     // Zobrist keys of the repetition-relevant positions, newest last.
     std::vector<quint64> repetitionHistory_;
     // Cached king squares indexed by Color (White = 0, Black = 1), kept in
@@ -216,6 +235,7 @@ private:
     // Zobrist contributions recomputed from the board; `hash_` is updated
     // incrementally on every move.
     void recomputeHash();
+    void recomputePieceCounts();
     [[nodiscard]] quint64 castlingHash() const;
     [[nodiscard]] quint64 enPassantHash() const;
     [[nodiscard]] bool enPassantCaptureAvailable() const;

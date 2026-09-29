@@ -72,6 +72,7 @@ void Rules::reset() {
     fullmoveNumber_ = 1;
     recomputeKingPositions();
     recomputeHash();
+    recomputePieceCounts();
     repetitionHistory_.clear();
     repetitionHistory_.push_back(repetitionKey());
 }
@@ -632,9 +633,22 @@ bool Rules::hasLegalMove(Color color) const {
 void Rules::applyMoveUnchecked(const Move &move) {
     const quint64 oldCastling = castlingHash();
 
+    // Toggles a piece in the position key and, for a pawn, in the pawn key too.
+    const auto toggle = [this](const Piece &piece, int row, int column) {
+        const quint64 key =
+            zobristPieceKey(piece.color, piece.type, row, column);
+        hash_ ^= key;
+        if (piece.type == PieceType::Pawn) {
+            pawnHash_ ^= key;
+        }
+    };
+    const auto isCountedPiece = [](PieceType type) {
+        return type != PieceType::Pawn && type != PieceType::King &&
+               type != PieceType::None;
+    };
+
     Piece movingPiece = *board_[move.from.row][move.from.column];
-    hash_ ^= zobristPieceKey(movingPiece.color, movingPiece.type, move.from.row,
-                             move.from.column);
+    toggle(movingPiece, move.from.row, move.from.column);
     board_[move.from.row][move.from.column].reset();
 
     const bool castling = movingPiece.type == PieceType::King &&
@@ -646,27 +660,26 @@ void Rules::applyMoveUnchecked(const Move &move) {
     if (enPassant) {
         const auto &captured = board_[move.from.row][move.to.column];
         if (captured.has_value()) {
-            hash_ ^= zobristPieceKey(captured->color, captured->type,
-                                     move.from.row, move.to.column);
+            toggle(*captured, move.from.row, move.to.column);
         }
         board_[move.from.row][move.to.column].reset();
     } else if (board_[move.to.row][move.to.column].has_value()) {
         const auto &captured = board_[move.to.row][move.to.column];
-        hash_ ^= zobristPieceKey(captured->color, captured->type, move.to.row,
-                                 move.to.column);
+        toggle(*captured, move.to.row, move.to.column);
+        if (isCountedPiece(captured->type)) {
+            --pieceCounts_[colorIndex(captured->color)];
+        }
     }
 
     if (castling) {
         const int rookFromColumn = move.to.column > move.from.column ? 7 : 0;
         const int rookToColumn = move.to.column > move.from.column ? 5 : 3;
         Piece rook = *board_[move.from.row][rookFromColumn];
-        hash_ ^= zobristPieceKey(rook.color, rook.type, move.from.row,
-                                 rookFromColumn);
+        toggle(rook, move.from.row, rookFromColumn);
         board_[move.from.row][rookFromColumn].reset();
         rook.hasMoved = true;
         board_[move.from.row][rookToColumn] = rook;
-        hash_ ^= zobristPieceKey(rook.color, rook.type, move.from.row,
-                                 rookToColumn);
+        toggle(rook, move.from.row, rookToColumn);
     }
 
     movingPiece.hasMoved = true;
@@ -675,11 +688,13 @@ void Rules::applyMoveUnchecked(const Move &move) {
         movingPiece.type = move.promotion == PieceType::None
                                 ? PieceType::Queen
                                 : move.promotion;
+        if (isCountedPiece(movingPiece.type)) {
+            ++pieceCounts_[colorIndex(movingPiece.color)];
+        }
     }
 
     board_[move.to.row][move.to.column] = movingPiece;
-    hash_ ^= zobristPieceKey(movingPiece.color, movingPiece.type, move.to.row,
-                             move.to.column);
+    toggle(movingPiece, move.to.row, move.to.column);
 
     if (movingPiece.type == PieceType::King) {
         kingPosition_[colorIndex(movingPiece.color)] = move.to;
@@ -948,6 +963,7 @@ bool Rules::loadFen(const QString &fen) {
     kingPosition_[0] = whiteKing;
     kingPosition_[1] = blackKing;
     recomputeHash();
+    recomputePieceCounts();
     repetitionHistory_.clear();
     repetitionHistory_.push_back(repetitionKey());
     return true;
@@ -1588,6 +1604,8 @@ Rules Rules::detachedCopy() const {
     copy.fullmoveNumber_ = fullmoveNumber_;
     copy.trackRepetition_ = false;
     copy.hash_ = hash_;
+    copy.pawnHash_ = pawnHash_;
+    copy.pieceCounts_ = pieceCounts_;
     copy.kingPosition_ = kingPosition_;
     return copy;
 }
@@ -1825,6 +1843,8 @@ bool Rules::makeMove(const Move &move, Undo &undo) {
     undo.fullmoveNumber = fullmoveNumber_;
     undo.hadLastMove = lastMove_.has_value();
     undo.previousHash = hash_;
+    undo.previousPawnHash = pawnHash_;
+    undo.previousPieceCounts = pieceCounts_;
     if (undo.hadLastMove) {
         undo.lastMove = *lastMove_;
     }
@@ -1907,6 +1927,8 @@ void Rules::unmakeMove(const Move &move, const Undo &undo) {
         lastMove_.reset();
     }
     hash_ = undo.previousHash;
+    pawnHash_ = undo.previousPawnHash;
+    pieceCounts_ = undo.previousPieceCounts;
     if (undo.pushedRepetition) {
         repetitionHistory_.pop_back();
     }
@@ -1964,6 +1986,14 @@ quint64 Rules::zobristKey() const {
     return hash_;
 }
 
+quint64 Rules::pawnKey() const {
+    return pawnHash_;
+}
+
+bool Rules::hasNonPawnMaterial(Color color) const {
+    return pieceCounts_[colorIndex(color)] > 0;
+}
+
 quint64 Rules::castlingHash() const {
     const auto canCastle = [this](Color color, int rookColumn) {
         const int homeRow = color == Color::White ? 7 : 0;
@@ -2004,14 +2034,31 @@ quint64 Rules::enPassantHash() const {
     return 0;
 }
 
+void Rules::recomputePieceCounts() {
+    pieceCounts_ = {0, 0};
+    for (const auto &row : board_) {
+        for (const auto &square : row) {
+            if (square.has_value() && square->type != PieceType::Pawn &&
+                square->type != PieceType::King) {
+                ++pieceCounts_[colorIndex(square->color)];
+            }
+        }
+    }
+}
+
 void Rules::recomputeHash() {
     hash_ = 0;
+    pawnHash_ = 0;
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
             const auto &square = board_[row][column];
             if (square.has_value()) {
-                hash_ ^= zobristPieceKey(square->color, square->type, row,
-                                         column);
+                const quint64 key = zobristPieceKey(square->color, square->type,
+                                                    row, column);
+                hash_ ^= key;
+                if (square->type == PieceType::Pawn) {
+                    pawnHash_ ^= key;
+                }
             }
         }
     }

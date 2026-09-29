@@ -246,6 +246,7 @@ private slots:
     void testPassedPawnBonusGrowsWithRank();
     void testPassedPawnKingsAndRoad();
     void testPhalanxPawns();
+    void testPawnCacheIsTransparent();
     void testEndgameScalingFlattensUnwinnableAdvantages();
     void testRookEndingScaleFollowsThePawnFlanks();
     void testUnstoppablePassedPawn();
@@ -2079,6 +2080,75 @@ void HeuristicEvalTest::testPhalanxPawns() {
     // An enemy pawn facing a pawn of the phalanx halves that pawn's bonus.
     QCOMPARE(phalanx(QStringLiteral("4k3/8/3p4/8/3PP3/8/8/4K3 w - - 0 1")),
              3 * 6 + 3 * 6 / 2 - 0);
+}
+
+void HeuristicEvalTest::testPawnCacheIsTransparent() {
+    HeuristicEval::resetParams();
+    const auto sameBreakdown = [](const HeuristicEval::EvalBreakdown &a,
+                                  const HeuristicEval::EvalBreakdown &b) {
+        return a.material == b.material && a.placement == b.placement &&
+               a.pawns == b.pawns && a.space == b.space &&
+               a.mobility == b.mobility && a.kingSafety == b.kingSafety &&
+               a.threats == b.threats && a.outposts == b.outposts &&
+               a.badBishops == b.badBishops &&
+               a.connectedRooks == b.connectedRooks && a.mopUp == b.mopUp &&
+               a.tempo == b.tempo && a.inCheck == b.inCheck &&
+               a.scaleFactor == b.scaleFactor && a.total == b.total;
+    };
+
+    // Pairs of positions with the same pawns and different pieces: the second
+    // one finds the pawn entry the first one stored, and has to score what it
+    // scores from a cold cache.
+    const char *pairs[][2] = {
+        {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5",
+         "r1bqk2r/pppp1ppp/5n2/2b1p3/2B1P3/2n2N2/PPPP1PPP/R1BQ1RK1 b kq - 4 5"},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+         "8/2p5/3p4/1P5r/1R3p1k/8/4P1P1/K7 w - - 0 1"},
+        {"1r4k1/5pp1/3P4/3K4/8/8/5PP1/1R6 w - - 0 1",
+         "1r4k1/5pp1/3P4/8/8/8/5PP1/1R4K1 w - - 0 1"},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+         "r3k2r/p1ppqpb1/bn2pnp1/3P4/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"},
+    };
+    for (const auto &pair : pairs) {
+        Rules first;
+        Rules second;
+        QVERIFY2(first.loadFen(QString::fromLatin1(pair[0])), pair[0]);
+        QVERIFY2(second.loadFen(QString::fromLatin1(pair[1])), pair[1]);
+
+        HeuristicSearch::clearCaches();
+        const auto coldFirst = HeuristicEval::evaluateBreakdown(first);
+        HeuristicSearch::clearCaches();
+        const auto coldSecond = HeuristicEval::evaluateBreakdown(second);
+
+        // Cold, then warm (the same position again), then through the entry
+        // the sibling position left behind.
+        HeuristicSearch::clearCaches();
+        QVERIFY(sameBreakdown(HeuristicEval::evaluateBreakdown(first), coldFirst));
+        QVERIFY(sameBreakdown(HeuristicEval::evaluateBreakdown(first), coldFirst));
+        QVERIFY(sameBreakdown(HeuristicEval::evaluateBreakdown(second), coldSecond));
+        QVERIFY(sameBreakdown(HeuristicEval::evaluateBreakdown(first), coldFirst));
+    }
+
+    // The first pair does share its pawns, which is what makes it a test of the
+    // cache and not of two independent lookups.
+    Rules a;
+    Rules b;
+    QVERIFY(a.loadFen(QString::fromLatin1(pairs[0][0])));
+    QVERIFY(b.loadFen(QString::fromLatin1(pairs[0][1])));
+    QCOMPARE(a.pawnKey(), b.pawnKey());
+
+    // A change of the weights drops the entries, so a new weight is not
+    // answered from the old one.
+    Rules pawns;
+    QVERIFY(pawns.loadFen(QStringLiteral("1n2k3/8/8/8/4P3/8/8/1N2K3 w - - 0 1")));
+    const int before = HeuristicEval::evaluateBreakdown(pawns).pawns;
+    HeuristicEval::EvalParams tuned = HeuristicEval::params();
+    tuned.isolatedPawnPenaltyMG += 30;
+    tuned.isolatedPawnPenaltyEG += 30;
+    HeuristicEval::setParams(tuned);
+    QVERIFY(HeuristicEval::evaluateBreakdown(pawns).pawns < before);
+    HeuristicEval::resetParams();
+    QCOMPARE(HeuristicEval::evaluateBreakdown(pawns).pawns, before);
 }
 
 QTEST_MAIN(HeuristicEvalTest)

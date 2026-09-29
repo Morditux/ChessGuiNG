@@ -76,6 +76,7 @@ private slots:
     void testPerft();
     void testZobristHash();
     void testNullMovePassesTheTurn();
+    void testPawnKeyAndPieceCountsFollowTheMoves();
     void testFenStartPos();
     void testFenMidGame();
     void testFenEndgame();
@@ -1471,6 +1472,77 @@ void RulesTest::testArrowNavigationNeverMovesTheFocus() {
     QWidget *stepForwardButton = toolBar->widgetForAction(stepForwardAction);
     QVERIFY(stepForwardButton != nullptr);
     QCOMPARE(stepForwardButton->focusPolicy(), Qt::NoFocus);
+}
+
+void RulesTest::testPawnKeyAndPieceCountsFollowTheMoves() {
+    // Random playouts, with promotions, captures, en passant and castling among
+    // them: after every move the incrementally kept pawn key and piece counters
+    // equal what a position rebuilt from its FEN reports, and unmaking every
+    // move gives the starting values back.
+    const QStringList starts = {
+        QStringLiteral("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+        QStringLiteral("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"),
+        QStringLiteral("r3k2r/1P4P1/8/8/8/8/1p4p1/R3K2R w KQkq - 0 1"),
+        QStringLiteral("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1"),
+    };
+    quint32 seed = 12345;
+    const auto next = [&seed](int bound) {
+        seed = seed * 1664525u + 1013904223u;
+        return static_cast<int>((seed >> 8) % static_cast<quint32>(bound));
+    };
+
+    for (const QString &start : starts) {
+        Rules rules;
+        QVERIFY(rules.loadFen(start));
+        rules.setTrackRepetition(false);
+        const quint64 initialPawnKey = rules.pawnKey();
+        const bool initialWhite = rules.hasNonPawnMaterial(Rules::Color::White);
+        const bool initialBlack = rules.hasNonPawnMaterial(Rules::Color::Black);
+
+        std::vector<std::pair<Rules::Move, Rules::Undo>> played;
+        for (int ply = 0; ply < 120; ++ply) {
+            Rules::Move moves[256];
+            const int count = rules.generatePseudoLegalMoves(moves, 256);
+            bool made = false;
+            for (int attempt = 0; attempt < count && !made; ++attempt) {
+                const Rules::Move move = moves[(next(count) + attempt) % count];
+                Rules::Undo undo;
+                if (rules.makeMove(move, undo)) {
+                    played.emplace_back(move, undo);
+                    made = true;
+                }
+            }
+            if (!made) {
+                break;
+            }
+            Rules rebuilt;
+            QVERIFY(rebuilt.loadFen(rules.toFen()));
+            QCOMPARE(rules.pawnKey(), rebuilt.pawnKey());
+            QCOMPARE(rules.hasNonPawnMaterial(Rules::Color::White),
+                     rebuilt.hasNonPawnMaterial(Rules::Color::White));
+            QCOMPARE(rules.hasNonPawnMaterial(Rules::Color::Black),
+                     rebuilt.hasNonPawnMaterial(Rules::Color::Black));
+        }
+        while (!played.empty()) {
+            rules.unmakeMove(played.back().first, played.back().second);
+            played.pop_back();
+        }
+        QCOMPARE(rules.pawnKey(), initialPawnKey);
+        QCOMPARE(rules.hasNonPawnMaterial(Rules::Color::White), initialWhite);
+        QCOMPARE(rules.hasNonPawnMaterial(Rules::Color::Black), initialBlack);
+    }
+
+    // Only pawns move the pawn key: a knight move leaves it alone, a null move
+    // too, and two positions with the same pawns share it.
+    Rules rules;
+    const quint64 key = rules.pawnKey();
+    QVERIFY(rules.tryMove({7, 6}, {5, 5}));
+    QCOMPARE(rules.pawnKey(), key);
+    QVERIFY(rules.tryMove({1, 4}, {3, 4}));
+    QVERIFY(rules.pawnKey() != key);
+    Rules other;
+    QVERIFY(other.loadFen(QStringLiteral("4k3/pppp1ppp/8/4p3/8/8/PPPPPPPP/4K3 w - - 0 1")));
+    QCOMPARE(other.pawnKey(), rules.pawnKey());
 }
 
 QTEST_MAIN(RulesTest)

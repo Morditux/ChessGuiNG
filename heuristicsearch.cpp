@@ -20,7 +20,6 @@ using HeuristicSearch::evaluateBoard;
 using HeuristicSearch::hasAnyLegalMove;
 using HeuristicSearch::isInside;
 using HeuristicSearch::signFor;
-using HeuristicSearch::snapshotBoard;
 
 // Mate scores sit far below the classical score range, so a searched mate is
 // never confused with a large material advantage.
@@ -529,7 +528,7 @@ bool moveCaptures(const Rules &rules, const Rules::Move &move) {
 }
 
 int seeValue(const Rules &rules, const Rules::Move &move) {
-    Board board = snapshotBoard(rules);
+    Board board = rules.board();
 
     const auto &victim = board[move.to.row][move.to.column];
     const auto &mover = board[move.from.row][move.from.column];
@@ -675,8 +674,7 @@ int leafScore(const Rules &rules, bool inCheck) {
     const quint64 key = rules.zobristKey();
     int white = 0;
     if (!EvalCache::instance().lookup(key, &white)) {
-        const Board board = snapshotBoard(rules);
-        white = evaluateBoard(board, side, inCheck, nullptr);
+        white = evaluateBoard(rules.board(), side, inCheck, rules.pawnKey(), nullptr);
         EvalCache::instance().store(key, white);
     }
     return std::clamp(signFor(side) * white, -MaxEvalScore, MaxEvalScore);
@@ -684,27 +682,6 @@ int leafScore(const Rules &rules, bool inCheck) {
 
 // Defined further down; the draw test needs it to tell a checkmate from a
 // position that is merely in check when the fifty-move clock has run out.
-
-// Null-move pruning is unsound in a position that can only get worse by being
-// forced to move, so it is limited to sides that still hold a piece next to
-// their pawns and their king.
-bool hasNonPawnMaterial(const Rules &rules, Rules::Color side) {
-    for (int row = 0; row < 8; ++row) {
-        for (int column = 0; column < 8; ++column) {
-            const auto piece = rules.pieceAt({row, column});
-            if (!piece.has_value() || piece->color != side) {
-                continue;
-            }
-            if (piece->type == Rules::PieceType::Knight ||
-                piece->type == Rules::PieceType::Bishop ||
-                piece->type == Rules::PieceType::Rook ||
-                piece->type == Rules::PieceType::Queen) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
 
 // Draws that depend on the line that reached the position: the fifty-move rule
 // and a repetition of a position already met by the same side to move earlier
@@ -890,7 +867,7 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
     // in a position with nothing but pawns left (where being forced to move is
     // the whole problem) and near the mate range, where a bound would be a lie.
     if (!inCheck && depth >= 3 && std::abs(beta) < MateThreshold &&
-        !state.nullMove && hasNonPawnMaterial(rules, side)) {
+        !state.nullMove && rules.hasNonPawnMaterial(side)) {
         Rules::NullUndo nullUndo;
         if (rules.makeNullMove(nullUndo)) {
             const int previousNullPly = state.lastNullPly;
@@ -1411,6 +1388,7 @@ bool probeTranspositionMove(quint64 key, Rules::Move &outMove) {
 void clearCaches() {
     TranspositionTable::instance().clear();
     EvalCache::instance().clear();
+    clearPawnCache();
 }
 
 } // namespace

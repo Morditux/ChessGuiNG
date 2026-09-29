@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdlib>
@@ -21,7 +22,6 @@ using HeuristicSearch::evaluateBoard;
 using HeuristicSearch::hasAnyLegalMove;
 using HeuristicSearch::isInside;
 using HeuristicSearch::signFor;
-using HeuristicSearch::snapshotBoard;
 
 namespace {
 
@@ -769,12 +769,48 @@ int unstoppablePasserMoves(const BoardAnalysis &analysis, Rules::Color color,
     return best;
 }
 
-TaperedScore evaluatePawnStructure(const Board &board,
-                                   const BoardAnalysis &analysis,
-                                   const AttackInfo &whiteAttacks,
-                                   const AttackInfo &blackAttacks,
-                                   Rules::Color sideToMove) {
-    TaperedScore score;
+// Space: the safe central squares a side's pawns control in the enemy half. A
+// square counts when a friendly pawn attacks it, no enemy pawn does, and it
+// lies on one of the four central files past the middle of the board. More
+// space means the pieces behind the pawns have more room to operate.
+TaperedScore evaluateSpace(const AttackMap &whitePawnAttacks,
+                           const AttackMap &blackPawnAttacks) {
+    int white = 0;
+    int black = 0;
+    for (int row = 0; row < 8; ++row) {
+        for (int column = 2; column <= 5; ++column) {
+            if (row <= 3) {
+                if (whitePawnAttacks[row][column] &&
+                    !blackPawnAttacks[row][column]) {
+                    ++white;
+                }
+            } else if (blackPawnAttacks[row][column] &&
+                       !whitePawnAttacks[row][column]) {
+                ++black;
+            }
+        }
+    }
+    const int advantage = white - black;
+    return {advantage * P.spaceBonusMG, advantage * P.spaceBonusEG};
+}
+
+// What the pawns alone determine: it is a function of where the pawns stand, so
+// it is kept by the pawn key and shared by every position with the same pawns,
+// whatever the pieces do.
+struct PawnEntry {
+    // Doubled, isolated, supported, phalanx, backward and candidate pawns.
+    TaperedScore structure;
+    // The safe central squares the pawns control.
+    TaperedScore space;
+    // One bit per square (row * 8 + column) with a passed pawn on it.
+    quint64 passed = 0;
+};
+
+PawnEntry computePawnEntry(const BoardAnalysis &analysis,
+                           const AttackMap &whitePawnAttacks,
+                           const AttackMap &blackPawnAttacks) {
+    PawnEntry entry;
+    TaperedScore &score = entry.structure;
 
     for (const Rules::Color color :
          {Rules::Color::White, Rules::Color::Black}) {
@@ -811,8 +847,8 @@ TaperedScore evaluatePawnStructure(const Board &board,
         // A friendly pawn attacks the square the pawn stands on exactly when
         // it is defended by one.
         const AttackMap &friendlyPawnAttacks =
-            piece.color == Rules::Color::White ? whiteAttacks.pawnSquares
-                                               : blackAttacks.pawnSquares;
+            piece.color == Rules::Color::White ? whitePawnAttacks
+                                               : blackPawnAttacks;
         const bool supportedByPawn =
             friendlyPawnAttacks[piece.row][piece.column];
         if (supportedByPawn) {
@@ -828,6 +864,9 @@ TaperedScore evaluatePawnStructure(const Board &board,
             (piece.column == 7 || ownCounts[piece.column + 1] == 0);
 
         const bool passed = isPassedPawn(analysis, piece);
+        if (passed) {
+            entry.passed |= quint64{1} << (piece.row * 8 + piece.column);
+        }
 
         const auto &enemyPawnRows = piece.color == Rules::Color::White
                                         ? analysis.blackPawnRows
@@ -859,13 +898,17 @@ TaperedScore evaluatePawnStructure(const Board &board,
                                      : bonus);
         }
 
+        if (passed) {
+            continue;
+        }
+
         // A backward pawn is not isolated, passed or supported, has no friendly
         // pawn on an adjacent file level with it or behind it that could ever
         // come to its support, and cannot advance safely: the square in front
         // of it is covered by an enemy pawn. A pair of neighbours on the same
         // row therefore is not backward, and a distant enemy pawn no longer
         // makes a pawn backward by itself.
-        if (!isolated && !supportedByPawn && !passed) {
+        if (!isolated && !supportedByPawn) {
             int supporters = 0;
             for (const int columnDelta : {-1, 1}) {
                 const int file = piece.column + columnDelta;
@@ -875,8 +918,8 @@ TaperedScore evaluatePawnStructure(const Board &board,
                 }
             }
             const AttackMap &enemyPawnAttacks =
-                piece.color == Rules::Color::White ? blackAttacks.pawnSquares
-                                                   : whiteAttacks.pawnSquares;
+                piece.color == Rules::Color::White ? blackPawnAttacks
+                                                   : whitePawnAttacks;
             const int stopRow = piece.row + direction;
             if (supporters == 0 && isInside(stopRow, piece.column) &&
                 enemyPawnAttacks[stopRow][piece.column]) {
@@ -885,149 +928,244 @@ TaperedScore evaluatePawnStructure(const Board &board,
             }
         }
 
-        if (passed) {
-            const int rank = relativeRank(piece.color, piece.row);
-            TaperedScore bonus = passedPawnRankBonus(rank);
+        // A candidate is a pawn on a file the enemy has no pawn ahead on, that
+        // is not passed only because enemy pawns guard its path from the
+        // adjacent files, and that has at least as many friendly pawns beside
+        // it or behind it on those files (helpers) as enemy pawns ahead of it
+        // (sentinels). A pawn blocked on its own file is no candidate, and
+        // neither is the rear pawn of a doubled pair.
+        if (!(enemyPawnRows[piece.column] & rowsInFront) &&
+            !(ownPawnRows[piece.column] & rowsInFront)) {
+            int helpers = 0;
+            int sentinels = 0;
+            for (const int columnDelta : {-1, 1}) {
+                const int file = piece.column + columnDelta;
+                if (file < 0 || file > 7) {
+                    continue;
+                }
+                helpers += std::popcount(static_cast<unsigned>(
+                    ownPawnRows[file] & rowsBehindOrLevel));
+                sentinels += std::popcount(static_cast<unsigned>(
+                    enemyPawnRows[file] & rowsInFront));
+            }
+            if (helpers >= sentinels) {
+                const int rank = relativeRank(piece.color, piece.row);
+                score += sign * TaperedScore{
+                                    P.candidatePawnBonusMG +
+                                        rank * P.candidatePawnRankBonusMG,
+                                    P.candidatePawnBonusEG +
+                                        rank * P.candidatePawnRankBonusEG};
+            }
+        }
+    }
 
-            const AttackMap &enemyAttacks =
-                piece.color == Rules::Color::White ? blackAttacks.squares
-                                                   : whiteAttacks.squares;
-            const int aheadRow = piece.row + direction;
-            if (isInside(aheadRow, piece.column)) {
-                if (board[aheadRow][piece.column].has_value()) {
-                    bonus -= TaperedScore{P.passedPawnBlockedPenaltyMG,
-                                          P.passedPawnBlockedPenaltyEG};
-                } else if (enemyAttacks[aheadRow][piece.column]) {
-                    // The advance square is empty but controlled by an enemy
-                    // piece, so the pawn cannot step forward safely.
-                    bonus -= TaperedScore{P.passedPawnControlledPenaltyMG,
-                                          P.passedPawnControlledPenaltyEG};
+    entry.space = evaluateSpace(whitePawnAttacks, blackPawnAttacks);
+    return entry;
+}
+
+// The passed pawns, whose worth depends on the pieces around them: what blocks
+// or guards the road, the rooks behind them and the kings, plus the pawn no
+// defender can catch.
+TaperedScore evaluatePassedPawns(const Board &board,
+                                 const BoardAnalysis &analysis,
+                                 const AttackInfo &whiteAttacks,
+                                 const AttackInfo &blackAttacks,
+                                 Rules::Color sideToMove, quint64 passed) {
+    TaperedScore score;
+    for (int index = 0; index < analysis.pieceCount && passed != 0; ++index) {
+        const PieceOnBoard &piece = analysis.pieces[index];
+        if (piece.type != Rules::PieceType::Pawn ||
+            !(passed & (quint64{1} << (piece.row * 8 + piece.column)))) {
+            continue;
+        }
+
+        const int sign = signFor(piece.color);
+        const int direction = forwardDirection(piece.color);
+        const int rank = relativeRank(piece.color, piece.row);
+        TaperedScore bonus = passedPawnRankBonus(rank);
+
+        const AttackMap &enemyAttacks =
+            piece.color == Rules::Color::White ? blackAttacks.squares
+                                               : whiteAttacks.squares;
+        const int aheadRow = piece.row + direction;
+        if (isInside(aheadRow, piece.column)) {
+            if (board[aheadRow][piece.column].has_value()) {
+                bonus -= TaperedScore{P.passedPawnBlockedPenaltyMG,
+                                      P.passedPawnBlockedPenaltyEG};
+            } else if (enemyAttacks[aheadRow][piece.column]) {
+                // The advance square is empty but controlled by an enemy
+                // piece, so the pawn cannot step forward safely.
+                bonus -= TaperedScore{P.passedPawnControlledPenaltyMG,
+                                      P.passedPawnControlledPenaltyEG};
+            }
+        }
+
+        // A rook belongs behind a passed pawn: the owner's rook escorts it
+        // to promotion, an enemy rook blockades it from behind.
+        if (hasRookBehindPawn(board, piece, piece.color)) {
+            bonus += TaperedScore{P.passedPawnRookBehindMG,
+                                  P.passedPawnRookBehindEG};
+        }
+        if (hasRookBehindPawn(board, piece, opposite(piece.color))) {
+            bonus -= TaperedScore{P.passedPawnEnemyRookBehindMG,
+                                  P.passedPawnEnemyRookBehindEG};
+        }
+
+        // The road to promotion: free of pieces and of enemy attacks, or at
+        // least a safe stop square. Only advanced pawns get it, in
+        // proportion to how far past the third rank they are.
+        const int advance = std::max(0, rank - 3);
+        if (advance > 0) {
+            bool pathFree = true;
+            bool stopSafe = true;
+            for (int row = piece.row + direction; isInside(row, piece.column);
+                 row += direction) {
+                const bool blocked = board[row][piece.column].has_value() ||
+                                     enemyAttacks[row][piece.column];
+                if (blocked) {
+                    pathFree = false;
+                    stopSafe = stopSafe && row != piece.row + direction;
                 }
             }
-
-            // A rook belongs behind a passed pawn: the owner's rook escorts it
-            // to promotion, an enemy rook blockades it from behind.
-            if (hasRookBehindPawn(board, piece, piece.color)) {
-                bonus += TaperedScore{P.passedPawnRookBehindMG,
-                                      P.passedPawnRookBehindEG};
+            if (pathFree) {
+                bonus += advance * TaperedScore{P.passedPawnFreePathMG,
+                                                P.passedPawnFreePathEG};
+            } else if (stopSafe) {
+                bonus += advance * TaperedScore{P.passedPawnSafeStopMG,
+                                                P.passedPawnSafeStopEG};
             }
-            if (hasRookBehindPawn(
-                    board, piece,
-                    piece.color == Rules::Color::White ? Rules::Color::Black
-                                                       : Rules::Color::White)) {
-                bonus -= TaperedScore{P.passedPawnEnemyRookBehindMG,
-                                      P.passedPawnEnemyRookBehindEG};
-            }
+        }
 
-            // The road to promotion: free of pieces and of enemy attacks, or at
-            // least a safe stop square. Only advanced pawns get it, in
-            // proportion to how far past the third rank they are.
-            const int advance = std::max(0, rank - 3);
-            if (advance > 0) {
-                bool pathFree = true;
-                bool stopSafe = true;
-                for (int row = piece.row + direction; isInside(row, piece.column);
-                     row += direction) {
-                    const bool blocked = board[row][piece.column].has_value() ||
-                                         enemyAttacks[row][piece.column];
-                    if (blocked) {
-                        pathFree = false;
-                        stopSafe = stopSafe && row != piece.row + direction;
-                    }
-                }
-                if (pathFree) {
-                    bonus += advance * TaperedScore{P.passedPawnFreePathMG,
-                                                    P.passedPawnFreePathEG};
-                } else if (stopSafe) {
-                    bonus += advance * TaperedScore{P.passedPawnSafeStopMG,
-                                                    P.passedPawnSafeStopEG};
-                }
-            }
+        score += sign * TaperedScore{std::max(bonus.middleGame, 0),
+                                     std::max(bonus.endGame, 0)};
 
-            score += sign *
-                     TaperedScore{std::max(bonus.middleGame, 0),
-                                  std::max(bonus.endGame, 0)};
-
-            // Kings decide a passed pawn in the endgame: the enemy king is
-            // better away from the square in front of it, the own king near.
-            if (advance > 0) {
-                const bool white = piece.color == Rules::Color::White;
-                const int ownKingRow =
-                    white ? analysis.whiteKingRow : analysis.blackKingRow;
-                const int ownKingColumn =
-                    white ? analysis.whiteKingColumn : analysis.blackKingColumn;
-                const int enemyKingRow =
-                    white ? analysis.blackKingRow : analysis.whiteKingRow;
-                const int enemyKingColumn =
-                    white ? analysis.blackKingColumn : analysis.whiteKingColumn;
-                if (ownKingRow != NoKingRow && enemyKingRow != NoKingRow) {
-                    const auto steps = [&](int kingRow, int kingColumn) {
-                        return std::min(5, std::max(std::abs(kingRow - aheadRow),
-                                                    std::abs(kingColumn -
-                                                             piece.column)));
-                    };
-                    score += sign *
-                             TaperedScore{0, advance *
-                                                 (P.passedKingDistanceEnemy *
-                                                      steps(enemyKingRow,
-                                                            enemyKingColumn) -
-                                                  P.passedKingDistanceOwn *
-                                                      steps(ownKingRow,
-                                                            ownKingColumn))};
-                }
-            }
-        } else {
-            // A candidate is a pawn on a file the enemy has no pawn ahead on,
-            // that is not passed only because enemy pawns guard its path from
-            // the adjacent files, and that has at least as many friendly pawns
-            // beside it or behind it on those files (helpers) as enemy pawns
-            // ahead of it (sentinels). A pawn blocked on its own file is no
-            // candidate, and neither is the rear pawn of a doubled pair.
-            if (!(enemyPawnRows[piece.column] & rowsInFront) &&
-                !(ownPawnRows[piece.column] & rowsInFront)) {
-                int helpers = 0;
-                int sentinels = 0;
-                for (const int columnDelta : {-1, 1}) {
-                    const int file = piece.column + columnDelta;
-                    if (file < 0 || file > 7) {
-                        continue;
-                    }
-                    helpers += std::popcount(static_cast<unsigned>(
-                        ownPawnRows[file] & rowsBehindOrLevel));
-                    sentinels += std::popcount(static_cast<unsigned>(
-                        enemyPawnRows[file] & rowsInFront));
-                }
-                if (helpers >= sentinels) {
-                    const int rank = relativeRank(piece.color, piece.row);
-                    score += sign * TaperedScore{
-                                        P.candidatePawnBonusMG +
-                                            rank * P.candidatePawnRankBonusMG,
-                                        P.candidatePawnBonusEG +
-                                            rank * P.candidatePawnRankBonusEG};
-                }
+        // Kings decide a passed pawn in the endgame: the enemy king is better
+        // away from the square in front of it, the own king near.
+        if (advance > 0) {
+            const bool white = piece.color == Rules::Color::White;
+            const int ownKingRow =
+                white ? analysis.whiteKingRow : analysis.blackKingRow;
+            const int ownKingColumn =
+                white ? analysis.whiteKingColumn : analysis.blackKingColumn;
+            const int enemyKingRow =
+                white ? analysis.blackKingRow : analysis.whiteKingRow;
+            const int enemyKingColumn =
+                white ? analysis.blackKingColumn : analysis.whiteKingColumn;
+            if (ownKingRow != NoKingRow && enemyKingRow != NoKingRow) {
+                const auto steps = [&](int kingRow, int kingColumn) {
+                    return std::min(5, std::max(std::abs(kingRow - aheadRow),
+                                                std::abs(kingColumn -
+                                                         piece.column)));
+                };
+                score += sign *
+                         TaperedScore{0, advance *
+                                             (P.passedKingDistanceEnemy *
+                                                  steps(enemyKingRow,
+                                                        enemyKingColumn) -
+                                              P.passedKingDistanceOwn *
+                                                  steps(ownKingRow,
+                                                        ownKingColumn))};
             }
         }
     }
 
     // A passed pawn the defender cannot catch decides the game: the side whose
     // such pawn promotes first is paid for it, and equal pawns cancel.
-    const int whiteMoves =
-        unstoppablePasserMoves(analysis, Rules::Color::White, sideToMove);
-    const int blackMoves =
-        unstoppablePasserMoves(analysis, Rules::Color::Black, sideToMove);
-    const auto unstoppableBonus = [](int moves) {
-        return TaperedScore{0, std::max(0, P.unstoppablePasserBonus -
-                                               P.unstoppablePasserPerMove * moves)};
-    };
-    if (whiteMoves != 0 && (blackMoves == 0 || whiteMoves < blackMoves)) {
-        score += unstoppableBonus(whiteMoves);
-    } else if (blackMoves != 0 &&
-               (whiteMoves == 0 || blackMoves < whiteMoves)) {
-        score -= unstoppableBonus(blackMoves);
+    if (passed != 0) {
+        const int whiteMoves =
+            unstoppablePasserMoves(analysis, Rules::Color::White, sideToMove);
+        const int blackMoves =
+            unstoppablePasserMoves(analysis, Rules::Color::Black, sideToMove);
+        const auto unstoppableBonus = [](int moves) {
+            return TaperedScore{0, std::max(0, P.unstoppablePasserBonus -
+                                                   P.unstoppablePasserPerMove *
+                                                       moves)};
+        };
+        if (whiteMoves != 0 && (blackMoves == 0 || whiteMoves < blackMoves)) {
+            score += unstoppableBonus(whiteMoves);
+        } else if (blackMoves != 0 &&
+                   (whiteMoves == 0 || blackMoves < whiteMoves)) {
+            score -= unstoppableBonus(blackMoves);
+        }
     }
     return score;
 }
 
+
+// Direct-mapped cache of the pawn entries, keyed by `Rules::pawnKey()`. The
+// pawn structure changes only when a pawn moves or is captured, so the same
+// entry serves the many positions of a search that differ by pieces alone. It
+// is filled by any thread without a lock: an entry is three payload words and a
+// key word holding the key XOR the payload, so a slot two threads wrote at once
+// fails the check instead of being read as someone else's entry. The active
+// weights are part of the entry, so it is dropped with the other caches
+// whenever they change.
+class PawnCache {
+public:
+    static PawnCache &instance() {
+        static PawnCache cache;
+        return cache;
+    }
+
+    bool lookup(quint64 key, PawnEntry *entry) const {
+        const Slot &slot = slots_[key & Mask];
+        const quint64 structure = slot.structure.load(std::memory_order_relaxed);
+        const quint64 space = slot.space.load(std::memory_order_relaxed);
+        const quint64 passed = slot.passed.load(std::memory_order_relaxed);
+        const quint64 keyWord = slot.keyWord.load(std::memory_order_relaxed);
+        if ((keyWord ^ structure ^ space ^ passed) != key) {
+            return false;
+        }
+        *entry = unpack(structure, space, passed);
+        return true;
+    }
+
+    void store(quint64 key, const PawnEntry &entry) {
+        Slot &slot = slots_[key & Mask];
+        const quint64 structure = pack(entry.structure);
+        const quint64 space = pack(entry.space);
+        slot.structure.store(structure, std::memory_order_relaxed);
+        slot.space.store(space, std::memory_order_relaxed);
+        slot.passed.store(entry.passed, std::memory_order_relaxed);
+        slot.keyWord.store(key ^ structure ^ space ^ entry.passed,
+                           std::memory_order_relaxed);
+    }
+
+    void clear() {
+        for (Slot &slot : slots_) {
+            slot.structure.store(0, std::memory_order_relaxed);
+            slot.space.store(0, std::memory_order_relaxed);
+            slot.passed.store(0, std::memory_order_relaxed);
+            slot.keyWord.store(0, std::memory_order_relaxed);
+        }
+    }
+
+private:
+    struct Slot {
+        std::atomic<quint64> keyWord{0};
+        std::atomic<quint64> structure{0};
+        std::atomic<quint64> space{0};
+        std::atomic<quint64> passed{0};
+    };
+
+    static quint64 pack(const TaperedScore &score) {
+        return static_cast<quint64>(static_cast<quint32>(score.middleGame)) |
+               (static_cast<quint64>(static_cast<quint32>(score.endGame)) << 32);
+    }
+
+    static PawnEntry unpack(quint64 structure, quint64 space, quint64 passed) {
+        const auto score = [](quint64 word) {
+            return TaperedScore{
+                static_cast<qint32>(static_cast<quint32>(word & 0xFFFFFFFFu)),
+                static_cast<qint32>(static_cast<quint32>(word >> 32))};
+        };
+        return PawnEntry{score(structure), score(space), passed};
+    }
+
+    static constexpr quint64 Bits = 14;
+    static constexpr quint64 Mask = (quint64{1} << Bits) - 1;
+    std::array<Slot, static_cast<std::size_t>(quint64{1} << Bits)> slots_{};
+};
 
 // Threats, outposts and the bad-bishop penalty in one pass over the pieces:
 // they all ask a question about the piece that is already in hand.
@@ -1304,31 +1442,6 @@ TaperedScore kingMobility(const Board &board, const BoardAnalysis &analysis,
         ++moves;
     }
     return moves * mobilityWeight(Rules::PieceType::King);
-}
-
-// Space: the safe central squares a side's pawns control in the enemy half. A
-// square counts when a friendly pawn attacks it, no enemy pawn does, and it
-// lies on one of the four central files past the middle of the board. More
-// space means the pieces behind the pawns have more room to operate.
-TaperedScore evaluateSpace(const AttackMap &whitePawnAttacks,
-                           const AttackMap &blackPawnAttacks) {
-    int white = 0;
-    int black = 0;
-    for (int row = 0; row < 8; ++row) {
-        for (int column = 2; column <= 5; ++column) {
-            if (row <= 3) {
-                if (whitePawnAttacks[row][column] &&
-                    !blackPawnAttacks[row][column]) {
-                    ++white;
-                }
-            } else if (blackPawnAttacks[row][column] &&
-                       !whitePawnAttacks[row][column]) {
-                ++black;
-            }
-        }
-    }
-    const int advantage = white - black;
-    return {advantage * P.spaceBonusMG, advantage * P.spaceBonusEG};
 }
 
 // Chessboard distance from the centre: zero in the middle, three on an edge or
@@ -1643,18 +1756,12 @@ int kpkScore(const BoardAnalysis &analysis, Rules::Color sideToMove) {
 
 namespace HeuristicSearch {
 
-Board snapshotBoard(const Rules &rules) {
-    Board board{};
-    for (int row = 0; row < 8; ++row) {
-        for (int column = 0; column < 8; ++column) {
-            board[row][column] = rules.pieceAt({row, column});
-        }
-    }
-    return board;
+void clearPawnCache() {
+    PawnCache::instance().clear();
 }
 
 int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
-                  HeuristicEval::EvalBreakdown *breakdown) {
+                  quint64 pawnKey, HeuristicEval::EvalBreakdown *breakdown) {
     const BoardAnalysis analysis = analyzeBoard(board);
     if (isInsufficientMaterial(analysis)) {
         return 0;
@@ -1684,9 +1791,17 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
     TaperedScore material;
     TaperedScore placement;
     evaluateMaterialAndPlacement(analysis, &material, &placement);
-    const TaperedScore pawns =
-        evaluatePawnStructure(board, analysis, attacksByWhite, attacksByBlack,
-                              sideToMove);
+    // The pawn-only terms come from the cache when the pawns have been seen
+    // before; only what depends on the pieces is computed every time.
+    PawnEntry pawnEntry;
+    if (!PawnCache::instance().lookup(pawnKey, &pawnEntry)) {
+        pawnEntry = computePawnEntry(analysis, attacksByWhite.pawnSquares,
+                                     attacksByBlack.pawnSquares);
+        PawnCache::instance().store(pawnKey, pawnEntry);
+    }
+    TaperedScore pawns = pawnEntry.structure;
+    pawns += evaluatePassedPawns(board, analysis, attacksByWhite, attacksByBlack,
+                                 sideToMove, pawnEntry.passed);
     // Collected by the attack walk, from each colour's point of view. The king
     // is added here because its safe moves need both attack maps.
     TaperedScore mobility = attacksByWhite.mobility;
@@ -1697,8 +1812,7 @@ int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
                              attacksByWhite.squares);
     const TaperedScore kingSafety =
         evaluateKingSafety(board, analysis, attacksByWhite, attacksByBlack);
-    const TaperedScore space = evaluateSpace(attacksByWhite.pawnSquares,
-                                             attacksByBlack.pawnSquares);
+    const TaperedScore space = pawnEntry.space;
     TaperedScore threats;
     TaperedScore outposts;
     TaperedScore badBishops;
@@ -1837,8 +1951,7 @@ HeuristicEval::EvalBreakdown HeuristicEval::evaluateBreakdown(const Rules &rules
         return breakdown;
     }
 
-    const Board board = snapshotBoard(rules);
-    evaluateBoard(board, sideToMove, inCheck, &breakdown);
+    evaluateBoard(rules.board(), sideToMove, inCheck, rules.pawnKey(), &breakdown);
 
     // Reserve MateScore exclusively for actual checkmates.
     breakdown.total =

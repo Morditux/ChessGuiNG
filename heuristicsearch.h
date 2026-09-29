@@ -15,9 +15,11 @@
 
 namespace HeuristicSearch {
 
-// A plain copy of the position: the evaluation terms and the static exchange
-// evaluation walk this instead of the rules engine, so neither can mutate it.
-using Board = std::array<std::array<std::optional<Rules::Piece>, 8>, 8>;
+// The position as a plain array: the evaluation terms walk it by const reference
+// instead of the rules engine, so they cannot mutate it and pay no copy for it;
+// the static exchange evaluation takes its own copy because it plays the
+// exchange out on it.
+using Board = Rules::Board;
 
 // Moves a position can hold, which sizes every move buffer the evaluator and
 // the search hand to Rules::generatePseudoLegalMoves.
@@ -33,16 +35,19 @@ constexpr int MaxMoves = 256;
     return color == Rules::Color::White ? 1 : -1;
 }
 
-// The static score of a position the caller already holds a board for, in
+// The static score of a position the caller already holds a board for (`pawnKey`
+// is that position's `Rules::pawnKey()`, under which its pawn-only terms are
+// cached), in
 // centipawns from White's point of view, and the same value in `breakdown` with
 // its per-term contributions when the caller wants them. Either half may be
 // ignored: the search reads the return value with a null breakdown, and the
 // evaluator's breakdown entry point reads only the structure.
 int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
-                  HeuristicEval::EvalBreakdown *breakdown);
+                  quint64 pawnKey, HeuristicEval::EvalBreakdown *breakdown);
 
-// Board snapshot of a position, in the form the evaluation terms read.
-[[nodiscard]] Board snapshotBoard(const Rules &rules);
+// Drops the cache of pawn-structure scores the evaluation keeps by pawn key,
+// which the search does together with its own caches.
+void clearPawnCache();
 
 // True when the side to move has at least one legal move, without the full scan
 // `Rules::hasLegalMove` would do.
