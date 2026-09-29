@@ -365,7 +365,10 @@ void HeuristicEvalTest::testPassedPawnAdvantage() {
     // A knight each keeps the position out of the exactly solved king-and-pawn
     // endings, so the pawn is judged by the evaluation terms.
     QVERIFY(rules.loadFen(QStringLiteral("4k1n1/8/8/8/4P3/8/8/4K1N1 w - - 0 1")));
-    QVERIFY(eval.evaluateCentipawns(rules) > 100);
+    // A pawn on the fourth rank with nothing in its way is worth about a pawn
+    // and its move (the endgame square table no longer adds to it in the
+    // middlegame's measure).
+    QVERIFY(eval.evaluateCentipawns(rules) > 90);
 }
 
 void HeuristicEvalTest::testColorAdvantageSign() {
@@ -1151,14 +1154,14 @@ void HeuristicEvalTest::testReferenceScores() {
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 10},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R w KQ - 6 9", -32},
         {"rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", -HeuristicEval::MateScore},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -55},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", -42},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 0},
         {"4k3/8/8/8/4P3/8/8/4K3 w - - 0 1", 0},
-        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 175},
-        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 219},
+        {"2b4k/P7/8/8/8/8/8/K1B5 w - - 0 1", 183},
+        {"4k3/p6p/8/3N4/4P3/8/8/4K3 w - - 0 1", 210},
         {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 165},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -74},
-        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 299},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 b - - 0 1", -60},
+        {"5rk1/1pp2ppp/p1nb4/3p4/2PP4/2N1P3/PP3PPP/2KR3R w - - 0 1", 312},
     };
 
     for (const Reference &reference : references) {
@@ -1186,25 +1189,25 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
     const Reference references[] = {
         {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "e2e4", 2148, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "d2d3",
-         7248, 0},
-        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 82, "e2a6",
-         10109, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 497, "d7c8q", 1933, 0},
+         7246, 0},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 80, "e2a6",
+         9953, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 495, "d7c8q", 1925, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
          85, 1},
-        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 69, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 12, "b4f4", 2178, 0},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 61, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 24, "b4f4", 2418, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 0, "a2a3", 509, 0},
-        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -113, "c6d4",
-         3887, 0},
-        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1081, "e1e2", 16332, 0},
+        {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -110, "c6d4",
+         3901, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1079, "e1e2", 17674, 0},
         {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
          3409, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 0, "e4d5", 119, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 379, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1051, "a7a8q", 171, 0},
-        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1075, "e1e2", 195, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1054, "a7a8q", 170, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1079, "e1e2", 195, 0},
     };
 
     HeuristicEval::resetParams();
@@ -1403,6 +1406,9 @@ void HeuristicEvalTest::testPositionalKnowledge() {
         {"an attack on the castled king (bishop and knight)",
          "r1b2rk1/ppp2ppp/2nq4/6N1/8/1B6/PPP2PPP/R2Q1RK1 w - - 0 1",
          "r1b2rk1/ppp2ppp/2nq4/8/8/8/PPPB1PPP/RN1Q1RK1 w - - 0 1"},
+        {"a knight in the centre of an endgame",
+         "3nk3/pp3ppp/8/8/3N4/8/PP3PPP/4K3 w - - 0 1",
+         "3nk3/pp3ppp/8/8/8/8/PP3PPP/N3K3 w - - 0 1"},
         {"a pawn phalanx",
          "r3k3/pp3ppp/8/8/3PP3/8/PP3PPP/R3K3 w - - 0 1",
          "r3k3/pp3ppp/8/8/3P1P2/8/PP3PPP/R3K3 w - - 0 1"},

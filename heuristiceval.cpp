@@ -161,13 +161,68 @@ constexpr std::array<int, 64> KingEndGamePST = {
    -50,-30,-20,-20,-20,-20,-30,-50
 };
 
-// The endgame table of each piece; the king has its own. Until the endgame
-// shapes are written, a piece is worth the same on a square in both phases.
-constexpr std::array<int, 64> PawnEndGamePST = PawnMiddleGamePST;
-constexpr std::array<int, 64> KnightEndGamePST = KnightMiddleGamePST;
-constexpr std::array<int, 64> BishopEndGamePST = BishopMiddleGamePST;
-constexpr std::array<int, 64> RookEndGamePST = RookMiddleGamePST;
-constexpr std::array<int, 64> QueenEndGamePST = QueenMiddleGamePST;
+// The endgame table of each piece; the king has its own. They are written from
+// the shape of the endgame rather than taken from an engine: a pawn is worth what
+// it has advanced (the seventh rank matches the sixth, as in the middlegame table,
+// the rest of a passed pawn's worth being the passed pawn table's), the minor
+// pieces and the queen want the centre more and more the fewer pieces stand in
+// the way (falling off with the distance from the middle of the board), and a
+// rook only minds the edge files. Each is shifted so that it has the mean of its
+// middlegame table, which leaves the material balance where it was.
+constexpr std::array<int, 64> PawnEndGamePST = {
+      0,   0,   0,   0,   0,   0,   0,   0,
+      0,   0,   0,   0,   0,   0,   0,   0,
+      4,   4,   4,   4,   4,   4,   4,   4,
+     10,  10,  10,  10,  10,  10,  10,  10,
+     18,  18,  18,  18,  18,  18,  18,  18,
+     28,  28,  28,  28,  28,  28,  28,  28,
+     28,  28,  28,  28,  28,  28,  28,  28,
+      0,   0,   0,   0,   0,   0,   0,   0
+};
+
+constexpr std::array<int, 64> KnightEndGamePST = {
+    -27, -22, -19, -17, -17, -19, -22, -27,
+    -22, -17, -12,  -9,  -9, -12, -17, -22,
+    -19, -12,  -6,  -2,  -2,  -6, -12, -19,
+    -17,  -9,  -2,   5,   5,  -2,  -9, -17,
+    -17,  -9,  -2,   5,   5,  -2,  -9, -17,
+    -19, -12,  -6,  -2,  -2,  -6, -12, -19,
+    -22, -17, -12,  -9,  -9, -12, -17, -22,
+    -27, -22, -19, -17, -17, -19, -22, -27
+};
+
+constexpr std::array<int, 64> BishopEndGamePST = {
+    -10,  -7,  -5,  -4,  -4,  -5,  -7, -10,
+     -7,  -4,  -1,   0,   0,  -1,  -4,  -7,
+     -5,  -1,   2,   4,   4,   2,  -1,  -5,
+     -4,   0,   4,   8,   8,   4,   0,  -4,
+     -4,   0,   4,   8,   8,   4,   0,  -4,
+     -5,  -1,   2,   4,   4,   2,  -1,  -5,
+     -7,  -4,  -1,   0,   0,  -1,  -4,  -7,
+    -10,  -7,  -5,  -4,  -4,  -5,  -7, -10
+};
+
+constexpr std::array<int, 64> RookEndGamePST = {
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1,
+     -1,   1,   1,   1,   1,   1,   1,  -1
+};
+
+constexpr std::array<int, 64> QueenEndGamePST = {
+    -12,  -9,  -6,  -5,  -5,  -6,  -9, -12,
+     -9,  -5,  -2,   0,   0,  -2,  -5,  -9,
+     -6,  -2,   2,   5,   5,   2,  -2,  -6,
+     -5,   0,   5,   9,   9,   5,   0,  -5,
+     -5,   0,   5,   9,   9,   5,   0,  -5,
+     -6,  -2,   2,   5,   5,   2,  -2,  -6,
+     -9,  -5,  -2,   0,   0,  -2,  -5,  -9,
+    -12,  -9,  -6,  -5,  -5,  -6,  -9, -12
+};
 
 struct Offset {
     int rowDelta;
