@@ -147,6 +147,8 @@ void ChessBoard::setRules(const Rules &rules) {
     rules_ = rules;
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
+    // The variations belong to the position they were computed for.
+    engineLineArrows_.clear();
     clearSelection();
     clearUserAnnotations();
     update();
@@ -156,6 +158,7 @@ void ChessBoard::reset() {
     rules_.reset();
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
+    engineLineArrows_.clear();
     clearSelection();
     clearUserAnnotations();
     update();
@@ -187,6 +190,29 @@ void ChessBoard::clearMovePreviews() {
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
     update();
+}
+
+void ChessBoard::setEngineLineArrows(const std::vector<EngineLineArrow> &arrows) {
+    engineLineArrows_ = arrows;
+    update();
+}
+
+const std::vector<ChessBoard::EngineLineArrow> &ChessBoard::engineLineArrows() const {
+    return engineLineArrows_;
+}
+
+void ChessBoard::setHighlightedEngineLine(int rank) {
+    if (highlightedEngineLine_ == rank) {
+        return;
+    }
+    highlightedEngineLine_ = rank;
+    if (!engineLineArrows_.empty()) {
+        update();
+    }
+}
+
+int ChessBoard::highlightedEngineLine() const {
+    return highlightedEngineLine_;
 }
 
 void ChessBoard::setAuditAnnotation(const AuditAnnotation &annotation) {
@@ -644,22 +670,24 @@ void ChessBoard::drawMoveArrow(QPainter &painter, const Rules::Move &move,
 }
 
 void ChessBoard::drawArrow(QPainter &painter, const QPointF &start, const QPointF &end,
-                           const QColor &color, Qt::PenStyle style) const {
+                           const QColor &color, Qt::PenStyle style,
+                           qreal widthScale, int alpha) const {
     const QLineF line(start, end);
     if (line.length() < 1.0) {
         return;
     }
 
-    const qreal lineWidth = std::max(3.0, boardGeometry().squareSize * 0.12);
+    const qreal lineWidth =
+        std::max(3.0, boardGeometry().squareSize * 0.12) * widthScale;
     const QPointF direction = (end - start) / line.length();
     const QPointF normal(-direction.y(), direction.x());
-    const qreal arrowLength = boardGeometry().squareSize * 0.30;
-    const qreal arrowWidth = boardGeometry().squareSize * 0.22;
+    const qreal arrowLength = boardGeometry().squareSize * 0.30 * widthScale;
+    const qreal arrowWidth = boardGeometry().squareSize * 0.22 * widthScale;
     const QPointF arrowBase = end - direction * arrowLength;
 
     painter.save();
     QColor arrowColor = color;
-    arrowColor.setAlpha(210);
+    arrowColor.setAlpha(alpha);
     QPen pen(arrowColor, lineWidth, style, Qt::RoundCap, Qt::RoundJoin);
     painter.setPen(pen);
     painter.setBrush(Qt::NoBrush);
@@ -811,6 +839,29 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
         }
     }
 
+    // Weakest lines first so that the best one is never hidden under another.
+    for (auto it = engineLineArrows_.rbegin(); it != engineLineArrows_.rend(); ++it) {
+        const bool highlighted = it->rank == highlightedEngineLine_;
+        if (it->rank == 1 && recommendedMovePreview_.has_value() &&
+            *recommendedMovePreview_ == it->move && !highlighted) {
+            continue;
+        }
+        const QRect fromSquare = squareRect(it->move.from);
+        const QRect toSquare = squareRect(it->move.to);
+        if (fromSquare.isEmpty() || toSquare.isEmpty()) {
+            continue;
+        }
+        QColor color("#2878b5");
+        if (it->rank > 1) {
+            color = it->lossCp < 30.0 ? QColor("#3a9d4a")
+                    : it->lossCp < 100.0 ? QColor("#d9a21b")
+                                         : QColor("#c8453a");
+        }
+        const qreal scale = highlighted ? 1.5 : std::max(0.6, 1.0 - 0.1 * (it->rank - 1));
+        const int alpha = highlighted ? 245 : std::max(110, 200 - 20 * (it->rank - 1));
+        drawArrow(painter, fromSquare.center(), toSquare.center(), color, Qt::SolidLine,
+                  scale, alpha);
+    }
     if (computerMovePreview_.has_value()) {
         drawMoveArrow(painter, *computerMovePreview_, QColor("#8b5fbf"), Qt::DashLine);
     }

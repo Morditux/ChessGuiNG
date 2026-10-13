@@ -147,6 +147,8 @@ bool AppConfig::load() {
         QStringLiteral("lastMoveHighlight"), highlightLastMoveEnabled_).toBool();
     highlightCheckEnabled_ = settings.value(
         QStringLiteral("checkHighlight"), highlightCheckEnabled_).toBool();
+    engineLineArrowsEnabled_ = settings.value(
+        QStringLiteral("engineLineArrows"), engineLineArrowsEnabled_).toBool();
     settings.endGroup();
 
     settings.beginGroup(QStringLiteral("EngineOutput"));
@@ -279,6 +281,7 @@ bool AppConfig::save() const {
     settings.setValue(QStringLiteral("recommendedMove"), recommendedMovePreviewEnabled_);
     settings.setValue(QStringLiteral("lastMoveHighlight"), highlightLastMoveEnabled_);
     settings.setValue(QStringLiteral("checkHighlight"), highlightCheckEnabled_);
+    settings.setValue(QStringLiteral("engineLineArrows"), engineLineArrowsEnabled_);
     settings.endGroup();
 
     settings.beginGroup(QStringLiteral("EngineOutput"));
@@ -502,6 +505,14 @@ void AppConfig::setHighlightCheckEnabled(bool enabled) {
     highlightCheckEnabled_ = enabled;
 }
 
+bool AppConfig::engineLineArrowsEnabled() const {
+    return engineLineArrowsEnabled_;
+}
+
+void AppConfig::setEngineLineArrowsEnabled(bool enabled) {
+    engineLineArrowsEnabled_ = enabled;
+}
+
 bool AppConfig::engineAnalysisSectionVisible() const {
     return engineAnalysisSectionVisible_;
 }
@@ -648,6 +659,7 @@ void AppConfig::resetToDefaults() {
     recommendedMovePreviewEnabled_ = false;
     highlightLastMoveEnabled_ = true;
     highlightCheckEnabled_ = true;
+    engineLineArrowsEnabled_ = true;
     engineAnalysisSectionVisible_ = false;
     engineLogSectionVisible_ = false;
     engineDetailsVisible_ = false;

@@ -6,6 +6,8 @@
 
 #include "gamecontroller.h"
 
+#include <functional>
+
 #include "curveworker.h"
 
 #include "gatewayclient.h"
@@ -234,6 +236,7 @@ bool GameController::loadFen(const QString &fen, const QString &description) {
     rules_ = newRules;
     initialFen_ = fen;
     uciMoves_.clear();
+    resetTree();
     pgnMoves_.clear();
     plyAnnotations_.clear();
     plyAnnotations_.resize(1);
@@ -272,6 +275,7 @@ void GameController::newGame() {
 
     rules_.reset();
     uciMoves_.clear();
+    resetTree();
     pgnMoves_.clear();
     plyAnnotations_.clear();
     plyAnnotations_.resize(1);
@@ -320,17 +324,29 @@ bool GameController::loadPgn(const QString &pgnContent) {
     plyAnnotations_.clear();
     plyAnnotations_.resize(uciMoves_.size() + 1);
     for (int i = 0; i < plyAnnotations_.size(); ++i) {
-        if (i < rawComments.size() && !rawComments.at(i).isEmpty()) {
-            PgnAnnotations::decode(rawComments.at(i),
-                                   plyAnnotations_[i].arrows,
-                                   plyAnnotations_[i].squares);
-            if (const auto audit = PgnAnnotations::decodeAudit(rawComments.at(i)); audit.has_value()) {
-                plyAnnotations_[i].audit = *audit;
-            }
-            plyAnnotations_[i].comment =
-                PgnAnnotations::stripAuditTags(
-                    PgnAnnotations::stripAnnotationTags(rawComments.at(i)));
+        if (i < rawComments.size()) {
+            plyAnnotations_[i] = GameTree::decodeComment(rawComments.at(i));
         }
+    }
+
+    // The linear reader above gives the main line; a second pass over the
+    // movetext keeps the variations it skips. The tree is only used when its
+    // main line is the one the linear reader found.
+    resetTree();
+    if (pgnContent.contains(QLatin1Char('('))) {
+        Rules start;
+        if (initialFen_.isEmpty() || !start.loadFen(initialFen_)) {
+            start.reset();
+        }
+        GameTree parsed;
+        if (GameTree::parsePgn(pgnContent, start, &parsed) &&
+            parsed.uciOf(parsed.mainLine()) == uciMoves_) {
+            tree_ = parsed;
+            path_ = tree_.mainLine();
+        }
+    }
+    if (path_.size() != uciMoves_.size()) {
+        rebuildTreeFromUci();
     }
 
     pgnHeaders_ = PgnFile::parseHeaders(pgnContent);
@@ -477,6 +493,197 @@ bool GameController::goToMove(int moveIndex) {
     return true;
 }
 
+void GameController::resetTree() {
+    tree_.clear();
+    path_.clear();
+}
+
+void GameController::rebuildTreeFromUci() {
+    tree_.clear();
+    path_.clear();
+    int parent = GameTree::RootId;
+    for (const QString &uci : std::as_const(uciMoves_)) {
+        parent = tree_.addChild(parent, uci);
+        path_.append(parent);
+    }
+}
+
+void GameController::flushAnnotations() {
+    if (!plyAnnotations_.isEmpty()) {
+        tree_.node(GameTree::RootId).annotations = plyAnnotations_.at(0);
+    }
+    for (int i = 0; i < path_.size() && i + 1 < plyAnnotations_.size(); ++i) {
+        tree_.node(path_.at(i)).annotations = plyAnnotations_.at(i + 1);
+    }
+}
+
+void GameController::rebuildAuditFindings() {
+    auditFindings_.clear();
+    for (int ply = 1; ply < plyAnnotations_.size(); ++ply) {
+        const AuditAnnotation audit = plyAnnotations_.at(ply).audit;
+        if (audit.isValid()) {
+            auditFindings_.append({audit.severity, ply, audit.centipawnLoss,
+                                   audit.bestMove, audit.forcedMate});
+        }
+    }
+}
+
+void GameController::applyLine(const QVector<int> &newPath) {
+    flushAnnotations();
+
+    int common = 0;
+    while (common < path_.size() && common < newPath.size() &&
+           path_.at(common) == newPath.at(common)) {
+        ++common;
+    }
+
+    path_ = newPath;
+    uciMoves_ = tree_.uciOf(path_);
+    plyAnnotations_.clear();
+    plyAnnotations_.reserve(path_.size() + 1);
+    plyAnnotations_.append(tree_.node(GameTree::RootId).annotations);
+    for (const int id : std::as_const(path_)) {
+        plyAnnotations_.append(tree_.node(id).annotations);
+    }
+    rebuildPgnHistory();
+    rebuildAuditFindings();
+    invalidateAuditReport();
+
+    // The engine scores of the plies the two lines share stay valid; the rest
+    // describe a line that is no longer displayed.
+    QHash<int, double> kept;
+    for (auto it = engineCurvePoints_.constBegin(); it != engineCurvePoints_.constEnd(); ++it) {
+        if (it.key() <= common) {
+            kept.insert(it.key(), it.value());
+        }
+    }
+    requestEvaluationCurve();
+    engineCurvePoints_ = kept;
+    rebuildMergedCurve();
+}
+
+bool GameController::canEditVariations() const {
+    return !auditActive_ && !computerGameActive_ && !pendingComputerGameStart_;
+}
+
+int GameController::variationCount() const {
+    return tree_.variationCount();
+}
+
+QVector<GameController::VariationInfo> GameController::variations() const {
+    QVector<VariationInfo> result;
+    Rules replay;
+    if (initialFen_.isEmpty() || !replay.loadFen(initialFen_)) {
+        replay.reset();
+    }
+
+    const auto describe = [this](Rules position, int startPly, int node) {
+        constexpr int MaxPlies = 10;
+        QString text;
+        const QVector<int> line = tree_.lineFrom(node);
+        int moveNumber = startPly / 2 + 1;
+        bool first = true;
+        for (int i = 0; i < line.size(); ++i) {
+            if (i == MaxPlies) {
+                text += QStringLiteral(" \u2026");
+                break;
+            }
+            const auto move = UciParser::parseMove(tree_.node(line.at(i)).uci);
+            if (!move.has_value() || !position.isValidMove(*move)) {
+                break;
+            }
+            const Rules::Color color = position.currentPlayer();
+            const QString san = position.toSan(*move);
+            position.tryMove(*move);
+            if (!text.isEmpty()) {
+                text += QLatin1Char(' ');
+            }
+            if (color == Rules::Color::White) {
+                text += QStringLiteral("%1. %2").arg(moveNumber).arg(san);
+            } else {
+                text += first ? QStringLiteral("%1... %2").arg(moveNumber).arg(san) : san;
+                ++moveNumber;
+            }
+            first = false;
+        }
+        return text;
+    };
+
+    for (int i = 0; i <= path_.size(); ++i) {
+        const int node = i == 0 ? GameTree::RootId : path_.at(i - 1);
+        const QVector<int> children = tree_.node(node).children;
+        const int onLine = i < path_.size() ? path_.at(i) : -1;
+        for (const int child : children) {
+            if (child == onLine) {
+                continue;
+            }
+            VariationInfo info;
+            info.nodeId = child;
+            info.ply = i + 1;
+            info.mainLine = child == children.first();
+            info.text = describe(replay, i, child);
+            result.append(info);
+        }
+        if (i < path_.size()) {
+            const auto move = UciParser::parseMove(uciMoves_.at(i));
+            if (!move.has_value() || !replay.tryMove(*move)) {
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+bool GameController::selectVariation(int nodeId) {
+    if (!canEditVariations() || !tree_.isValid(nodeId) || nodeId == GameTree::RootId) {
+        return false;
+    }
+
+    const QVector<int> branch = tree_.pathTo(nodeId);
+    QVector<int> newPath = branch.mid(0, branch.size() - 1) + tree_.lineFrom(nodeId);
+
+    const bool resumeAnalysis = isEngineAnalyzing();
+    clearMovePreviews();
+    applyLine(newPath);
+    moveCursor_ = branch.size();
+    rebuildPositionToCursor();
+
+    emit evaluationCurveChanged();
+    refreshMoveHistory();
+    updateEvaluation();
+    emit positionChanged();
+    emit annotationsChanged();
+
+    if (isEngineConnected()) {
+        sendPositionToEngine();
+        if (resumeAnalysis) {
+            startEngineAnalysis();
+        }
+    }
+    return true;
+}
+
+bool GameController::promoteVariation(int nodeId) {
+    if (!canEditVariations() || !tree_.isValid(nodeId) || nodeId == GameTree::RootId) {
+        return false;
+    }
+    tree_.promote(nodeId);
+    refreshMoveHistory();
+    return true;
+}
+
+bool GameController::deleteVariation(int nodeId) {
+    if (!canEditVariations() || !tree_.isValid(nodeId) || nodeId == GameTree::RootId ||
+        path_.contains(nodeId)) {
+        return false;
+    }
+    // Only an alternative to the displayed line can go: its ancestors are on
+    // the line, so the line itself is untouched.
+    tree_.removeSubtree(nodeId);
+    refreshMoveHistory();
+    return true;
+}
+
 int GameController::moveCursor() const {
     return moveCursor_;
 }
@@ -519,6 +726,15 @@ bool GameController::takeBack() {
     clearMovePreviews();
 
     const int remaining = qMax(0, uciMoves_.size() - plies);
+    // The moves taken back leave the tree too, unless a variation hangs from
+    // them: those stay reachable and only the displayed line gets shorter.
+    for (int i = path_.size() - 1; i >= remaining; --i) {
+        if (!tree_.node(path_.at(i)).children.isEmpty()) {
+            break;
+        }
+        tree_.removeSubtree(path_.at(i));
+    }
+    path_.resize(remaining);
     uciMoves_.resize(remaining);
     if (plyAnnotations_.size() > remaining + 1) {
         plyAnnotations_.resize(remaining + 1);
@@ -1217,7 +1433,10 @@ QString GameController::formattedCommentAt(int ply) const {
     if (ply < 0 || ply >= plyAnnotations_.size()) {
         return QString();
     }
-    const auto &ann = plyAnnotations_.at(ply);
+    return formatAnnotations(plyAnnotations_.at(ply));
+}
+
+QString GameController::formatAnnotations(const PlyAnnotations &ann) {
     QString comment = PgnAnnotations::formatComment(ann.arrows, ann.squares, ann.comment);
     const QString audit = PgnAnnotations::formatAuditComment(ann.audit);
     if (!comment.isEmpty() && !audit.isEmpty()) comment += QLatin1Char(' ');
@@ -1225,69 +1444,101 @@ QString GameController::formattedCommentAt(int ply) const {
 }
 
 QString GameController::buildPgnMovetext() const {
-    Rules replay;
-    if (!initialFen_.isEmpty() && replay.loadFen(initialFen_)) {
+    Rules start;
+    if (!initialFen_.isEmpty() && start.loadFen(initialFen_)) {
         // Replay from initial FEN
     } else {
-        replay.reset();
+        start.reset();
     }
 
-    int moveNum = 1;
-    QString text;
+    // The displayed line keeps its annotations in `plyAnnotations_`; the nodes
+    // of the other lines hold their own.
+    QHash<int, int> plyOfNode;
+    for (int i = 0; i < path_.size(); ++i) {
+        plyOfNode.insert(path_.at(i), i + 1);
+    }
+    const auto annotationsOf = [&](int id) -> const PlyAnnotations & {
+        const int ply = id == GameTree::RootId ? 0 : plyOfNode.value(id, -1);
+        if (ply >= 0 && ply < plyAnnotations_.size()) {
+            return plyAnnotations_.at(ply);
+        }
+        return tree_.node(id).annotations;
+    };
 
-    // Ply 0 comment
-    const QString ply0Comment = formattedCommentAt(0);
+    QString text;
+    const auto append = [&text](const QString &token) {
+        if (!text.isEmpty() && !text.endsWith(QLatin1Char('('))) {
+            text += QLatin1Char(' ');
+        }
+        text += token;
+    };
+
+    const QString ply0Comment = formatAnnotations(annotationsOf(GameTree::RootId));
     if (!ply0Comment.isEmpty()) {
         text += QStringLiteral("{ %1 }").arg(ply0Comment);
     }
 
-    bool previousWhiteHadComment = false;
-    for (int i = 0; i < uciMoves_.size(); ++i) {
-        const auto move = UciParser::parseMove(uciMoves_.at(i));
-        if (!move.has_value() || !replay.isValidMove(*move)) {
-            break;
-        }
-        const Rules::Color movingColor = replay.currentPlayer();
-        const QString san = replay.toSan(*move);
-        replay.tryMove(*move);
+    // Writes the line that continues `parent`. `firstChild` starts a variation
+    // with that move instead of the main continuation; `needNumber` asks for
+    // "N..." in front of a black move, which a comment or a variation makes
+    // necessary.
+    std::function<void(int, Rules, int, bool, int)> writeLine =
+        [&](int parent, Rules position, int moveNum, bool needNumber, int firstChild) {
+            int node = parent;
+            bool first = true;
+            while (!tree_.node(node).children.isEmpty()) {
+                const QVector<int> children = tree_.node(node).children;
+                const bool startsVariation = first && firstChild >= 0;
+                const int childId = startsVariation ? firstChild : children.first();
+                first = false;
 
-        const int ply = i + 1;
-        const QString comment = formattedCommentAt(ply);
-        const bool hasComment = !comment.isEmpty();
+                const auto move = UciParser::parseMove(tree_.node(childId).uci);
+                if (!move.has_value() || !position.isValidMove(*move)) {
+                    return;
+                }
+                const Rules::Color movingColor = position.currentPlayer();
+                const QString san = position.toSan(*move);
+                const Rules before = position;
+                position.tryMove(*move);
 
-        if (movingColor == Rules::Color::White) {
-            if (!text.isEmpty()) {
-                text += QLatin1Char(' ');
+                const PlyAnnotations &annotations = annotationsOf(childId);
+                const QString comment = formatAnnotations(annotations);
+                const int nag = PgnAnnotations::auditNag(annotations.audit.severity);
+
+                QString token = movingColor == Rules::Color::White
+                                    ? QStringLiteral("%1. %2").arg(moveNum).arg(san)
+                                    : needNumber
+                                          ? QStringLiteral("%1... %2").arg(moveNum).arg(san)
+                                          : san;
+                append(token);
+                if (nag != 0) {
+                    text += QStringLiteral(" $%1").arg(nag);
+                }
+                if (!comment.isEmpty()) {
+                    text += QStringLiteral(" { %1 }").arg(comment);
+                }
+
+                // Variations are the alternatives to this move, written after
+                // it, before the line goes on.
+                bool hadVariation = false;
+                if (!startsVariation) {
+                    for (int k = 1; k < children.size(); ++k) {
+                        hadVariation = true;
+                        append(QStringLiteral("("));
+                        writeLine(node, before, moveNum, true, children.at(k));
+                        text += QLatin1Char(')');
+                    }
+                }
+
+                needNumber = movingColor == Rules::Color::White &&
+                             (!comment.isEmpty() || hadVariation);
+                if (movingColor == Rules::Color::Black) {
+                    ++moveNum;
+                }
+                node = childId;
             }
-            text += QStringLiteral("%1. %2").arg(moveNum).arg(san);
-            if (const int nag = PgnAnnotations::auditNag(plyAnnotations_.at(ply).audit.severity); nag != 0) {
-                text += QStringLiteral(" $%1").arg(nag);
-            }
-            if (hasComment) {
-                text += QStringLiteral(" { %1 }").arg(comment);
-                previousWhiteHadComment = true;
-            } else {
-                previousWhiteHadComment = false;
-            }
-        } else {
-            if (!text.isEmpty()) {
-                text += QLatin1Char(' ');
-            }
-            if (previousWhiteHadComment || (i == 0)) {
-                text += QStringLiteral("%1... %2").arg(moveNum).arg(san);
-            } else {
-                text += san;
-            }
-            if (const int nag = PgnAnnotations::auditNag(plyAnnotations_.at(ply).audit.severity); nag != 0) {
-                text += QStringLiteral(" $%1").arg(nag);
-            }
-            if (hasComment) {
-                text += QStringLiteral(" { %1 }").arg(comment);
-            }
-            previousWhiteHadComment = false;
-            ++moveNum;
-        }
-    }
+        };
+    writeLine(GameTree::RootId, start, 1, true, -1);
 
     return text.trimmed();
 }
@@ -1464,6 +1715,7 @@ void GameController::beginComputerGame() {
     initialFen_.clear();
     pgnMoves_.clear();
     uciMoves_.clear();
+    resetTree();
     plyAnnotations_.clear();
     plyAnnotations_.resize(1);
     pgnMoveNumber_ = 1;
@@ -1838,6 +2090,11 @@ void GameController::finishGameAudit(bool applyResults, const QString &message) 
             report.findings = findings;
             report.valid = true;
 
+            // The audit describes the line it ran on: the marks of the other
+            // lines would be stale.
+            for (int id = 0; id < tree_.nodeCount(); ++id) {
+                tree_.node(id).annotations.audit = {};
+            }
             for (PlyAnnotations &annotation : plyAnnotations_) annotation.audit = {};
             for (int ply = 1; ply < annotations.size(); ++ply) plyAnnotations_[ply].audit = annotations.at(ply);
             auditFindings_ = findings;
@@ -1893,29 +2150,44 @@ bool GameController::recordMove(const Rules::Move &move) {
     // The game no longer matches any report built for it.
     invalidateAuditReport();
 
-    if (moveCursor_ < uciMoves_.size()) {
-        // A move played from the middle of the history discards the
-        // abandoned continuation.
-        uciMoves_.resize(moveCursor_);
-        if (plyAnnotations_.size() > moveCursor_ + 1) {
-            plyAnnotations_.resize(moveCursor_ + 1);
-        }
-        truncateCurve(moveCursor_ + 1);
-        rebuildPgnHistory();
-    }
+    const int ply = moveCursor_;
+    const int parent = ply == 0 ? GameTree::RootId : path_.at(ply - 1);
+    const QString uci = Rules::toUci(move);
+    bool lineChanged = false;
+    bool followsLine = false;
 
-    uciMoves_.append(Rules::toUci(move));
-    plyAnnotations_.append(PlyAnnotations{});
-    appendPgnMove(san, movingColor);
-    ++moveCursor_;
+    if (ply < uciMoves_.size()) {
+        if (uciMoves_.at(ply) == uci) {
+            // The move the displayed line already plays: a step forward.
+            followsLine = true;
+        } else {
+            // A different move from the middle of the history: it becomes a
+            // variation (or selects the one that already holds it) and the
+            // continuation that was displayed stays in the tree.
+            const int child = tree_.addChild(parent, uci);
+            applyLine(path_.mid(0, ply) + tree_.lineFrom(child));
+            lineChanged = true;
+        }
+        moveCursor_ = ply + 1;
+        // Resynchronises the side to move with the new cursor.
+        rebuildPositionToCursor();
+    } else {
+        path_.append(tree_.addChild(parent, uci));
+        uciMoves_.append(uci);
+        plyAnnotations_.append(PlyAnnotations{});
+        appendPgnMove(san, movingColor);
+        ++moveCursor_;
+    }
 
     // The point is filled from the static evaluation at once and refined by the
     // background search the live evaluation is about to request, so the curve
     // keeps up with the game without blocking on a search.
-    heuristicCurve_.append(HeuristicEval::centipawnsToPercentage(
-        static_cast<double>(HeuristicEval::evaluateCentipawns(rules_))));
-    curveAnalysedCount_ = -1;
-    rebuildMergedCurve();
+    if (!lineChanged && !followsLine) {
+        heuristicCurve_.append(HeuristicEval::centipawnsToPercentage(
+            static_cast<double>(HeuristicEval::evaluateCentipawns(rules_))));
+        curveAnalysedCount_ = -1;
+        rebuildMergedCurve();
+    }
 
     refreshMoveHistory();
     updateEvaluation();

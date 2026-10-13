@@ -4,6 +4,7 @@
 
 #include "engineoutputwidget.h"
 
+#include <QEvent>
 #include <QFontDatabase>
 #include <QFont>
 #include <QFrame>
@@ -632,6 +633,14 @@ void EngineOutputWidget::setupUi() {
     pvTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     pvTable_->setAlternatingRowColors(true);
     pvTable_->verticalHeader()->setVisible(false);
+    pvTable_->setMouseTracking(true);
+    pvTable_->viewport()->setMouseTracking(true);
+    pvTable_->viewport()->installEventFilter(this);
+    connect(pvTable_, &QTableWidget::cellEntered, this, [this](int row, int) {
+        if (row >= 0 && row < analysisLines_.size()) {
+            emit lineHovered(analysisLines_.at(row).multipv);
+        }
+    });
     analysisLayout->addWidget(pvTable_, 1);
 
     connect(pvTable_, &QTableWidget::activated, this, [this](const QModelIndex &index) {
@@ -716,7 +725,16 @@ void EngineOutputWidget::updateHeaderSummary() {
     }
 }
 
+bool EngineOutputWidget::eventFilter(QObject *watched, QEvent *event) {
+    if (pvTable_ != nullptr && watched == pvTable_->viewport() &&
+        event->type() == QEvent::Leave) {
+        emit lineHovered(0);
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void EngineOutputWidget::updateTableDisplay() {
+    emit analysisLinesChanged();
     if (!pvTable_) {
         return;
     }

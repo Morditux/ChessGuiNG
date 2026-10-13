@@ -117,6 +117,8 @@ add_library(chesscore OBJECT
         evalparamfields.h
         gamecontroller.cpp
         gamecontroller.h
+        gametree.cpp
+        gametree.h
         gatewayclient.cpp
         gatewayclient.h
         heuristiceval.cpp
@@ -451,6 +453,12 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(PgnFileTest PRIVATE chesscore Qt6::Test)
     add_test(NAME PgnFileTest COMMAND PgnFileTest)
+
+    qt_add_executable(GameTreeTest
+            tests/gametree_test.cpp
+    )
+    target_link_libraries(GameTreeTest PRIVATE chesscore Qt6::Test)
+    add_test(NAME GameTreeTest COMMAND GameTreeTest)
 
     qt_add_executable(BookTest
             tests/book_test.cpp

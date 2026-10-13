@@ -10,6 +10,7 @@
 #include <QWidget>
 #include "uciparser.h"
 
+class QEvent;
 class QFrame;
 class QLabel;
 class QPlainTextEdit;
@@ -95,6 +96,10 @@ public slots:
 
 signals:
     void lineSelected(int multipv, const QString &pv);
+    // MultiPV index of the row under the mouse, 0 when it left the table.
+    void lineHovered(int multipv);
+    // The set of variations changed (updated, replaced or cleared).
+    void analysisLinesChanged();
     void startClicked();
     void pauseClicked();
     void stopClicked();
@@ -105,6 +110,9 @@ signals:
     void logSectionToggled(bool visible);
     void detailsToggled(bool visible);
     void detailsPageChanged(DetailsPage page);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void setupUi();

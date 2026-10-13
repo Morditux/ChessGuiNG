@@ -19,6 +19,7 @@
 #include "book.h"
 #include "computergamesettings.h"
 #include "enginebackend.h"
+#include "gametree.h"
 #include "heuristiceval.h"
 #include "pgnannotations.h"
 #include "rules.h"
@@ -171,6 +172,32 @@ public:
     // Enriched result of the last completed audit. It is invalidated as soon
     // as the game it describes changes.
     [[nodiscard]] const AuditReport &auditReport() const;
+
+    // Variations. Playing a move that differs from the recorded continuation
+    // adds a variation instead of discarding what followed; the line being
+    // displayed (`uciMoves()`, the move list, the curve) is one path through
+    // the tree and the other branches stay stored and exported to the PGN.
+    struct VariationInfo {
+        int nodeId = -1;
+        // 1-based ply of the first move of the variation.
+        int ply = 0;
+        // True for the continuation that is the main line at its branch point.
+        bool mainLine = false;
+        // The variation in PGN notation, cut after a few moves.
+        QString text;
+    };
+    [[nodiscard]] bool canEditVariations() const;
+    // Alternatives to the displayed line: every move stored at a position of
+    // the line that is not the move the line plays there.
+    [[nodiscard]] QVector<VariationInfo> variations() const;
+    // Number of variations in the whole game, displayed or not.
+    [[nodiscard]] int variationCount() const;
+    // Displays the line through the variation and puts the cursor on its first
+    // move.
+    bool selectVariation(int nodeId);
+    // Makes the line through the variation the main line of the game.
+    bool promoteVariation(int nodeId);
+    bool deleteVariation(int nodeId);
 
     // State
     [[nodiscard]] const Rules &rules() const;
@@ -326,6 +353,21 @@ private:
     [[nodiscard]] QString drawReasonMessage() const;
     [[nodiscard]] QString buildPgnMovetext() const;
     [[nodiscard]] QString formattedCommentAt(int ply) const;
+    [[nodiscard]] static QString formatAnnotations(const PlyAnnotations &annotations);
+
+    // Variation tree. `uciMoves_` and `plyAnnotations_` are the cache of the
+    // displayed line `path_` (one node id per ply); annotations are edited in
+    // `plyAnnotations_` and written back to the nodes when the line changes.
+    void resetTree();
+    void rebuildTreeFromUci();
+    void flushAnnotations();
+    // Displays `newPath` instead of the current line and recomputes what
+    // depends on it. The cursor, the position and the signals stay with the
+    // caller.
+    void applyLine(const QVector<int> &newPath);
+    void rebuildAuditFindings();
+    GameTree tree_;
+    QVector<int> path_;
     [[nodiscard]] EngineBackend *selectedBackend() const;
     [[nodiscard]] EngineBackend *activeBackendForCommands() const;
 

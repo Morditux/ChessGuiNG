@@ -8,6 +8,7 @@
 #include <QImage>
 #include <QStringList>
 #include <QTextEdit>
+#include <QPoint>
 #include <QWidget>
 
 #include "appconfig.h"
@@ -36,6 +37,7 @@ class QEvent;
 class QHBoxLayout;
 class QKeyEvent;
 class QLabel;
+class QListWidget;
 class QMimeData;
 class QProgressBar;
 class QPushButton;
@@ -60,6 +62,7 @@ public:
     [[nodiscard]] PendulumWidget *whitePendulum() const;
     [[nodiscard]] PendulumWidget *blackPendulum() const;
     [[nodiscard]] MoveListWidget *moveListWidget() const;
+    [[nodiscard]] QListWidget *variationList() const;
     [[nodiscard]] QTextEdit *pgnHeaderTextEdit() const;
     [[nodiscard]] QTextEdit *messageLogTextEdit() const;
     [[nodiscard]] EngineOutputWidget *engineOutputWidget() const;
@@ -82,6 +85,7 @@ public:
     [[nodiscard]] QAction *flipBoardAction() const;
     [[nodiscard]] QAction *highlightLastMoveAction() const;
     [[nodiscard]] QAction *highlightCheckAction() const;
+    [[nodiscard]] QAction *engineLineArrowsAction() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
     [[nodiscard]] QAction *claimDrawAction() const;
@@ -137,6 +141,7 @@ public slots:
     void setRecommendedMovePreviewEnabled(bool enabled);
     void setLastMoveHighlightingEnabled(bool enabled);
     void setCheckHighlightingEnabled(bool enabled);
+    void setEngineLineArrowsEnabled(bool enabled);
     void setWhiteToMove(bool whiteToMove);
     void stepBack();
     void stepForward();
@@ -161,6 +166,13 @@ protected:
 private slots:
     void onEngineLoaded(const QString &name, const QString &author);
     void onEngineAnalysisUpdated(const EngineAnalysisLine &line);
+    // Rebuilds the arrows of the MultiPV lines from the engine panel, keeping
+    // only the lines whose first move is legal in the displayed position.
+    void refreshEngineLineArrows();
+    // Lists the alternatives to the displayed line under the move list.
+    void refreshVariations();
+    void showVariationMenu(const QPoint &position);
+    void playEngineLine(const QString &pv);
     void onEngineError(const QString &errorMessage);
     void onVisionResult(const VisionResult &result);
     void adjustEnginePanelSize();
@@ -235,6 +247,8 @@ private:
     PendulumWidget *whitePendulum_ = nullptr;
     PendulumWidget *blackPendulum_ = nullptr;
     MoveListWidget *moveListWidget_ = nullptr;
+    QWidget *variationsSection_ = nullptr;
+    QListWidget *variationList_ = nullptr;
     QWidget *movesSection_ = nullptr;
     QTextEdit *pgnHeaderTextEdit_ = nullptr;
     QTextEdit *messageLog_ = nullptr;
@@ -284,6 +298,7 @@ private:
     QAction *showRecommendedMoveAction_ = nullptr;
     QAction *highlightLastMoveAction_ = nullptr;
     QAction *highlightCheckAction_ = nullptr;
+    QAction *engineLineArrowsAction_ = nullptr;
     QAction *flipBoardAction_ = nullptr;
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;

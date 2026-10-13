@@ -63,6 +63,20 @@ public:
     void setRecommendedMovePreview(const std::optional<Rules::Move> &move);
     [[nodiscard]] std::optional<Rules::Move> recommendedMovePreview() const;
     void clearMovePreviews();
+
+    // One engine variation drawn as an arrow. `rank` is the MultiPV index
+    // (1 is the best line), `lossCp` how far the line is behind the best one
+    // from the side to move's point of view.
+    struct EngineLineArrow {
+        Rules::Move move;
+        int rank = 1;
+        double lossCp = 0.0;
+    };
+    void setEngineLineArrows(const std::vector<EngineLineArrow> &arrows);
+    [[nodiscard]] const std::vector<EngineLineArrow> &engineLineArrows() const;
+    // Rank of the arrow drawn emphasised (0 for none).
+    void setHighlightedEngineLine(int rank);
+    [[nodiscard]] int highlightedEngineLine() const;
     void setAuditAnnotation(const AuditAnnotation &annotation);
     [[nodiscard]] AuditAnnotation auditAnnotation() const;
 
@@ -125,6 +139,8 @@ private:
     bool boardFlipped_ = false;
     std::optional<Rules::Move> computerMovePreview_;
     std::optional<Rules::Move> recommendedMovePreview_;
+    std::vector<EngineLineArrow> engineLineArrows_;
+    int highlightedEngineLine_ = 0;
     AuditAnnotation auditAnnotation_;
     std::vector<UserArrow> userArrows_;
     std::vector<SquareAnnotation> squareAnnotations_;
@@ -150,7 +166,8 @@ private:
     void drawMoveArrow(QPainter &painter, const Rules::Move &move,
                        const QColor &color, Qt::PenStyle style) const;
     void drawArrow(QPainter &painter, const QPointF &start, const QPointF &end,
-                   const QColor &color, Qt::PenStyle style) const;
+                   const QColor &color, Qt::PenStyle style,
+                   qreal widthScale = 1.0, int alpha = 210) const;
     [[nodiscard]] static QColor annotationColorForModifiers(Qt::KeyboardModifiers modifiers);
 };
 

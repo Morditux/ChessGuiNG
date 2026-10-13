@@ -103,6 +103,10 @@ public:
     [[nodiscard]] bool highlightCheckEnabled() const;
     void setHighlightCheckEnabled(bool enabled);
 
+    // Draws every MultiPV line of the engine as an arrow on the board.
+    [[nodiscard]] bool engineLineArrowsEnabled() const;
+    void setEngineLineArrowsEnabled(bool enabled);
+
     [[nodiscard]] bool engineAnalysisSectionVisible() const;
     void setEngineAnalysisSectionVisible(bool visible);
 
@@ -180,6 +184,7 @@ private:
     bool recommendedMovePreviewEnabled_ = false;
     bool highlightLastMoveEnabled_ = true;
     bool highlightCheckEnabled_ = true;
+    bool engineLineArrowsEnabled_ = true;
     bool engineAnalysisSectionVisible_ = false;
     bool engineLogSectionVisible_ = false;
     bool engineDetailsVisible_ = false;

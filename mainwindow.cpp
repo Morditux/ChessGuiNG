@@ -47,6 +47,8 @@
 #include <QIcon>
 #include <QLabel>
 #include <QKeyEvent>
+#include <QListWidget>
+#include <QTimer>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMimeData>
@@ -135,6 +137,8 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
             this, &MainWindow::setLastMoveHighlightingEnabled);
     connect(highlightCheckAction_, &QAction::toggled,
             this, &MainWindow::setCheckHighlightingEnabled);
+    connect(engineLineArrowsAction_, &QAction::toggled,
+            this, &MainWindow::setEngineLineArrowsEnabled);
 
     connect(gameController_, &GameController::positionChanged, this, [this] {
         board_->setRules(gameController_->rules());
@@ -168,6 +172,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
         currentMoveLabel_->setText(moveListWidget_->currentMoveText());
         refreshPlayerStrips();
         updateGameInformationSection();
+        refreshVariations();
     });
     connect(gameController_, &GameController::evaluationCurveChanged, this, [this] {
         evaluationGraph_->setEvaluations(gameController_->evaluationCurve());
@@ -303,6 +308,12 @@ MainWindow::MainWindow(QWidget *parent, const QString &configFilePath)
     connect(engineOutputWidget_, &EngineOutputWidget::stopClicked, this, &MainWindow::stopEngineAnalysis);
     connect(engineOutputWidget_, &EngineOutputWidget::analysisSettingsChanged,
             this, &MainWindow::setAnalysisSettings);
+    connect(engineOutputWidget_, &EngineOutputWidget::analysisLinesChanged,
+            this, &MainWindow::refreshEngineLineArrows);
+    connect(engineOutputWidget_, &EngineOutputWidget::lineHovered,
+            board_, &ChessBoard::setHighlightedEngineLine);
+    connect(engineOutputWidget_, &EngineOutputWidget::lineSelected, this,
+            [this](int, const QString &pv) { playEngineLine(pv); });
 
     connect(uciEngine(), &UciEngine::engineLoaded, this, &MainWindow::onEngineLoaded);
     connect(gatewayClient(), &ChessGatewayClient::engineLoaded,
@@ -440,6 +451,14 @@ QAction *MainWindow::highlightLastMoveAction() const {
 
 QAction *MainWindow::highlightCheckAction() const {
     return highlightCheckAction_;
+}
+
+QListWidget *MainWindow::variationList() const {
+    return variationList_;
+}
+
+QAction *MainWindow::engineLineArrowsAction() const {
+    return engineLineArrowsAction_;
 }
 
 QLabel *MainWindow::visionStatusLabel() const {
@@ -629,6 +648,7 @@ void MainWindow::loadConfiguration(const QString &configFilePath) {
     setRecommendedMovePreviewEnabled(config_.recommendedMovePreviewEnabled());
     setLastMoveHighlightingEnabled(config_.highlightLastMoveEnabled());
     setCheckHighlightingEnabled(config_.highlightCheckEnabled());
+    setEngineLineArrowsEnabled(config_.engineLineArrowsEnabled());
 
     gameController_->setRemoteEngine(config_.remoteEngineHost(),
                                      config_.remoteEnginePort(),
@@ -1985,6 +2005,102 @@ void MainWindow::setCheckHighlightingEnabled(bool enabled) {
     config_.save();
 }
 
+void MainWindow::setEngineLineArrowsEnabled(bool enabled) {
+    if (engineLineArrowsAction_ != nullptr) {
+        const QSignalBlocker blocker(engineLineArrowsAction_);
+        engineLineArrowsAction_->setChecked(enabled);
+    }
+
+    config_.setEngineLineArrowsEnabled(enabled);
+    config_.save();
+    refreshEngineLineArrows();
+}
+
+void MainWindow::refreshVariations() {
+    if (variationList_ == nullptr || variationsSection_ == nullptr) {
+        return;
+    }
+    const auto variations = gameController_->variations();
+    const QSignalBlocker blocker(variationList_);
+    variationList_->clear();
+    for (const auto &variation : variations) {
+        const QString text = variation.mainLine
+                                 ? tr("Main line: %1").arg(variation.text)
+                                 : variation.text;
+        auto *item = new QListWidgetItem(text, variationList_);
+        item->setData(Qt::UserRole, variation.nodeId);
+        item->setData(Qt::UserRole + 1, variation.mainLine);
+        item->setToolTip(
+            variation.mainLine
+                ? tr("The main line of the game at ply %1").arg(variation.ply)
+                : tr("Variation from ply %1").arg(variation.ply));
+    }
+    variationList_->setEnabled(gameController_->canEditVariations());
+    variationsSection_->setVisible(variationList_->count() > 0);
+}
+
+void MainWindow::showVariationMenu(const QPoint &position) {
+    QListWidgetItem *item = variationList_->itemAt(position);
+    if (item == nullptr || !gameController_->canEditVariations()) {
+        return;
+    }
+    const int nodeId = item->data(Qt::UserRole).toInt();
+    const bool isMainLine = item->data(Qt::UserRole + 1).toBool();
+
+    QMenu menu(this);
+    QAction *display = menu.addAction(tr("Display this line"));
+    QAction *promote = menu.addAction(tr("Make main line"));
+    promote->setEnabled(!isMainLine);
+    QAction *remove = menu.addAction(tr("Delete variation"));
+    QAction *chosen = menu.exec(variationList_->viewport()->mapToGlobal(position));
+    if (chosen == display) {
+        gameController_->selectVariation(nodeId);
+    } else if (chosen == promote) {
+        gameController_->promoteVariation(nodeId);
+    } else if (chosen == remove) {
+        gameController_->deleteVariation(nodeId);
+    }
+}
+
+void MainWindow::refreshEngineLineArrows() {
+    if (board_ == nullptr || engineOutputWidget_ == nullptr) {
+        return;
+    }
+    std::vector<ChessBoard::EngineLineArrow> arrows;
+    if (engineLineArrowsAction_ != nullptr && engineLineArrowsAction_->isChecked()) {
+        const QList<EngineAnalysisLine> lines = engineOutputWidget_->analysisLines();
+        // A single line is already the recommended-move arrow.
+        if (lines.size() >= 2) {
+            constexpr double MateCp = 100000.0;
+            const auto scoreOf = [](const EngineAnalysisLine &line) {
+                if (line.mateIn.has_value()) {
+                    return *line.mateIn > 0 ? MateCp - *line.mateIn : -MateCp - *line.mateIn;
+                }
+                return line.scoreCp.value_or(0.0);
+            };
+            const double bestScore = scoreOf(lines.first());
+            for (const auto &line : lines) {
+                const auto move = UciParser::parseMove(
+                    line.pv.section(QChar(' '), 0, 0));
+                if (!move.has_value() || !board_->rules().isValidMove(*move)) {
+                    continue;
+                }
+                arrows.push_back({*move, line.multipv,
+                                  std::max(0.0, bestScore - scoreOf(line))});
+            }
+        }
+    }
+    board_->setEngineLineArrows(arrows);
+}
+
+void MainWindow::playEngineLine(const QString &pv) {
+    const auto move = UciParser::parseMove(pv.section(QChar(' '), 0, 0));
+    if (!move.has_value() || !gameController_->rules().isValidMove(*move)) {
+        return;
+    }
+    gameController_->requestMove(move->from, move->to, move->promotion);
+}
+
 void MainWindow::onEngineLoaded(const QString &name, const QString &author) {
     Q_UNUSED(author)
     engineOutputWidget_->setEngineName(name);
@@ -2431,6 +2547,18 @@ void MainWindow::setupUi() {
     highlightCheckAction_->setStatusTip(highlightCheckAction_->toolTip());
     addAction(highlightCheckAction_);
 
+    engineLineArrowsAction_ = menuBoard->addAction(tr("Show engine variations"));
+    engineLineArrowsAction_->setObjectName(QStringLiteral("engineLineArrowsAction"));
+    engineLineArrowsAction_->setCheckable(true);
+    engineLineArrowsAction_->setChecked(true);
+    engineLineArrowsAction_->setShortcut(QKeySequence(tr("Ctrl+Shift+L")));
+    engineLineArrowsAction_->setShortcutContext(Qt::WindowShortcut);
+    engineLineArrowsAction_->setToolTip(
+        tr("Draw every engine variation (MultiPV) as an arrow: blue for the best line, "
+           "green, amber or red according to how far the others are behind"));
+    engineLineArrowsAction_->setStatusTip(engineLineArrowsAction_->toolTip());
+    addAction(engineLineArrowsAction_);
+
     menubar->addMenu(menuBoard);
 
     // Menu Edit: clipboard actions.
@@ -2876,6 +3004,43 @@ void MainWindow::setupUi() {
     movesLayout->addWidget(evaluationGraph_);
     moveListWidget_ = new MoveListWidget(movesSection);
     movesLayout->addWidget(moveListWidget_, 1);
+
+    variationsSection_ = new QWidget(movesSection);
+    variationsSection_->setObjectName(QStringLiteral("variationsSection"));
+    auto *variationsLayout = new QVBoxLayout(variationsSection_);
+    variationsLayout->setContentsMargins(0, 0, 0, 0);
+    variationsLayout->setSpacing(2);
+    auto *variationsLabel = new QLabel(tr("Variations"), variationsSection_);
+    variationsLabel->setObjectName(QStringLiteral("variationsLabel"));
+    variationsLayout->addWidget(variationsLabel);
+    variationList_ = new QListWidget(variationsSection_);
+    variationList_->setObjectName(QStringLiteral("variationList"));
+    variationList_->setAccessibleName(tr("Variations"));
+    variationList_->setToolTip(
+        tr("Other lines of the game from the displayed line. Click one to display it; "
+           "right-click to make it the main line or delete it."));
+    variationList_->setContextMenuPolicy(Qt::CustomContextMenu);
+    variationList_->setSelectionMode(QAbstractItemView::SingleSelection);
+    variationList_->setUniformItemSizes(true);
+    variationList_->setMaximumHeight(variationList_->fontMetrics().height() * 5 + 12);
+    variationsLayout->addWidget(variationList_);
+    variationsSection_->setVisible(false);
+    movesLayout->addWidget(variationsSection_);
+    // Displaying a line rebuilds the list, so the item that was activated goes
+    // away: the selection is deferred until its signal has returned.
+    const auto displayVariation = [this](QListWidgetItem *item) {
+        if (item == nullptr) {
+            return;
+        }
+        const int nodeId = item->data(Qt::UserRole).toInt();
+        QTimer::singleShot(0, this, [this, nodeId] {
+            gameController_->selectVariation(nodeId);
+        });
+    };
+    connect(variationList_, &QListWidget::itemClicked, this, displayVariation);
+    connect(variationList_, &QListWidget::itemActivated, this, displayVariation);
+    connect(variationList_, &QWidget::customContextMenuRequested,
+            this, &MainWindow::showVariationMenu);
     movesSection_ = movesSection;
     movesSection->installEventFilter(this);
     rightSplitter_->addWidget(movesSection);

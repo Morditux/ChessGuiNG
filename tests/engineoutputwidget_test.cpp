@@ -6,6 +6,7 @@
 #include <QTest>
 #include <QHeaderView>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -15,7 +16,9 @@
 #include <QToolBar>
 #include <QToolButton>
 
+#include "chessboard.h"
 #include "engineoutputwidget.h"
+#include "gamecontroller.h"
 #include "mainwindow.h"
 #include "movelistwidget.h"
 
@@ -40,6 +43,9 @@ private slots:
     void testDetailsNavigationAndPrimaryVariation();
     void testDetailsLayout();
     void testMainWindowLayout();
+    void testLineHoverAndChangeSignals();
+    void testEngineLineArrowsOnBoard();
+    void testVariationListFollowsTheGame();
 };
 
 void EngineOutputWidgetTest::testDefaultValues() {
@@ -480,6 +486,96 @@ void EngineOutputWidgetTest::testDetailsLayout() {
     QVERIFY(widget.pvTable()->width() >= widget.width() / 2);
     QVERIFY(widget.pvTable()->geometry().top() > 0);
     QVERIFY(widget.pvTable()->height() > widget.pvTable()->horizontalHeader()->height());
+}
+
+void EngineOutputWidgetTest::testLineHoverAndChangeSignals() {
+    EngineOutputWidget widget;
+    QSignalSpy changed(&widget, &EngineOutputWidget::analysisLinesChanged);
+    QSignalSpy hovered(&widget, &EngineOutputWidget::lineHovered);
+
+    EngineAnalysisLine line;
+    line.multipv = 2;
+    line.pv = QStringLiteral("d2d4");
+    widget.updateAnalysisLine(line);
+    QVERIFY(changed.count() >= 1);
+
+    const int before = changed.count();
+    widget.clearAnalysis();
+    QVERIFY(changed.count() > before);
+
+    widget.updateAnalysisLine(line);
+    emit widget.pvTable()->cellEntered(0, 0);
+    QCOMPARE(hovered.count(), 1);
+    QCOMPARE(hovered.takeFirst().at(0).toInt(), 2);
+}
+
+void EngineOutputWidgetTest::testEngineLineArrowsOnBoard() {
+    MainWindow window;
+    window.resize(900, 650);
+    window.show();
+    QAction *action = window.engineLineArrowsAction();
+    QVERIFY(action != nullptr);
+    QVERIFY(action->isChecked());
+
+    const auto makeLine = [](int multipv, double score, const QString &pv) {
+        EngineAnalysisLine line;
+        line.multipv = multipv;
+        line.scoreCp = score;
+        line.depth = 12;
+        line.pv = pv;
+        return line;
+    };
+
+    auto *output = window.engineOutputWidget();
+    output->updateAnalysisLine(makeLine(1, 30, QStringLiteral("e2e4 e7e5")));
+    // One line alone is the recommended move, not a set of variations.
+    QVERIFY(window.chessBoard()->engineLineArrows().empty());
+
+    output->updateAnalysisLine(makeLine(2, -80, QStringLiteral("d2d4 d7d5")));
+    output->updateAnalysisLine(makeLine(3, 0, QStringLiteral("e7e5")));  // illegal here
+    const auto &arrows = window.chessBoard()->engineLineArrows();
+    QCOMPARE(arrows.size(), std::size_t{2});
+    QCOMPARE(arrows[0].rank, 1);
+    QCOMPARE(arrows[1].rank, 2);
+    QCOMPARE(arrows[1].lossCp, 110.0);
+
+    action->setChecked(false);
+    QVERIFY(window.chessBoard()->engineLineArrows().empty());
+    action->setChecked(true);
+    QCOMPARE(window.chessBoard()->engineLineArrows().size(), std::size_t{2});
+
+    output->clearAnalysis();
+    QVERIFY(window.chessBoard()->engineLineArrows().empty());
+}
+
+void EngineOutputWidgetTest::testVariationListFollowsTheGame() {
+    MainWindow window;
+    window.resize(900, 650);
+    window.show();
+    QListWidget *list = window.variationList();
+    QVERIFY(list != nullptr);
+    QVERIFY(!list->isVisible());
+
+    auto *controller = window.gameController();
+    QVERIFY(controller->requestMove({6, 4}, {4, 4}));  // e4
+    QVERIFY(controller->requestMove({1, 4}, {3, 4}));  // e5
+    QVERIFY(controller->requestMove({7, 6}, {5, 5}));  // Nf3
+    QVERIFY(!list->isVisible());
+
+    // 1... c5 instead of 1... e5: the abandoned continuation is listed.
+    QVERIFY(controller->goToMove(1));
+    QVERIFY(controller->requestMove({1, 2}, {3, 2}));
+    QCOMPARE(list->count(), 1);
+    QVERIFY(list->isVisible());
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("1... e5 2. Nf3")));
+
+    // Clicking it displays that line and lists the one that was displayed.
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      list->visualItemRect(list->item(0)).center());
+    QTRY_COMPARE(controller->uciMoves().size(), 3);
+    QCOMPARE(controller->uciMoves().at(1), QStringLiteral("e7e5"));
+    QCOMPARE(list->count(), 1);
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("1... c5")));
 }
 
 void EngineOutputWidgetTest::testMainWindowLayout() {

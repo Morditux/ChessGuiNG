@@ -24,6 +24,7 @@ private slots:
     void testFormatComment();
     void testPaintedBoardRect();
     void testCheckHighlight();
+    void testEngineLineArrows();
 };
 
 void ChessBoardTest::testSquareAnnotationToggle() {
@@ -298,6 +299,36 @@ void ChessBoardTest::testCheckHighlight() {
     board.setCheckHighlightingEnabled(false);
     QCoreApplication::processEvents();
     QVERIFY(board.grab().toImage() == quietWithHighlight);
+}
+
+void ChessBoardTest::testEngineLineArrows() {
+    ChessBoard board;
+    board.resize(480, 480);
+    board.show();
+    QCoreApplication::processEvents();
+    const QImage plain = board.grab().toImage();
+
+    const Rules::Move e4{{6, 4}, {4, 4}, Rules::PieceType::None};
+    const Rules::Move d4{{6, 3}, {4, 3}, Rules::PieceType::None};
+    board.setEngineLineArrows({{e4, 1, 0.0}, {d4, 2, 150.0}});
+    QCoreApplication::processEvents();
+    QCOMPARE(board.engineLineArrows().size(), std::size_t{2});
+    const QImage withArrows = board.grab().toImage();
+    QVERIFY(withArrows != plain);
+
+    // Emphasising one line changes the drawing, and undoing it restores it.
+    board.setHighlightedEngineLine(2);
+    QCoreApplication::processEvents();
+    QVERIFY(board.grab().toImage() != withArrows);
+    board.setHighlightedEngineLine(0);
+    QCoreApplication::processEvents();
+    QVERIFY(board.grab().toImage() == withArrows);
+
+    // The variations belong to the position they were computed for.
+    board.setRules(Rules{});
+    QVERIFY(board.engineLineArrows().empty());
+    QCoreApplication::processEvents();
+    QVERIFY(board.grab().toImage() == plain);
 }
 
 QTEST_MAIN(ChessBoardTest)

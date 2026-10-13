@@ -152,6 +152,10 @@ class GameControllerTest : public QObject {
     Q_OBJECT
 
 private slots:
+    void testVariationIsKeptWhenBranching();
+    void testSelectPromoteAndDeleteVariation();
+    void testVariationsRoundTripThroughPgn();
+    void testTakeBackKeepsVariations();
     void initTestCase();
     void testInitialState();
     void testLoadFen();
@@ -458,7 +462,8 @@ void GameControllerTest::testStepBackTruncatesHistory() {
     QVERIFY(controller.stepBack());
     QCOMPARE(controller.moveCursor(), 2);
 
-    // A move played from the middle discards the abandoned continuation.
+    // A move played from the middle branches: the abandoned continuation
+    // stays in the game as the main line, the new move is a variation.
     QVERIFY(controller.requestMove({7, 6}, {5, 5})); // g1f3
     QCOMPARE(controller.uciMoves(),
              QStringList({QStringLiteral("e2e4"), QStringLiteral("e7e5"),
@@ -467,8 +472,8 @@ void GameControllerTest::testStepBackTruncatesHistory() {
     QCOMPARE(controller.rules().currentPlayer(), Rules::Color::Black);
     QVERIFY(!controller.canStepForward());
     QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 e5")));
-    QVERIFY(controller.pgnText().contains(QStringLiteral("2. Nf3")));
-    QVERIFY(!controller.pgnText().contains(QStringLiteral("c3")));
+    QVERIFY(controller.pgnText().contains(QStringLiteral("1. e4 e5 2. c4 (2. Nf3)")));
+    QCOMPARE(controller.variationCount(), 1);
     QCOMPARE(historySpy.count(), 4);
 }
 
@@ -1083,7 +1088,7 @@ void GameControllerTest::testEvaluationCurve() {
         QVERIFY(value >= 0.0 && value <= 100.0);
     }
 
-    // Playing from the middle discards the abandoned line with its points.
+    // Playing from the middle shows the new line with its own points.
     QVERIFY(controller.goToMove(1));
     QVERIFY(controller.requestMove({0, 1}, {2, 2}));
     QCOMPARE(controller.evaluationCurve().size(), 3);
@@ -1659,6 +1664,124 @@ void GameControllerTest::testEvaluationCurveCanBeCancelled() {
     QCOMPARE(controller.evaluationCurve(), staticCurve);
     QCOMPARE(controller.evaluationCurveAnalysedCount(), -1);
     HeuristicEval::setSearchThreads(0);
+}
+
+void GameControllerTest::testVariationIsKeptWhenBranching() {
+    GameController controller;
+    QVERIFY(controller.requestMove({6, 4}, {4, 4})); // e4
+    QVERIFY(controller.requestMove({1, 4}, {3, 4})); // e5
+    QVERIFY(controller.requestMove({7, 6}, {5, 5})); // Nf3
+    QVERIFY(controller.requestMove({0, 1}, {2, 2})); // Nc6
+    QVERIFY(controller.variations().isEmpty());
+
+    // Back to move 1 (after 1. e4) and play 1... c5.
+    QVERIFY(controller.goToMove(1));
+    QVERIFY(controller.requestMove({1, 2}, {3, 2}));
+    QCOMPARE(controller.uciMoves(),
+             QStringList({QStringLiteral("e2e4"), QStringLiteral("c7c5")}));
+    QCOMPARE(controller.moveCursor(), 2);
+    QCOMPARE(controller.variationCount(), 1);
+
+    // The old continuation is an alternative to the displayed line.
+    const auto variations = controller.variations();
+    QCOMPARE(variations.size(), 1);
+    QCOMPARE(variations.first().ply, 2);
+    QVERIFY(variations.first().mainLine);
+    QCOMPARE(variations.first().text, QStringLiteral("1... e5 2. Nf3 Nc6"));
+
+    // Playing the move of the stored continuation follows it again.
+    QVERIFY(controller.goToMove(1));
+    QVERIFY(controller.requestMove({1, 4}, {3, 4}));
+    QCOMPARE(controller.uciMoves().size(), 4);
+    QCOMPARE(controller.variationCount(), 1);
+    QCOMPARE(controller.pgnText(),
+             QStringLiteral("1. e4 e5 (1... c5) 2. Nf3 Nc6"));
+}
+
+void GameControllerTest::testSelectPromoteAndDeleteVariation() {
+    GameController controller;
+    QVERIFY(controller.loadPgn(
+        QStringLiteral("1. e4 e5 (1... c5 2. Nf3 d6) 2. Nf3 Nc6 (2... d6) 3. Bb5 *")));
+    QCOMPARE(controller.variationCount(), 2);
+    QCOMPARE(controller.uciMoves().size(), 5);
+
+    // Both alternatives are listed against the main line.
+    auto variations = controller.variations();
+    QCOMPARE(variations.size(), 2);
+    QCOMPARE(variations.at(0).text, QStringLiteral("1... c5 2. Nf3 d6"));
+    QCOMPARE(variations.at(1).text, QStringLiteral("2... d6"));
+    QVERIFY(!variations.at(0).mainLine);
+
+    QVERIFY(controller.selectVariation(variations.at(0).nodeId));
+    QCOMPARE(controller.uciMoves(),
+             QStringList({"e2e4", "c7c5", "g1f3", "d7d6"}));
+    QCOMPARE(controller.moveCursor(), 2);
+    QCOMPARE(controller.pgnMoves().first(), QStringLiteral("1. e4 c5"));
+    // The curve follows the displayed line.
+    QCOMPARE(controller.evaluationCurve().size(), 5);
+    // The previous main line is now the alternative at the branch point.
+    variations = controller.variations();
+    QCOMPARE(variations.size(), 1);
+    QVERIFY(variations.first().mainLine);
+    QCOMPARE(variations.first().text, QStringLiteral("1... e5 2. Nf3 Nc6 3. Bb5"));
+
+    // Back on the main line, the c5 line is an alternative that can become
+    // the main line, which swaps the two in the export.
+    QVERIFY(controller.selectVariation(variations.first().nodeId));
+    variations = controller.variations();
+    QVERIFY(controller.promoteVariation(variations.first().nodeId));
+    QCOMPARE(controller.pgnText(),
+             QStringLiteral("1. e4 c5 (1... e5 2. Nf3 Nc6 (2... d6) 3. Bb5) 2. Nf3 d6"));
+    // The displayed line did not move.
+    QCOMPARE(controller.uciMoves().size(), 5);
+
+    // Deleting the other line leaves the rest of the tree alone.
+    variations = controller.variations();
+    QCOMPARE(variations.size(), 2);
+    QCOMPARE(variations.first().ply, 2);
+    QVERIFY(controller.deleteVariation(variations.first().nodeId));
+    QCOMPARE(controller.variationCount(), 1);
+    QVERIFY(!controller.pgnText().contains(QStringLiteral("c5")));
+
+    // A move of the displayed line cannot be deleted as a variation.
+    QVERIFY(!controller.deleteVariation(0));
+}
+
+void GameControllerTest::testVariationsRoundTripThroughPgn() {
+    const QString pgn = QStringLiteral(
+        "[Event \"x\"]\n[Result \"*\"]\n\n1. e4 e5 (1... c5 { sicilian } 2. Nf3 "
+        "(2. c3)) 2. Nf3 Nc6 (2... d6 3. d4) 3. Bb5 *");
+    GameController controller;
+    QVERIFY(controller.loadPgn(pgn));
+    QCOMPARE(controller.variationCount(), 3);
+
+    const QString exported = controller.pgnText();
+    QVERIFY(exported.contains(QStringLiteral(
+        "1. e4 e5 (1... c5 { sicilian } 2. Nf3 (2. c3)) 2. Nf3 Nc6 (2... d6 3. d4) 3. Bb5")));
+
+    // The export reads back to the same tree.
+    GameController reloaded;
+    QVERIFY(reloaded.loadPgn(exported));
+    QCOMPARE(reloaded.variationCount(), 3);
+    QCOMPARE(reloaded.pgnText(), exported);
+
+    // A comment kept on a variation stays on it when the line is displayed.
+    const auto variations = controller.variations();
+    QVERIFY(controller.selectVariation(variations.first().nodeId));
+    QCOMPARE(controller.commentAt(2), QStringLiteral("sicilian"));
+    QCOMPARE(controller.pgnText(), exported);
+}
+
+void GameControllerTest::testTakeBackKeepsVariations() {
+    GameController controller;
+    QVERIFY(controller.loadPgn(QStringLiteral("1. e4 e5 (1... c5) 2. Nf3 *")));
+    QCOMPARE(controller.variationCount(), 1);
+    QVERIFY(controller.takeBack());
+    QVERIFY(controller.takeBack());
+    // The e5 move carries no variation of its own below it, but its sibling
+    // keeps the tree: only the displayed line got shorter.
+    QCOMPARE(controller.variationCount(), 0 + (controller.pgnText().contains(QLatin1Char('(')) ? 1 : 0));
+    QCOMPARE(controller.uciMoves(), QStringList({QStringLiteral("e2e4")}));
 }
 
 QTEST_GUILESS_MAIN(GameControllerTest)
