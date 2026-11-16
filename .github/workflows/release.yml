@@ -341,7 +341,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          archives: qtbase qtsvg
+          archives: qtbase qtsvg icu
           cache: true
 
       - name: Download ONNX Runtime 1.23.2
