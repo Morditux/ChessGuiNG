@@ -30,6 +30,7 @@ class QEvent;
 class QMouseEvent;
 class QPainter;
 class QColor;
+class QVariantAnimation;
 
 class ChessBoard : public QWidget {
     Q_OBJECT
@@ -41,8 +42,30 @@ class ChessBoard : public QWidget {
                WRITE setCheckHighlightingEnabled)
     Q_PROPERTY(bool boardFlipped READ boardFlipped WRITE setBoardFlipped
                NOTIFY boardFlippedChanged)
+    Q_PROPERTY(bool moveAnimationsEnabled READ moveAnimationsEnabled
+               WRITE setMoveAnimationsEnabled)
+    Q_PROPERTY(BoardTheme boardTheme READ boardTheme WRITE setBoardTheme
+               NOTIFY boardThemeChanged)
 
 public:
+    enum class BoardTheme {
+        Classic = 0,
+        Green = 1,
+        Blue = 2,
+        Slate = 3
+    };
+    Q_ENUM(BoardTheme)
+
+    struct ThemeColors {
+        QColor lightSquare;
+        QColor darkSquare;
+        QColor border;
+    };
+
+    [[nodiscard]] static ThemeColors colorsForTheme(BoardTheme theme);
+    [[nodiscard]] static QString themeKey(BoardTheme theme);
+    [[nodiscard]] static BoardTheme themeFromKey(const QString &key);
+
     explicit ChessBoard(QWidget *parent = nullptr);
 
     ~ChessBoard() override;
@@ -55,6 +78,10 @@ public:
     [[nodiscard]] bool checkHighlightingEnabled() const;
     void setBoardFlipped(bool flipped);
     [[nodiscard]] bool boardFlipped() const;
+    void setMoveAnimationsEnabled(bool enabled);
+    [[nodiscard]] bool moveAnimationsEnabled() const;
+    void setBoardTheme(BoardTheme theme);
+    [[nodiscard]] BoardTheme boardTheme() const;
     [[nodiscard]] const Rules &rules() const;
     void setRules(const Rules &rules);
     void reset();
@@ -99,6 +126,7 @@ signals:
     void pieceMoved(QChar piece, Rules::Position oldPosition,
                     Rules::Position newPosition);
     void boardFlippedChanged(bool flipped);
+    void boardThemeChanged(BoardTheme theme);
     void userAnnotationsChanged();
 
 protected:
@@ -137,6 +165,15 @@ private:
     bool lastMoveHighlightingEnabled_ = true;
     bool checkHighlightingEnabled_ = true;
     bool boardFlipped_ = false;
+    bool moveAnimationsEnabled_ = true;
+    bool skipNextMoveAnimation_ = false;
+    BoardTheme boardTheme_ = BoardTheme::Classic;
+    QVariantAnimation *moveAnimation_ = nullptr;
+    std::optional<Rules::Move> animatedMove_;
+    std::optional<Rules::Piece> animatedPiece_;
+    std::optional<Rules::Move> animatedRookMove_;
+    std::optional<Rules::Piece> animatedRookPiece_;
+    qreal animationProgress_ = 1.0;
     std::optional<Rules::Move> computerMovePreview_;
     std::optional<Rules::Move> recommendedMovePreview_;
     std::vector<EngineLineArrow> engineLineArrows_;
@@ -156,10 +193,12 @@ private:
     [[nodiscard]] QRect squareRect(Rules::Position position) const;
     [[nodiscard]] std::optional<Rules::Position> kingPosition(Rules::Color color) const;
     [[nodiscard]] bool isLegalDestination(Rules::Position position) const;
+    [[nodiscard]] bool isCaptureDestination(Rules::Position position) const;
     [[nodiscard]] bool isCurrentPlayerPiece(Rules::Position position) const;
 
     void selectPosition(Rules::Position position);
     void clearSelection();
+    void stopMoveAnimation();
     void handleClick(Rules::Position position);
     [[nodiscard]] bool tryMoveTo(Rules::Position position);
     void updateHoveredPosition(const QPoint &point);

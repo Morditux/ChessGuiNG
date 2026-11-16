@@ -151,6 +151,16 @@ bool AppConfig::load() {
         QStringLiteral("engineLineArrows"), engineLineArrowsEnabled_).toBool();
     settings.endGroup();
 
+    settings.beginGroup(QStringLiteral("Board"));
+    animateMovesEnabled_ = settings.value(
+        QStringLiteral("animateMoves"), animateMovesEnabled_).toBool();
+    boardTheme_ = settings.value(
+        QStringLiteral("theme"), boardTheme_).toString().trimmed().toLower();
+    if (boardTheme_.isEmpty()) {
+        boardTheme_ = QStringLiteral("classic");
+    }
+    settings.endGroup();
+
     settings.beginGroup(QStringLiteral("EngineOutput"));
     const bool hasDetailsState = settings.contains(QStringLiteral("detailsVisible"));
     if (hasDetailsState) {
@@ -282,6 +292,11 @@ bool AppConfig::save() const {
     settings.setValue(QStringLiteral("lastMoveHighlight"), highlightLastMoveEnabled_);
     settings.setValue(QStringLiteral("checkHighlight"), highlightCheckEnabled_);
     settings.setValue(QStringLiteral("engineLineArrows"), engineLineArrowsEnabled_);
+    settings.endGroup();
+
+    settings.beginGroup(QStringLiteral("Board"));
+    settings.setValue(QStringLiteral("animateMoves"), animateMovesEnabled_);
+    settings.setValue(QStringLiteral("theme"), boardTheme_);
     settings.endGroup();
 
     settings.beginGroup(QStringLiteral("EngineOutput"));
@@ -513,6 +528,23 @@ void AppConfig::setEngineLineArrowsEnabled(bool enabled) {
     engineLineArrowsEnabled_ = enabled;
 }
 
+bool AppConfig::animateMovesEnabled() const {
+    return animateMovesEnabled_;
+}
+
+void AppConfig::setAnimateMovesEnabled(bool enabled) {
+    animateMovesEnabled_ = enabled;
+}
+
+QString AppConfig::boardTheme() const {
+    return boardTheme_;
+}
+
+void AppConfig::setBoardTheme(const QString &theme) {
+    const QString normalized = theme.trimmed().toLower();
+    boardTheme_ = normalized.isEmpty() ? QStringLiteral("classic") : normalized;
+}
+
 bool AppConfig::engineAnalysisSectionVisible() const {
     return engineAnalysisSectionVisible_;
 }
@@ -660,6 +692,8 @@ void AppConfig::resetToDefaults() {
     highlightLastMoveEnabled_ = true;
     highlightCheckEnabled_ = true;
     engineLineArrowsEnabled_ = true;
+    animateMovesEnabled_ = true;
+    boardTheme_ = QStringLiteral("classic");
     engineAnalysisSectionVisible_ = false;
     engineLogSectionVisible_ = false;
     engineDetailsVisible_ = false;

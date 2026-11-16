@@ -31,6 +31,7 @@ class QThread;
 class VisionWorker;
 class UciEngine;
 class QAction;
+class QActionGroup;
 class QCheckBox;
 class QCloseEvent;
 class QEvent;
@@ -86,6 +87,9 @@ public:
     [[nodiscard]] QAction *highlightLastMoveAction() const;
     [[nodiscard]] QAction *highlightCheckAction() const;
     [[nodiscard]] QAction *engineLineArrowsAction() const;
+    [[nodiscard]] QAction *animateMovesAction() const;
+    [[nodiscard]] QAction *editPositionAction() const;
+    [[nodiscard]] QActionGroup *boardThemeGroup() const;
     [[nodiscard]] QLabel *visionStatusLabel() const;
     [[nodiscard]] QAction *clearAnnotationsAction() const;
     [[nodiscard]] QAction *claimDrawAction() const;
@@ -142,6 +146,8 @@ public slots:
     void setLastMoveHighlightingEnabled(bool enabled);
     void setCheckHighlightingEnabled(bool enabled);
     void setEngineLineArrowsEnabled(bool enabled);
+    void setMoveAnimationsEnabled(bool enabled);
+    void editPosition();
     void setWhiteToMove(bool whiteToMove);
     void stepBack();
     void stepForward();
@@ -299,6 +305,9 @@ private:
     QAction *highlightLastMoveAction_ = nullptr;
     QAction *highlightCheckAction_ = nullptr;
     QAction *engineLineArrowsAction_ = nullptr;
+    QAction *animateMovesAction_ = nullptr;
+    QAction *editPositionAction_ = nullptr;
+    QActionGroup *boardThemeGroup_ = nullptr;
     QAction *flipBoardAction_ = nullptr;
     QAction *toggleAnalysisAction_ = nullptr;
     QAction *stopEngineAction_ = nullptr;

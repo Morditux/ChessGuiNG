@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(ChessGui
-        VERSION 1.1.1
+        VERSION 1.2.0
         LANGUAGES CXX
 )
 
@@ -209,6 +209,8 @@ add_library(chessapp OBJECT
         mainwindow.h
         pgnselectdialog.cpp
         pgnselectdialog.h
+        positioneditordialog.cpp
+        positioneditordialog.h
         promotiondialog.cpp
         promotiondialog.h
         remoteenginedialog.cpp
@@ -285,6 +287,7 @@ if (TARGET Qt6::lupdate AND TARGET Qt6::lrelease AND EXISTS "${CMAKE_CURRENT_SOU
                 visionworker.cpp visionworker.h
                 mainwindow.cpp mainwindow.h
                 pgnselectdialog.cpp pgnselectdialog.h
+                positioneditordialog.cpp positioneditordialog.h
                 promotiondialog.cpp promotiondialog.h
                 remoteenginedialog.cpp remoteenginedialog.h
                 ucioptionsdialog.cpp ucioptionsdialog.h
@@ -514,4 +517,10 @@ if (TARGET Qt6::Test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     )
     target_link_libraries(AnalysisReportDialogTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
     add_test(NAME AnalysisReportDialogTest COMMAND AnalysisReportDialogTest)
+
+    qt_add_executable(PositionEditorDialogTest
+            tests/positioneditordialog_test.cpp
+    )
+    target_link_libraries(PositionEditorDialogTest PRIVATE chessapp chesscore chessui chessvision Qt6::Test)
+    add_test(NAME PositionEditorDialogTest COMMAND PositionEditorDialogTest)
 endif()

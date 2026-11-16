@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QAction>
+#include <QEasingCurve>
 #include <QEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -18,7 +19,9 @@
 #include <QStringList>
 #include <QMenuBar>
 #include <QMenu>
+#include <QVariantAnimation>
 #include <algorithm>
+#include <cstdlib>
 
 namespace {
 
@@ -71,6 +74,72 @@ ChessBoard::ChessBoard(QWidget *parent) : QWidget(parent), ui(new Ui::ChessBoard
         }
     }
 
+    moveAnimation_ = new QVariantAnimation(this);
+    moveAnimation_->setDuration(120);
+    moveAnimation_->setEasingCurve(QEasingCurve::OutCubic);
+    connect(moveAnimation_, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &value) {
+                animationProgress_ = value.toReal();
+                update();
+            });
+    connect(moveAnimation_, &QVariantAnimation::finished, this, [this] {
+        animatedMove_.reset();
+        animatedPiece_.reset();
+        animatedRookMove_.reset();
+        animatedRookPiece_.reset();
+        animationProgress_ = 1.0;
+        update();
+    });
+}
+
+ChessBoard::ThemeColors ChessBoard::colorsForTheme(BoardTheme theme) {
+    switch (theme) {
+    case BoardTheme::Green:
+        return {QColor(QStringLiteral("#eeeed2")),
+                QColor(QStringLiteral("#769656")),
+                QColor(QStringLiteral("#4f6639"))};
+    case BoardTheme::Blue:
+        return {QColor(QStringLiteral("#dee3e6")),
+                QColor(QStringLiteral("#8ca2ad")),
+                QColor(QStringLiteral("#4a606b"))};
+    case BoardTheme::Slate:
+        return {QColor(QStringLiteral("#dcdcdc")),
+                QColor(QStringLiteral("#808a94")),
+                QColor(QStringLiteral("#474e54"))};
+    case BoardTheme::Classic:
+        break;
+    }
+    return {QColor(QStringLiteral("#f0d9b5")),
+            QColor(QStringLiteral("#b58863")),
+            QColor(QStringLiteral("#5c4033"))};
+}
+
+QString ChessBoard::themeKey(BoardTheme theme) {
+    switch (theme) {
+    case BoardTheme::Green:
+        return QStringLiteral("green");
+    case BoardTheme::Blue:
+        return QStringLiteral("blue");
+    case BoardTheme::Slate:
+        return QStringLiteral("slate");
+    case BoardTheme::Classic:
+        return QStringLiteral("classic");
+    }
+    return QStringLiteral("classic");
+}
+
+ChessBoard::BoardTheme ChessBoard::themeFromKey(const QString &key) {
+    const QString normalized = key.trimmed().toLower();
+    if (normalized == QLatin1String("green")) {
+        return BoardTheme::Green;
+    }
+    if (normalized == QLatin1String("blue")) {
+        return BoardTheme::Blue;
+    }
+    if (normalized == QLatin1String("slate")) {
+        return BoardTheme::Slate;
+    }
+    return BoardTheme::Classic;
 }
 
 ChessBoard::~ChessBoard() {
@@ -121,6 +190,7 @@ void ChessBoard::setBoardFlipped(bool flipped) {
         return;
     }
 
+    stopMoveAnimation();
     boardFlipped_ = flipped;
     selectedPosition_.reset();
     legalMoves_.clear();
@@ -139,11 +209,96 @@ bool ChessBoard::boardFlipped() const {
     return boardFlipped_;
 }
 
+void ChessBoard::setMoveAnimationsEnabled(bool enabled) {
+    if (moveAnimationsEnabled_ == enabled) {
+        return;
+    }
+    moveAnimationsEnabled_ = enabled;
+    if (!enabled) {
+        stopMoveAnimation();
+        update();
+    }
+}
+
+bool ChessBoard::moveAnimationsEnabled() const {
+    return moveAnimationsEnabled_;
+}
+
+void ChessBoard::setBoardTheme(BoardTheme theme) {
+    if (boardTheme_ == theme) {
+        return;
+    }
+    boardTheme_ = theme;
+    emit boardThemeChanged(boardTheme_);
+    update();
+}
+
+ChessBoard::BoardTheme ChessBoard::boardTheme() const {
+    return boardTheme_;
+}
+
+void ChessBoard::stopMoveAnimation() {
+    if (moveAnimation_ != nullptr &&
+        moveAnimation_->state() == QAbstractAnimation::Running) {
+        moveAnimation_->stop();
+    }
+    animatedMove_.reset();
+    animatedPiece_.reset();
+    animatedRookMove_.reset();
+    animatedRookPiece_.reset();
+    animationProgress_ = 1.0;
+}
+
 const Rules &ChessBoard::rules() const {
     return rules_;
 }
 
 void ChessBoard::setRules(const Rules &rules) {
+    const bool skipAnimation = skipNextMoveAnimation_;
+    skipNextMoveAnimation_ = false;
+    stopMoveAnimation();
+
+    const std::optional<Rules::Move> lastMove = rules.lastMove();
+    const bool shouldAnimate =
+        moveAnimationsEnabled_ && !skipAnimation && isVisible() &&
+        lastMove.has_value() &&
+        rules_.currentPlayer() != rules.currentPlayer() &&
+        rules_.pieceAt(lastMove->from).has_value() &&
+        !rules.pieceAt(lastMove->from).has_value() &&
+        rules.pieceAt(lastMove->to).has_value();
+
+    std::optional<Rules::Move> animMove;
+    std::optional<Rules::Piece> animPiece;
+    std::optional<Rules::Move> rookMove;
+    std::optional<Rules::Piece> rookPiece;
+    if (shouldAnimate) {
+        const auto oldFrom = rules_.pieceAt(lastMove->from);
+        const auto newTo = rules.pieceAt(lastMove->to);
+        if (oldFrom->color != rules.currentPlayer() &&
+            newTo->color == oldFrom->color) {
+            animMove = *lastMove;
+            animPiece = *newTo;
+            if (newTo->type == Rules::PieceType::King &&
+                std::abs(lastMove->to.column - lastMove->from.column) == 2) {
+                const int row = lastMove->from.row;
+                const bool kingSide = lastMove->to.column > lastMove->from.column;
+                const Rules::Position rookFrom{row, kingSide ? 7 : 0};
+                const Rules::Position rookTo{row, kingSide ? 5 : 3};
+                const auto oldRook = rules_.pieceAt(rookFrom);
+                const auto newRook = rules.pieceAt(rookTo);
+                if (oldRook.has_value() &&
+                    oldRook->type == Rules::PieceType::Rook &&
+                    oldRook->color == newTo->color &&
+                    newRook.has_value() &&
+                    newRook->type == Rules::PieceType::Rook &&
+                    newRook->color == newTo->color) {
+                    rookMove = Rules::Move{rookFrom, rookTo};
+                    rookPiece = *newRook;
+                }
+            }
+        }
+    }
+
     rules_ = rules;
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
@@ -151,10 +306,24 @@ void ChessBoard::setRules(const Rules &rules) {
     engineLineArrows_.clear();
     clearSelection();
     clearUserAnnotations();
+
+    if (animMove.has_value() && animPiece.has_value() && moveAnimation_ != nullptr) {
+        animatedMove_ = animMove;
+        animatedPiece_ = animPiece;
+        animatedRookMove_ = rookMove;
+        animatedRookPiece_ = rookPiece;
+        animationProgress_ = 0.0;
+        moveAnimation_->setStartValue(0.0);
+        moveAnimation_->setEndValue(1.0);
+        moveAnimation_->start();
+    }
+
     update();
 }
 
 void ChessBoard::reset() {
+    skipNextMoveAnimation_ = false;
+    stopMoveAnimation();
     rules_.reset();
     computerMovePreview_.reset();
     recommendedMovePreview_.reset();
@@ -386,6 +555,21 @@ bool ChessBoard::isLegalDestination(Rules::Position position) const {
            legalMoves_.cend();
 }
 
+bool ChessBoard::isCaptureDestination(Rules::Position position) const {
+    if (rules_.pieceAt(position).has_value()) {
+        return true;
+    }
+    if (selectedPosition_.has_value()) {
+        const auto selectedPiece = rules_.pieceAt(*selectedPosition_);
+        if (selectedPiece.has_value() &&
+            selectedPiece->type == Rules::PieceType::Pawn &&
+            position.column != selectedPosition_->column) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<Rules::Position> ChessBoard::kingPosition(Rules::Color color) const {
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
@@ -601,7 +785,11 @@ void ChessBoard::mouseReleaseEvent(QMouseEvent *event) {
     if (dragging_) {
         bool moveCompleted = false;
         if (releasedPosition.has_value()) {
+            skipNextMoveAnimation_ = true;
             moveCompleted = tryMoveTo(*releasedPosition);
+            if (!moveCompleted) {
+                skipNextMoveAnimation_ = false;
+            }
         }
 
         if (!moveCompleted && selectedPosition_.has_value()) {
@@ -706,7 +894,7 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.fillRect(rect(), QColor("#f7f3eb"));
+    painter.fillRect(rect(), palette().color(QPalette::Window));
 
     const int leftMargin = 28;
     const int bottomMargin = 28;
@@ -715,8 +903,9 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
         return;
     }
 
-    const QColor lightSquare("#f0d9b5");
-    const QColor darkSquare("#b58863");
+    const ThemeColors themeColors = colorsForTheme(boardTheme_);
+    const QColor lightSquare = themeColors.lightSquare;
+    const QColor darkSquare = themeColors.darkSquare;
 
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
@@ -738,12 +927,6 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
     }
 
     if (legalMoveHighlightingEnabled_) {
-        QColor legalMoveColor("#83b85c");
-        legalMoveColor.setAlpha(115);
-        for (const Rules::Position position : legalMoves_) {
-            painter.fillRect(squareRect(position), legalMoveColor);
-        }
-
         if (selectedPosition_.has_value()) {
             QColor selectedColor("#e8c65a");
             selectedColor.setAlpha(180);
@@ -753,9 +936,29 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
         if (hoveredPosition_.has_value() &&
             isLegalDestination(*hoveredPosition_)) {
             QColor hoveredColor("#6fae4f");
-            hoveredColor.setAlpha(155);
+            hoveredColor.setAlpha(135);
             painter.fillRect(squareRect(*hoveredPosition_), hoveredColor);
         }
+
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const QColor indicatorColor(36, 92, 42, 145);
+        for (const Rules::Position position : legalMoves_) {
+            const QRectF sq(squareRect(position));
+            if (isCaptureDestination(position)) {
+                const qreal penWidth = std::max(2.5, geometry.squareSize * 0.085);
+                const qreal inset = penWidth * 0.5 + geometry.squareSize * 0.04;
+                painter.setPen(QPen(indicatorColor, penWidth));
+                painter.setBrush(Qt::NoBrush);
+                painter.drawEllipse(sq.adjusted(inset, inset, -inset, -inset));
+            } else {
+                const qreal radius = std::max(4.0, geometry.squareSize * 0.16);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(indicatorColor);
+                painter.drawEllipse(sq.center(), radius, radius);
+            }
+        }
+        painter.restore();
     }
 
     // A checked king is easy to miss with only the '+ ' of the notation: the
@@ -796,12 +999,21 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
         }
     }
 
+    const bool isAnimating =
+        moveAnimation_ != nullptr &&
+        moveAnimation_->state() == QAbstractAnimation::Running;
+
     painter.setRenderHint(QPainter::Antialiasing, true);
     for (int row = 0; row < 8; ++row) {
         for (int column = 0; column < 8; ++column) {
             const Rules::Position position{row, column};
             if (dragging_ && selectedPosition_.has_value() &&
                 position == *selectedPosition_) {
+                continue;
+            }
+            if (isAnimating &&
+                ((animatedMove_.has_value() && position == animatedMove_->to) ||
+                 (animatedRookMove_.has_value() && position == animatedRookMove_->to))) {
                 continue;
             }
 
@@ -837,6 +1049,33 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
                     padding, padding, -padding, -padding));
             }
         }
+    }
+
+    if (isAnimating) {
+        const auto drawAnimatedPiece = [&](const std::optional<Rules::Move> &move,
+                                           const std::optional<Rules::Piece> &piece) {
+            if (!move.has_value() || !piece.has_value()) {
+                return;
+            }
+            const auto renderer = pieceRenderers.constFind(pieceName(*piece));
+            if (renderer == pieceRenderers.cend()) {
+                return;
+            }
+            const QPointF fromCenter = QRectF(squareRect(move->from)).center();
+            const QPointF toCenter = QRectF(squareRect(move->to)).center();
+            const QPointF currentCenter =
+                fromCenter + (toCenter - fromCenter) * animationProgress_;
+            const QRectF animSquare(
+                currentCenter.x() - geometry.squareSize / 2.0,
+                currentCenter.y() - geometry.squareSize / 2.0,
+                geometry.squareSize,
+                geometry.squareSize);
+            const qreal padding = geometry.squareSize * 0.06;
+            renderer.value()->render(&painter, animSquare.adjusted(
+                padding, padding, -padding, -padding));
+        };
+        drawAnimatedPiece(animatedRookMove_, animatedRookPiece_);
+        drawAnimatedPiece(animatedMove_, animatedPiece_);
     }
 
     // Weakest lines first so that the best one is never hidden under another.
@@ -905,14 +1144,16 @@ void ChessBoard::paintEvent(QPaintEvent *event) {
 
     painter.setRenderHint(QPainter::Antialiasing, false);
 
-    painter.setPen(QPen(QColor("#5c4033"), 2));
+    painter.setPen(QPen(themeColors.border, 2));
     painter.drawRect(geometry.boardX, geometry.boardY,
                      geometry.boardSide - 1, geometry.boardSide - 1);
 
     QFont coordinateFont = font();
     coordinateFont.setBold(true);
     painter.setFont(coordinateFont);
-    painter.setPen(QColor("#5c4033"));
+    QColor coordinateColor = palette().color(QPalette::WindowText);
+    coordinateColor.setAlpha(200);
+    painter.setPen(coordinateColor);
 
     for (int column = 0; column < 8; ++column) {
         const int fileColumn = boardFlipped_ ? 7 - column : column;

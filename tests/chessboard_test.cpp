@@ -25,6 +25,9 @@ private slots:
     void testPaintedBoardRect();
     void testCheckHighlight();
     void testEngineLineArrows();
+    void testBoardThemes();
+    void testLegalMoveCaptureIndicators();
+    void testMoveAnimationsToggle();
 };
 
 void ChessBoardTest::testSquareAnnotationToggle() {
@@ -329,6 +332,79 @@ void ChessBoardTest::testEngineLineArrows() {
     QVERIFY(board.engineLineArrows().empty());
     QCoreApplication::processEvents();
     QVERIFY(board.grab().toImage() == plain);
+}
+
+void ChessBoardTest::testBoardThemes() {
+    ChessBoard board;
+    QCOMPARE(board.boardTheme(), ChessBoard::BoardTheme::Classic);
+    QCOMPARE(ChessBoard::themeKey(ChessBoard::BoardTheme::Green), QStringLiteral("green"));
+    QCOMPARE(ChessBoard::themeFromKey(QStringLiteral("blue")), ChessBoard::BoardTheme::Blue);
+    QCOMPARE(ChessBoard::themeFromKey(QStringLiteral("SLATE")), ChessBoard::BoardTheme::Slate);
+    QCOMPARE(ChessBoard::themeFromKey(QStringLiteral("unknown")), ChessBoard::BoardTheme::Classic);
+
+    board.resize(480, 480);
+    board.show();
+    QCoreApplication::processEvents();
+    const QImage classicImg = board.grab().toImage();
+
+    QSignalSpy spy(&board, &ChessBoard::boardThemeChanged);
+    board.setBoardTheme(ChessBoard::BoardTheme::Green);
+    QCOMPARE(spy.count(), 1);
+    QCoreApplication::processEvents();
+    const QImage greenImg = board.grab().toImage();
+    QVERIFY(greenImg != classicImg);
+
+    // Changing palette (e.g. dark mode) updates the surrounding background.
+    QPalette darkPal = board.palette();
+    darkPal.setColor(QPalette::Window, QColor("#202225"));
+    board.setPalette(darkPal);
+    QCoreApplication::processEvents();
+    const QImage darkBgImg = board.grab().toImage();
+    QVERIFY(darkBgImg != greenImg);
+}
+
+void ChessBoardTest::testLegalMoveCaptureIndicators() {
+    ChessBoard board;
+    board.resize(480, 480);
+    board.show();
+    QCoreApplication::processEvents();
+
+    // White knight on g1 can jump to f3/h3 (quiet), and white queen on d1 can
+    // capture black pawn on d7 if board is open.
+    Rules rules;
+    QVERIFY(rules.loadFen(QStringLiteral("4k3/3p4/8/8/8/8/8/3QK3 w - - 0 1")));
+    board.setRules(rules);
+    QCoreApplication::processEvents();
+    const QImage beforeSelect = board.grab().toImage();
+
+    const QRect squares = board.paintedBoardRect();
+    const int sq = squares.width() / 8;
+    const QPoint d1(squares.left() + 3 * sq + sq / 2, squares.top() + 7 * sq + sq / 2);
+    QTest::mouseClick(&board, Qt::LeftButton, Qt::NoModifier, d1);
+    QCoreApplication::processEvents();
+    const QImage withIndicators = board.grab().toImage();
+    QVERIFY(withIndicators != beforeSelect);
+}
+
+void ChessBoardTest::testMoveAnimationsToggle() {
+    ChessBoard board;
+    QVERIFY(board.moveAnimationsEnabled());
+    board.setMoveAnimationsEnabled(false);
+    QVERIFY(!board.moveAnimationsEnabled());
+    board.setMoveAnimationsEnabled(true);
+    QVERIFY(board.moveAnimationsEnabled());
+
+    board.resize(480, 480);
+    board.show();
+    QCoreApplication::processEvents();
+
+    Rules moved;
+    QVERIFY(moved.tryMove(Rules::Position{6, 4}, Rules::Position{4, 4}));
+    board.setRules(moved);
+    QCoreApplication::processEvents();
+    // Stopping animations clears transient state cleanly.
+    board.setMoveAnimationsEnabled(false);
+    QCoreApplication::processEvents();
 }
 
 QTEST_MAIN(ChessBoardTest)

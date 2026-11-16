@@ -1,0 +1,698 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional existing or new tag name to publish a GitHub Release'
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  windows:
+    name: Build Windows x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          archives: qtbase qtsvg
+          cache: true
+
+      - name: Download ONNX Runtime 1.23.2
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-1.23.2.zip"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-1.23.2"
+          $uri = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip"
+          $expectedHash = "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd"
+
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+              throw "ONNX Runtime checksum mismatch: expected $expectedHash, got $actualHash"
+          }
+
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP -Force
+          $requiredFiles = @(
+              (Join-Path $runtimeRoot "include\onnxruntime_cxx_api.h"),
+              (Join-Path $runtimeRoot "lib\onnxruntime.lib"),
+              (Join-Path $runtimeRoot "lib\onnxruntime.dll"),
+              (Join-Path $runtimeRoot "lib\onnxruntime_providers_shared.dll")
+          )
+          foreach ($file in $requiredFiles) {
+              if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                  throw "ONNX Runtime file is missing: $file"
+              }
+          }
+
+          "ONNXRUNTIME_ROOT=$runtimeRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure Release build
+        shell: pwsh
+        run: |
+          if (-not $env:QT_ROOT_DIR) {
+              throw "install-qt-action did not provide QT_ROOT_DIR"
+          }
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+              "-DCMAKE_BUILD_TYPE=Release" `
+              "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
+              "-DONNXRUNTIME_ROOT=$env:ONNXRUNTIME_ROOT"
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage test runtime files
+        shell: pwsh
+        run: |
+          $testBin = Join-Path $env:GITHUB_WORKSPACE "build\Release"
+          foreach ($runtimeFile in @("onnxruntime.dll", "onnxruntime_providers_shared.dll")) {
+              Copy-Item (Join-Path $env:ONNXRUNTIME_ROOT "lib\$runtimeFile") $testBin -Force
+          }
+
+      - name: Run QtTest suite
+        shell: pwsh
+        run: |
+          $gitBin = Join-Path $env:ProgramFiles "Git\bin"
+          if (Test-Path -LiteralPath (Join-Path $gitBin "bash.exe") -PathType Leaf) {
+              $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$gitBin;$env:PATH"
+          } else {
+              $env:PATH = "$env:ONNXRUNTIME_ROOT\lib;$env:PATH"
+          }
+          ctest --test-dir build -C Release --output-on-failure
+
+      - name: Stage executable and runtime files
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:RUNNER_TEMP "chessgui-install"
+          $packageRoot = Join-Path $env:GITHUB_WORKSPACE "ChessGui-windows-x64"
+          if (Test-Path -LiteralPath $installRoot) {
+              Remove-Item -LiteralPath $installRoot -Recurse -Force
+          }
+          if (Test-Path -LiteralPath $packageRoot) {
+              Remove-Item -LiteralPath $packageRoot -Recurse -Force
+          }
+
+          cmake --install build --config Release --prefix $installRoot
+          $installBin = Join-Path $installRoot "bin"
+          $executable = Join-Path $installBin "ChessGui.exe"
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Installed executable is missing: $executable"
+          }
+
+          $windeployqt = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
+          & $windeployqt --release --no-translations $executable
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
+          New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+          Copy-Item -Path (Join-Path $installBin "*") -Destination $packageRoot -Recurse -Force
+
+          $documentationRoot = Join-Path $installRoot "share\doc\chessgui"
+          Copy-Item (Join-Path $documentationRoot "LICENSE") $packageRoot
+          Copy-Item (Join-Path $documentationRoot "THIRD_PARTY_NOTICES.md") $packageRoot
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE "assets\pieces\LICENSE-2.0.txt") `
+              (Join-Path $packageRoot "LICENSE-CHESSNUT.txt")
+
+          $onnxNotices = Join-Path $packageRoot "third-party\onnxruntime"
+          New-Item -ItemType Directory -Path $onnxNotices -Force | Out-Null
+          foreach ($notice in @("LICENSE", "Privacy.md", "ThirdPartyNotices.txt")) {
+              Copy-Item (Join-Path $env:ONNXRUNTIME_ROOT $notice) $onnxNotices
+          }
+
+          "CHESSGUI_PACKAGE_ROOT=$packageRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Validate Windows package contents
+        shell: pwsh
+        run: |
+          $packageRoot = $env:CHESSGUI_PACKAGE_ROOT
+          $requiredFiles = @(
+              "ChessGui.exe",
+              "onnxruntime.dll",
+              "onnxruntime_providers_shared.dll",
+              "model\chess-tiles-v2.onnx",
+              "platforms\qwindows.dll",
+              "LICENSE",
+              "THIRD_PARTY_NOTICES.md",
+              "LICENSE-CHESSNUT.txt",
+              "third-party\onnxruntime\LICENSE",
+              "third-party\onnxruntime\Privacy.md",
+              "third-party\onnxruntime\ThirdPartyNotices.txt"
+          )
+          foreach ($relativePath in $requiredFiles) {
+              $path = Join-Path $packageRoot $relativePath
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                  throw "Windows package file is missing: $relativePath"
+              }
+          }
+
+      - name: Create Windows ZIP
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE "ChessGui-windows-x64.zip"
+          if (Test-Path -LiteralPath $zip) {
+              Remove-Item -LiteralPath $zip -Force
+          }
+          Compress-Archive -Path (Join-Path $env:CHESSGUI_PACKAGE_ROOT "*") `
+              -DestinationPath $zip -CompressionLevel Optimal
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+              throw "Windows ZIP was not created: $zip"
+          }
+
+      - name: Upload Windows asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: ChessGui-windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    name: Build macOS ARM
+    runs-on: macos-15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          host: mac
+          target: desktop
+          arch: clang_64
+          archives: qtbase qtsvg
+          cache: true
+
+      - name: Download ONNX Runtime 1.23.2
+        env:
+          ONNXRUNTIME_VERSION: 1.23.2
+          ONNXRUNTIME_SHA256: b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz"
+          runtime_root="$RUNNER_TEMP/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}"
+          uri="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz"
+
+          curl --fail --location --retry 3 --output "$archive" "$uri"
+          echo "${ONNXRUNTIME_SHA256}  ${archive}" | shasum -a 256 -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+
+          test -d "$runtime_root"
+          test -f "$runtime_root/include/onnxruntime_cxx_api.h"
+          test -f "$runtime_root/lib/libonnxruntime.dylib"
+          test -f "$runtime_root/LICENSE"
+          test -f "$runtime_root/Privacy.md"
+          test -f "$runtime_root/ThirdPartyNotices.txt"
+
+          echo "ONNXRUNTIME_ROOT=$runtime_root" >> "$GITHUB_ENV"
+
+      - name: Configure Release build
+        run: |
+          set -euo pipefail
+
+          test -n "${QT_ROOT_DIR:-}"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DONNXRUNTIME_ROOT="$ONNXRUNTIME_ROOT" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+
+      - name: Build Release
+        run: cmake --build build --parallel
+
+      - name: Run QtTest suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Stage macOS application
+        run: |
+          set -euo pipefail
+
+          install_root="$RUNNER_TEMP/chessgui-install"
+          package_root="$RUNNER_TEMP/ChessGui-macos-arm64"
+          rm -rf "$install_root" "$package_root"
+
+          cmake --install build --prefix "$install_root"
+          app="$install_root/ChessGui.app"
+          test -d "$app"
+
+          "$QT_ROOT_DIR/bin/macdeployqt" "$app" -always-overwrite
+
+          test -f "$app/Contents/MacOS/ChessGui"
+          test -f "$app/Contents/MacOS/model/chess-tiles-v2.onnx"
+          test -f "$app/Contents/Frameworks/libonnxruntime.dylib"
+          file "$app/Contents/MacOS/ChessGui" | grep -q 'arm64'
+          otool -L "$app/Contents/MacOS/ChessGui"
+
+          mkdir -p "$package_root/third-party/onnxruntime"
+          cp -R "$app" "$package_root/"
+          cp "$install_root/share/doc/chessgui/LICENSE" "$package_root/"
+          cp "$install_root/share/doc/chessgui/THIRD_PARTY_NOTICES.md" "$package_root/"
+          cp "$install_root/share/doc/chessgui/LICENSE-CHESSNUT.txt" "$package_root/"
+          cp "$ONNXRUNTIME_ROOT/LICENSE" \
+            "$ONNXRUNTIME_ROOT/Privacy.md" \
+            "$ONNXRUNTIME_ROOT/ThirdPartyNotices.txt" \
+            "$package_root/third-party/onnxruntime/"
+          ln -s /Applications "$package_root/Applications"
+
+          for required_file in \
+              "$package_root/ChessGui.app/Contents/MacOS/ChessGui" \
+              "$package_root/ChessGui.app/Contents/MacOS/model/chess-tiles-v2.onnx" \
+              "$package_root/ChessGui.app/Contents/Frameworks/libonnxruntime.dylib" \
+              "$package_root/LICENSE" \
+              "$package_root/THIRD_PARTY_NOTICES.md" \
+              "$package_root/LICENSE-CHESSNUT.txt" \
+              "$package_root/third-party/onnxruntime/LICENSE" \
+              "$package_root/third-party/onnxruntime/Privacy.md" \
+              "$package_root/third-party/onnxruntime/ThirdPartyNotices.txt"; do
+            test -f "$required_file"
+          done
+
+          dmg="$GITHUB_WORKSPACE/ChessGui-macos-arm64.dmg"
+          rm -f "$dmg"
+          hdiutil create \
+            -volname "ChessGui macOS ARM" \
+            -srcfolder "$package_root" \
+            -ov \
+            -format UDZO \
+            "$dmg"
+          hdiutil imageinfo "$dmg" >/dev/null
+
+      - name: Upload macOS asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: ChessGui-macos-arm64.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Build Linux x64 (portable & AppImage)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build and Qt runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            patchelf \
+            desktop-file-utils \
+            file \
+            libgl1-mesa-dev \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-keysyms1 \
+            libxcb-shape0 \
+            libfontconfig1 \
+            libdbus-1-3
+
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.8.3
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          archives: qtbase qtsvg
+          cache: true
+
+      - name: Download ONNX Runtime 1.23.2
+        env:
+          ONNXRUNTIME_VERSION: 1.23.2
+          ONNXRUNTIME_SHA256: 1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
+          runtime_root="$RUNNER_TEMP/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}"
+          uri="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
+
+          curl --fail --location --retry 3 --output "$archive" "$uri"
+          echo "${ONNXRUNTIME_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+
+          test -d "$runtime_root"
+          test -f "$runtime_root/include/onnxruntime_cxx_api.h"
+          test -f "$runtime_root/lib/libonnxruntime.so"
+          test -f "$runtime_root/LICENSE"
+          test -f "$runtime_root/Privacy.md"
+          test -f "$runtime_root/ThirdPartyNotices.txt"
+
+          echo "ONNXRUNTIME_ROOT=$runtime_root" >> "$GITHUB_ENV"
+
+      - name: Configure Release build
+        run: |
+          set -euo pipefail
+
+          test -n "${QT_ROOT_DIR:-}"
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            -DONNXRUNTIME_ROOT="$ONNXRUNTIME_ROOT" \
+            -DCMAKE_INSTALL_RPATH='$ORIGIN/lib'
+
+      - name: Build Release
+        run: cmake --build build --parallel
+
+      - name: Run QtTest suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$QT_ROOT_DIR/lib:$ONNXRUNTIME_ROOT/lib:${LD_LIBRARY_PATH:-}"
+          ctest --test-dir build --output-on-failure
+
+      - name: Stage portable Linux package
+        run: |
+          set -euo pipefail
+
+          install_root="$RUNNER_TEMP/chessgui-install"
+          package_root="$RUNNER_TEMP/ChessGui-linux-x64"
+          rm -rf "$install_root" "$package_root"
+
+          cmake --install build --prefix "$install_root"
+
+          mkdir -p "$package_root/lib" "$package_root/plugins" "$package_root/model" \
+                   "$package_root/third-party/onnxruntime"
+
+          cp "$install_root/bin/ChessGui" "$package_root/"
+          cp "$install_root/bin/model/chess-tiles-v2.onnx" "$package_root/model/"
+          cp -a "$ONNXRUNTIME_ROOT"/lib/libonnxruntime*.so* "$package_root/lib/"
+
+          for plugin_dir in platforms iconengines imageformats tls xcbglintegrations; do
+            if [ -d "$QT_ROOT_DIR/plugins/$plugin_dir" ]; then
+              cp -R "$QT_ROOT_DIR/plugins/$plugin_dir" "$package_root/plugins/"
+            fi
+          done
+
+          collect_deps() {
+            LD_LIBRARY_PATH="$QT_ROOT_DIR/lib:$ONNXRUNTIME_ROOT/lib:$package_root/lib" ldd "$@" 2>/dev/null \
+              | awk '/=> \//{print $3}' \
+              | sort -u \
+              | while IFS= read -r lib; do
+                  case "$lib" in
+                    "$QT_ROOT_DIR"/lib/*|"$ONNXRUNTIME_ROOT"/lib/*)
+                      dest="$package_root/lib/$(basename "$lib")"
+                      if [ ! -e "$dest" ]; then
+                        cp -L "$lib" "$dest"
+                      fi
+                      ;;
+                  esac
+                done
+          }
+
+          collect_deps "$package_root/ChessGui" "$package_root"/plugins/*/*.so
+          collect_deps "$package_root"/lib/*.so*
+
+          patchelf --set-rpath '$ORIGIN/lib' "$package_root/ChessGui"
+          for lib in "$package_root"/lib/*.so*; do
+            if [ -f "$lib" ] && [ ! -L "$lib" ]; then
+              patchelf --set-rpath '$ORIGIN' "$lib" || true
+            fi
+          done
+          find "$package_root/plugins" -type f -name '*.so' \
+            -exec patchelf --set-rpath '$ORIGIN/../../lib' {} +
+
+          cat > "$package_root/qt.conf" <<'EOF'
+          [Paths]
+          Plugins = plugins
+          EOF
+
+          cat > "$package_root/ChessGui.sh" <<'EOF'
+          #!/usr/bin/env sh
+          set -eu
+          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          exec "$HERE/ChessGui" "$@"
+          EOF
+          chmod +x "$package_root/ChessGui.sh"
+
+          cp "$install_root/share/doc/chessgui/LICENSE" "$package_root/"
+          cp "$install_root/share/doc/chessgui/THIRD_PARTY_NOTICES.md" "$package_root/"
+          cp "$install_root/share/doc/chessgui/LICENSE-CHESSNUT.txt" "$package_root/"
+          cp "$ONNXRUNTIME_ROOT/LICENSE" \
+            "$ONNXRUNTIME_ROOT/Privacy.md" \
+            "$ONNXRUNTIME_ROOT/ThirdPartyNotices.txt" \
+            "$package_root/third-party/onnxruntime/"
+
+          if ldd "$package_root/ChessGui" | grep -q "not found"; then
+            ldd "$package_root/ChessGui"
+            exit 1
+          fi
+
+          for required_file in \
+              "$package_root/ChessGui" \
+              "$package_root/ChessGui.sh" \
+              "$package_root/qt.conf" \
+              "$package_root/model/chess-tiles-v2.onnx" \
+              "$package_root/plugins/platforms/libqxcb.so" \
+              "$package_root/LICENSE" \
+              "$package_root/THIRD_PARTY_NOTICES.md" \
+              "$package_root/LICENSE-CHESSNUT.txt" \
+              "$package_root/third-party/onnxruntime/LICENSE" \
+              "$package_root/third-party/onnxruntime/Privacy.md" \
+              "$package_root/third-party/onnxruntime/ThirdPartyNotices.txt"; do
+            test -f "$required_file"
+          done
+
+          smoke_log="$RUNNER_TEMP/chessgui-smoke.log"
+          QT_QPA_PLATFORM=offscreen timeout 3 "$package_root/ChessGui" >"$smoke_log" 2>&1 || status=$?
+          if [ "${status:-0}" -ne 124 ] && [ "${status:-0}" -ne 0 ]; then
+            cat "$smoke_log" || true
+            exit "${status:-1}"
+          fi
+
+          archive="$GITHUB_WORKSPACE/ChessGui-linux-x64.tar.gz"
+          rm -f "$archive"
+          tar -czf "$archive" -C "$RUNNER_TEMP" ChessGui-linux-x64
+
+      - name: Upload Linux portable asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: ChessGui-linux-x64.tar.gz
+          if-no-files-found: error
+
+      - name: Stage and build Linux AppImage
+        env:
+          APPIMAGETOOL_VERSION: 1.9.1
+          APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+        run: |
+          set -euo pipefail
+
+          install_root="$RUNNER_TEMP/chessgui-install"
+          package_root="$RUNNER_TEMP/ChessGui-linux-x64"
+          appdir="$RUNNER_TEMP/ChessGui.AppDir"
+          rm -rf "$appdir"
+
+          mkdir -p "$appdir/usr/bin/model" \
+                   "$appdir/usr/lib" \
+                   "$appdir/usr/plugins" \
+                   "$appdir/usr/share/applications" \
+                   "$appdir/usr/share/icons/hicolor/512x512/apps" \
+                   "$appdir/usr/share/doc/chessgui" \
+                   "$appdir/usr/share/doc/onnxruntime"
+
+          cp "$package_root/ChessGui" "$appdir/usr/bin/ChessGui"
+          cp "$package_root/model/chess-tiles-v2.onnx" "$appdir/usr/bin/model/"
+          cp -a "$package_root"/lib/. "$appdir/usr/lib/"
+          cp -a "$package_root"/plugins/. "$appdir/usr/plugins/"
+
+          patchelf --set-rpath '$ORIGIN/../lib' "$appdir/usr/bin/ChessGui"
+          cat > "$appdir/usr/bin/qt.conf" <<'EOF'
+          [Paths]
+          Plugins = ../plugins
+          EOF
+
+          cp "$install_root/share/doc/chessgui/LICENSE" "$appdir/usr/share/doc/chessgui/"
+          cp "$install_root/share/doc/chessgui/THIRD_PARTY_NOTICES.md" "$appdir/usr/share/doc/chessgui/"
+          cp "$install_root/share/doc/chessgui/LICENSE-CHESSNUT.txt" "$appdir/usr/share/doc/chessgui/"
+          cp "$ONNXRUNTIME_ROOT/LICENSE" \
+            "$ONNXRUNTIME_ROOT/Privacy.md" \
+            "$ONNXRUNTIME_ROOT/ThirdPartyNotices.txt" \
+            "$appdir/usr/share/doc/onnxruntime/"
+
+          cp "$install_root/share/applications/chessgui.desktop" "$appdir/usr/share/applications/"
+          cp "$install_root/share/icons/hicolor/512x512/apps/chessgui.png" \
+            "$appdir/usr/share/icons/hicolor/512x512/apps/"
+          cp "$install_root/share/applications/chessgui.desktop" "$appdir/chessgui.desktop"
+          cp "$install_root/share/icons/hicolor/512x512/apps/chessgui.png" "$appdir/chessgui.png"
+          cp "$install_root/share/icons/hicolor/512x512/apps/chessgui.png" "$appdir/.DirIcon"
+
+          cat > "$appdir/AppRun" <<'EOF'
+          #!/usr/bin/env sh
+          set -eu
+          HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+          exec "$HERE/usr/bin/ChessGui" "$@"
+          EOF
+          chmod +x "$appdir/AppRun"
+
+          if ldd "$appdir/usr/bin/ChessGui" | grep -q "not found"; then
+            ldd "$appdir/usr/bin/ChessGui"
+            exit 1
+          fi
+
+          appimagetool="$RUNNER_TEMP/appimagetool-x86_64.AppImage"
+          curl --fail --location --retry 3 --output "$appimagetool" \
+            "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-x86_64.AppImage"
+          echo "${APPIMAGETOOL_SHA256}  ${appimagetool}" | sha256sum -c -
+          chmod +x "$appimagetool"
+
+          appimage="$GITHUB_WORKSPACE/ChessGui-linux-x86_64.AppImage"
+          rm -f "$appimage"
+          APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 "$appimagetool" "$appdir" "$appimage"
+          chmod +x "$appimage"
+
+          appimage_log="$RUNNER_TEMP/chessgui-appimage-smoke.log"
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen timeout 3 "$appimage" >"$appimage_log" 2>&1 || status=$?
+          if [ "${status:-0}" -ne 124 ] && [ "${status:-0}" -ne 0 ]; then
+            cat "$appimage_log" || true
+            exit "${status:-1}"
+          fi
+
+      - name: Upload Linux AppImage asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-appimage
+          path: ChessGui-linux-x86_64.AppImage
+          if-no-files-found: error
+
+  linux-deb:
+    name: Build Linux Debian package
+    runs-on: ubuntu-24.04
+    container: ubuntu:26.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Debian build dependencies
+        run: |
+          set -euo pipefail
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            qt6-base-dev \
+            qt6-svg-dev \
+            qt6-tools-dev-tools \
+            libonnxruntime-dev \
+            dpkg-dev \
+            file \
+            libgl1-mesa-dev \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            fonts-dejavu-core
+
+      - name: Configure Release build
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Release
+        run: cmake --build build --parallel
+
+      - name: Run QtTest suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build Debian package
+        run: |
+          set -euo pipefail
+          cpack --config build/CPackConfig.cmake -B "$GITHUB_WORKSPACE" -G DEB
+          ls -la "$GITHUB_WORKSPACE"/*.deb
+          for deb in "$GITHUB_WORKSPACE"/*.deb; do
+            dpkg-deb -I "$deb"
+            dpkg-deb -c "$deb" >/dev/null
+          done
+
+      - name: Upload Linux Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-deb
+          path: '*.deb'
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [windows, macos, linux, linux-deb]
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify collected assets
+        run: |
+          set -euo pipefail
+          ls -lh release-assets
+          test -f release-assets/ChessGui-windows-x64.zip
+          test -f release-assets/ChessGui-macos-arm64.dmg
+          test -f release-assets/ChessGui-linux-x64.tar.gz
+          test -f release-assets/ChessGui-linux-x86_64.AppImage
+          ls release-assets/*.deb >/dev/null
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "ChessGui ${RELEASE_TAG}" \
+              --generate-notes
+          fi
+
+      - name: Verify published release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          echo "$assets"
+          echo "$assets" | grep -qx 'ChessGui-windows-x64.zip'
+          echo "$assets" | grep -qx 'ChessGui-macos-arm64.dmg'
+          echo "$assets" | grep -qx 'ChessGui-linux-x64.tar.gz'
+          echo "$assets" | grep -qx 'ChessGui-linux-x86_64.AppImage'
+          echo "$assets" | grep -qE '^chessgui_.*_amd64\.deb$'

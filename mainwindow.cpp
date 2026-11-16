@@ -20,6 +20,7 @@
 #include "playerstrip.h"
 #include "pgnfile.h"
 #include "pgnselectdialog.h"
+#include "positioneditordialog.h"
 #include "promotiondialog.h"
 #include "remoteenginedialog.h"
 #include "uciengine.h"
@@ -29,6 +30,7 @@
 
 #include <QAbstractButton>
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -461,6 +463,18 @@ QAction *MainWindow::engineLineArrowsAction() const {
     return engineLineArrowsAction_;
 }
 
+QAction *MainWindow::animateMovesAction() const {
+    return animateMovesAction_;
+}
+
+QAction *MainWindow::editPositionAction() const {
+    return editPositionAction_;
+}
+
+QActionGroup *MainWindow::boardThemeGroup() const {
+    return boardThemeGroup_;
+}
+
 QLabel *MainWindow::visionStatusLabel() const {
     return visionStatusLabel_;
 }
@@ -649,6 +663,21 @@ void MainWindow::loadConfiguration(const QString &configFilePath) {
     setLastMoveHighlightingEnabled(config_.highlightLastMoveEnabled());
     setCheckHighlightingEnabled(config_.highlightCheckEnabled());
     setEngineLineArrowsEnabled(config_.engineLineArrowsEnabled());
+    setMoveAnimationsEnabled(config_.animateMovesEnabled());
+    {
+        const ChessBoard::BoardTheme theme =
+            ChessBoard::themeFromKey(config_.boardTheme());
+        board_->setBoardTheme(theme);
+        if (boardThemeGroup_ != nullptr) {
+            const QSignalBlocker blocker(boardThemeGroup_);
+            for (QAction *action : boardThemeGroup_->actions()) {
+                if (action->data().toInt() == static_cast<int>(theme)) {
+                    action->setChecked(true);
+                    break;
+                }
+            }
+        }
+    }
 
     gameController_->setRemoteEngine(config_.remoteEngineHost(),
                                      config_.remoteEnginePort(),
@@ -740,6 +769,8 @@ void MainWindow::saveConfiguration() {
     config_.setRecommendedMovePreviewEnabled(gameController_->isRecommendedMovePreviewEnabled());
     config_.setHighlightLastMoveEnabled(board_->lastMoveHighlightingEnabled());
     config_.setHighlightCheckEnabled(board_->checkHighlightingEnabled());
+    config_.setAnimateMovesEnabled(board_->moveAnimationsEnabled());
+    config_.setBoardTheme(ChessBoard::themeKey(board_->boardTheme()));
     if (engineOutputWidget_) {
         config_.setEngineDetailsPage(
             engineOutputWidget_->detailsPage() == EngineOutputWidget::DetailsPage::UciLog
@@ -1313,7 +1344,7 @@ void MainWindow::onVisionResult(const VisionResult &result) {
                 .arg(recognized.meanConfidence * 100.0f, 0, 'f', 1)
                 .arg(recognized.minConfidence * 100.0f, 0, 'f', 1);
         const QString warning = recognized.minConfidence < 0.70f
-                                    ? tr(" — please verify")
+                                    ? tr(" — please verify (Ctrl+E to edit)")
                                     : QString();
         setActivityMessage(
             tr("Chessboard detected (%1), orientation %2, %3%4")
@@ -1930,6 +1961,10 @@ void MainWindow::updateNavigationActions() {
     if (offerDrawAction_) {
         offerDrawAction_->setEnabled(gameController_->canOfferDraw());
     }
+    if (editPositionAction_) {
+        editPositionAction_->setEnabled(!gameController_->isComputerGameActive() &&
+                                        !gameController_->isGameAuditActive());
+    }
 }
 
 void MainWindow::stopEngine() {
@@ -2014,6 +2049,38 @@ void MainWindow::setEngineLineArrowsEnabled(bool enabled) {
     config_.setEngineLineArrowsEnabled(enabled);
     config_.save();
     refreshEngineLineArrows();
+}
+
+void MainWindow::setMoveAnimationsEnabled(bool enabled) {
+    if (animateMovesAction_ != nullptr) {
+        const QSignalBlocker blocker(animateMovesAction_);
+        animateMovesAction_->setChecked(enabled);
+    }
+    if (board_ != nullptr) {
+        board_->setMoveAnimationsEnabled(enabled);
+    }
+    config_.setAnimateMovesEnabled(enabled);
+    config_.save();
+}
+
+void MainWindow::editPosition() {
+    if (gameController_->isComputerGameActive() ||
+        gameController_->isGameAuditActive()) {
+        return;
+    }
+
+    PositionEditorDialog dialog(
+        gameController_->rules().toFen(),
+        board_ != nullptr ? board_->boardTheme() : ChessBoard::BoardTheme::Classic,
+        board_ != nullptr ? board_->boardFlipped() : false,
+        this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    if (gameController_->loadFen(dialog.fen(), tr("Position edited."))) {
+        clearLoadedPgnSource();
+    }
 }
 
 void MainWindow::refreshVariations() {
@@ -2273,6 +2340,9 @@ void MainWindow::refreshAuditUi() {
         analysisReportDialog_->setAnalysisAvailable(active ||
                                                     gameController_->canStartGameAudit());
     }
+    if (editPositionAction_) {
+        editPositionAction_->setEnabled(!gameController_->isComputerGameActive() && !active);
+    }
 }
 
 void MainWindow::setActivityMessage(const QString &message) {
@@ -2496,11 +2566,23 @@ void MainWindow::setupUi() {
     clearAnnotationsAction_->setShortcut(QKeySequence(Qt::Key_Escape));
     clearAnnotationsAction_->setShortcutContext(Qt::WindowShortcut);
     clearAnnotationsAction_->setToolTip(
-        tr("Clear all user-drawn arrows and square highlights"));
+        tr("Clear all user-drawn arrows and square highlights "
+           "(Right-click/drag: green, Shift: red, Alt/Ctrl: blue, Shift+Alt/Ctrl: orange)"));
     clearAnnotationsAction_->setStatusTip(clearAnnotationsAction_->toolTip());
     addAction(clearAnnotationsAction_);
     connect(clearAnnotationsAction_, &QAction::triggered,
             this, &MainWindow::clearBoardAnnotations);
+
+    editPositionAction_ = menuBoard->addAction(tr("Edit position..."));
+    editPositionAction_->setObjectName(QStringLiteral("editPositionAction"));
+    editPositionAction_->setShortcut(QKeySequence(tr("Ctrl+E")));
+    editPositionAction_->setShortcutContext(Qt::WindowShortcut);
+    editPositionAction_->setToolTip(
+        tr("Open the interactive board editor to modify pieces, side to move or FEN"));
+    editPositionAction_->setStatusTip(editPositionAction_->toolTip());
+    addAction(editPositionAction_);
+    connect(editPositionAction_, &QAction::triggered,
+            this, &MainWindow::editPosition);
     menuBoard->addSeparator();
 
     showComputerMoveAction_ = menuBoard->addAction(
@@ -2558,6 +2640,66 @@ void MainWindow::setupUi() {
            "green, amber or red according to how far the others are behind"));
     engineLineArrowsAction_->setStatusTip(engineLineArrowsAction_->toolTip());
     addAction(engineLineArrowsAction_);
+
+    animateMovesAction_ = menuBoard->addAction(tr("Animate moves"));
+    animateMovesAction_->setObjectName(QStringLiteral("animateMovesAction"));
+    animateMovesAction_->setCheckable(true);
+    animateMovesAction_->setChecked(true);
+    animateMovesAction_->setToolTip(
+        tr("Animate piece movement across the board"));
+    animateMovesAction_->setStatusTip(animateMovesAction_->toolTip());
+    connect(animateMovesAction_, &QAction::toggled,
+            this, &MainWindow::setMoveAnimationsEnabled);
+
+    menuBoard->addSeparator();
+    auto *annotationsGuideMenu = menuBoard->addMenu(tr("Annotation colors"));
+    annotationsGuideMenu->setObjectName(QStringLiteral("annotationColorsMenu"));
+    for (const QString &hint : {
+             tr("Right-click: square  |  Right-drag: arrow"),
+             tr("Default: Green"),
+             tr("Shift: Red"),
+             tr("Alt / Ctrl: Blue"),
+             tr("Shift + Alt / Ctrl: Orange"),
+             tr("Esc or left-click empty square: Clear"),
+         }) {
+        QAction *entry = annotationsGuideMenu->addAction(hint);
+        entry->setEnabled(false);
+    }
+
+    auto *themeMenu = menuBoard->addMenu(tr("Board theme"));
+    themeMenu->setObjectName(QStringLiteral("boardThemeMenu"));
+    boardThemeGroup_ = new QActionGroup(this);
+    boardThemeGroup_->setExclusive(true);
+    struct ThemeEntry {
+        ChessBoard::BoardTheme theme;
+        QString label;
+    };
+    const QList<ThemeEntry> themes = {
+        {ChessBoard::BoardTheme::Classic, tr("Classic")},
+        {ChessBoard::BoardTheme::Green,   tr("Green")},
+        {ChessBoard::BoardTheme::Blue,    tr("Blue")},
+        {ChessBoard::BoardTheme::Slate,   tr("Slate")},
+    };
+    for (const auto &entry : themes) {
+        QAction *themeAction = themeMenu->addAction(entry.label);
+        themeAction->setObjectName(
+            QStringLiteral("boardTheme_%1").arg(ChessBoard::themeKey(entry.theme)));
+        themeAction->setCheckable(true);
+        themeAction->setData(static_cast<int>(entry.theme));
+        if (entry.theme == ChessBoard::BoardTheme::Classic) {
+            themeAction->setChecked(true);
+        }
+        boardThemeGroup_->addAction(themeAction);
+    }
+    connect(boardThemeGroup_, &QActionGroup::triggered, this, [this](QAction *action) {
+        if (action == nullptr || board_ == nullptr) {
+            return;
+        }
+        const auto theme = static_cast<ChessBoard::BoardTheme>(action->data().toInt());
+        board_->setBoardTheme(theme);
+        config_.setBoardTheme(ChessBoard::themeKey(theme));
+        config_.save();
+    });
 
     menubar->addMenu(menuBoard);
 
@@ -2928,6 +3070,12 @@ void MainWindow::setupUi() {
     highlightCheckAction->setObjectName(QStringLiteral("highlightCheckWidgetAction"));
     highlightCheckAction->setDefaultWidget(highlightCheckCheckBox_);
     positionToolsMenu->addAction(highlightCheckAction);
+
+    auto *editPositionButton = new QToolButton(this);
+    editPositionButton->setObjectName(QStringLiteral("editPositionButton"));
+    editPositionButton->setDefaultAction(editPositionAction_);
+    editPositionButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    activityBarLayout_->addWidget(editPositionButton);
 
     connect(flipBoardButton_, &QToolButton::toggled,
             board_, &ChessBoard::setBoardFlipped);
