@@ -33,6 +33,7 @@
 #include "mainwindow.h"
 #include "movelistwidget.h"
 #include "pendulumwidget.h"
+#include "pgnannotations.h"
 #include "rules.h"
 
 // Concatenates every cell of the move list widget, mimicking the plain-text
@@ -105,6 +106,7 @@ private slots:
     void testMovePreviewControls();
     void testMainWindowLoadPgnContent();
     void testMainWindowCopyFenAndPgn();
+    void testMainWindowDrawingKeepsMoveComment();
     void testMainWindowNavigationHomeAndEnd();
     void testMainWindowMenuLayoutAndShortcuts();
     void testMainWindowAcceptsDroppedPgnFile();
@@ -1027,6 +1029,26 @@ void RulesTest::testMainWindowCopyFenAndPgn() {
 
     window.copyPgnAction()->trigger();
     QCOMPARE(QGuiApplication::clipboard()->text().trimmed(), window.gameController()->pgnText());
+}
+
+void RulesTest::testMainWindowDrawingKeepsMoveComment() {
+    MainWindow window;
+    QVERIFY(window.loadPgnContent(QStringLiteral("1. e4 {Best by test} e5 *")));
+    window.gameController()->stepBack();
+    QCOMPARE(window.gameController()->moveCursor(), 1);
+    QCOMPARE(window.gameController()->commentAtCursor(), QStringLiteral("Best by test"));
+
+    // Drawing an arrow on the board must not reset the text comment.
+    window.chessBoard()->toggleUserArrow(Rules::Position{6, 4}, Rules::Position{4, 4},
+                                         PgnAnnotations::greenColor());
+    QCOMPARE(window.gameController()->arrowsAtCursor().size(), size_t{1});
+    QCOMPARE(window.gameController()->commentAtCursor(), QStringLiteral("Best by test"));
+
+    // Erasing it again keeps the comment as well.
+    window.chessBoard()->toggleUserArrow(Rules::Position{6, 4}, Rules::Position{4, 4},
+                                         PgnAnnotations::greenColor());
+    QVERIFY(window.gameController()->arrowsAtCursor().empty());
+    QCOMPARE(window.gameController()->commentAtCursor(), QStringLiteral("Best by test"));
 }
 
 void RulesTest::testMainWindowNavigationHomeAndEnd() {

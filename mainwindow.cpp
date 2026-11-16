@@ -3249,8 +3249,11 @@ void MainWindow::setupUi() {
 
     connect(board_, &ChessBoard::pieceMoved, this, &MainWindow::pieceMoved);
     connect(board_, &ChessBoard::userAnnotationsChanged, this, [this] {
+        // Drawing on the board only changes arrows and squares: keep the
+        // text comment of the move instead of resetting it.
         gameController_->setAnnotationsAtCursor(board_->userArrows(),
-                                               board_->squareAnnotations());
+                                               board_->squareAnnotations(),
+                                               gameController_->commentAtCursor());
     });
 
     setActivityMessage(
