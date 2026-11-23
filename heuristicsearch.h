@@ -7,6 +7,7 @@
 // evaluator's public API, and no other file should include it.
 //
 
+#include "fastboard.h"
 #include "heuristiceval.h"
 #include "rules.h"
 
@@ -15,19 +16,9 @@
 
 namespace HeuristicSearch {
 
-// The position as a plain array: the evaluation terms walk it by const reference
-// instead of the rules engine, so they cannot mutate it and pay no copy for it;
-// the static exchange evaluation takes its own copy because it plays the
-// exchange out on it.
-using Board = Rules::Board;
-
 // Moves a position can hold, which sizes every move buffer the evaluator and
-// the search hand to Rules::generatePseudoLegalMoves.
+// the search hand to FastBoard::generatePseudoLegalMoves.
 constexpr int MaxMoves = 256;
-
-[[nodiscard]] constexpr bool isInside(int row, int column) {
-    return row >= 0 && row < 8 && column >= 0 && column < 8;
-}
 
 // +1 for White, -1 for Black: turns a score from White's point of view into the
 // side to move's, which is what a negamax search needs.
@@ -35,15 +26,15 @@ constexpr int MaxMoves = 256;
     return color == Rules::Color::White ? 1 : -1;
 }
 
-// The static score of a position the caller already holds a board for (`pawnKey`
-// is that position's `Rules::pawnKey()`, under which its pawn-only terms are
-// cached), in
-// centipawns from White's point of view, and the same value in `breakdown` with
-// its per-term contributions when the caller wants them. Either half may be
-// ignored: the search reads the return value with a null breakdown, and the
-// evaluator's breakdown entry point reads only the structure.
-int evaluateBoard(const Board &board, Rules::Color sideToMove, bool inCheck,
-                  quint64 pawnKey, HeuristicEval::EvalBreakdown *breakdown);
+[[nodiscard]] constexpr int signFor(FastColor color) {
+    return color == White ? 1 : -1;
+}
+
+// The static score of a position (`pos` holds its incremental Zobrist and pawn
+// keys), in centipawns from White's point of view, and the same value in
+// `breakdown` with its per-term contributions when the caller wants them.
+int evaluateBoard(const FastBoard &pos, bool inCheck,
+                  HeuristicEval::EvalBreakdown *breakdown);
 
 // Drops the cache of pawn-structure scores the evaluation keeps by pawn key,
 // which the search does together with its own caches.

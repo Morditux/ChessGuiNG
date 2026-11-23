@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(ChessGui
-        VERSION 1.2.0
+        VERSION 1.3.0
         LANGUAGES CXX
 )
 
@@ -115,6 +115,8 @@ add_library(chesscore OBJECT
         enginebackend.cpp
         enginebackend.h
         evalparamfields.h
+        fastboard.cpp
+        fastboard.h
         gamecontroller.cpp
         gamecontroller.h
         gametree.cpp

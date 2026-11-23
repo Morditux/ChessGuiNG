@@ -285,6 +285,9 @@ private slots:
     void testUnstoppablePassedPawn();
     void testKingAndPawnAgainstKingIsSolved();
     void testBishopAndKnightMateAimsForTheRightCorner();
+    void testFastBoardSlidingAttacks();
+    void testFastBoardPerftAndIncrementalState();
+    void testFastBoardTacticalMoveGenerator();
 };
 
 void HeuristicEvalTest::testInitialPositionIsBalanced() {
@@ -1187,27 +1190,27 @@ void HeuristicEvalTest::testSearchReferenceSignatures() {
         int mateIn; // 0 when the position is not a mate
     };
     const Reference references[] = {
-        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "e2e4", 2148, 0},
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 10, "e2e4", 2062, 0},
         {"r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5", 4, 10, "d2d3",
-         7246, 0},
+         6545, 0},
         {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 4, 80, "e2a6",
-         9953, 0},
-        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 495, "d7c8q", 1925, 0},
+         10362, 0},
+        {"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8", 4, 495, "d7c8q", 2291, 0},
         {"r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", 2, HeuristicEval::MateScore, "h5f7",
          85, 1},
-        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 61, 1},
-        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 24, "b4f4", 2418, 0},
+        {"6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1", 2, HeuristicEval::MateScore, "e1e8", 33, 1},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 5, 24, "b4f4", 2107, 0},
         {"4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 5, 0, "a2a3", 509, 0},
         {"r2q1rk1/ppp2ppp/2np1n2/2b1p3/2B1P1b1/2NP1N2/PPPBQPPP/R3K2R b KQ - 6 9", 4, -110, "c6d4",
-         3901, 0},
-        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1079, "e1e2", 17674, 0},
+         3997, 0},
+        {"8/8/8/4k3/8/8/3Q4/4K3 w - - 0 1", 5, 1082, "e1f2", 20458, 0},
         {"r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4", 4, 63, "b1c3",
-         3409, 0},
+         3027, 0},
         {"8/8/8/4k3/8/8/4B3/4K3 w - - 0 1", 3, 0, "-", 0, 0},
         {"4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", 4, 0, "e4d5", 119, 0},
         {"r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1", 4, 0, "d5c7", 379, 0},
-        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1054, "a7a8q", 170, 0},
-        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1079, "e1e2", 195, 0},
+        {"4k3/P7/8/8/8/8/8/4K3 w - - 0 1", 3, 1054, "a7a8q", 200, 0},
+        {"4k3/8/8/8/8/8/4q3/3QK3 w - - 0 1", 3, 1079, "e1e2", 179, 0},
     };
 
     HeuristicEval::resetParams();
@@ -2438,6 +2441,168 @@ void HeuristicEvalTest::testOutpostsAreOutOfReachOfEnemyPawns() {
                       reachable), 100);
     QCOMPARE(outposts(QStringLiteral("4k3/ppp2ppp/8/8/1N2P3/8/PP3PPP/4K3 w - - 0 1"),
                       reachable), 0);
+}
+
+void HeuristicEvalTest::testFastBoardSlidingAttacks() {
+    using namespace HeuristicSearch;
+    const auto rayAttack = [](int sq, Bitboard occ, bool diag) {
+        static constexpr int bDr[4] = {-1, -1, 1, 1};
+        static constexpr int bDc[4] = {-1, 1, -1, 1};
+        static constexpr int rDr[4] = {-1, 1, 0, 0};
+        static constexpr int rDc[4] = {0, 0, -1, 1};
+        const int *dr = diag ? bDr : rDr;
+        const int *dc = diag ? bDc : rDc;
+        Bitboard res = 0;
+        for (int d = 0; d < 4; ++d) {
+            int r = squareRow(sq) + dr[d];
+            int c = squareCol(sq) + dc[d];
+            while (r >= 0 && r < 8 && c >= 0 && c < 8) {
+                const Bitboard bit = squareBB(r * 8 + c);
+                res |= bit;
+                if ((occ & bit) != 0) {
+                    break;
+                }
+                r += dr[d];
+                c += dc[d];
+            }
+        }
+        return res;
+    };
+
+    quint64 rng = 0x9E3779B97F4A7C15ULL;
+    const auto nextOcc = [&rng]() {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        return rng;
+    };
+    const Bitboard fixedOccs[] = {
+        0ULL,
+        ~0ULL,
+        Rank1 | Rank8 | FileA | FileH,
+        0x00FF00000000FF00ULL,
+        nextOcc(),
+        nextOcc(),
+        nextOcc(),
+        nextOcc()};
+    for (int sq = 0; sq < 64; ++sq) {
+        for (const Bitboard baseOcc : fixedOccs) {
+            for (const Bitboard occ : {baseOcc | squareBB(sq), baseOcc & ~squareBB(sq)}) {
+                QCOMPARE(bishopAttacks(sq, occ), rayAttack(sq, occ, true));
+                QCOMPARE(rookAttacks(sq, occ), rayAttack(sq, occ, false));
+            }
+        }
+    }
+}
+
+void HeuristicEvalTest::testFastBoardPerftAndIncrementalState() {
+    using namespace HeuristicSearch;
+    const auto verifyState = [](const FastBoard &pos) {
+        FastBoard expected = pos;
+        expected.recomputeHashes();
+        QCOMPARE(pos.hash, expected.hash);
+        QCOMPARE(pos.pawnHash, expected.pawnHash);
+
+        std::array<Bitboard, 2> byColor{};
+        std::array<Bitboard, 7> byType{};
+        std::array<int, 2> nonPawn{0, 0};
+        for (int sq = 0; sq < 64; ++sq) {
+            const uint8_t b = pos.board[sq];
+            if (b == 0) {
+                continue;
+            }
+            const FastColor c = pieceByteColor(b);
+            const FastPiece pt = pieceByteType(b);
+            byColor[c] |= squareBB(sq);
+            byType[pt] |= squareBB(sq);
+            if (pt == King) {
+                QCOMPARE(pos.kingSq[c], static_cast<uint8_t>(sq));
+            } else if (pt >= Knight && pt <= Queen) {
+                ++nonPawn[c];
+            }
+        }
+        QCOMPARE(pos.byColor, byColor);
+        QCOMPARE(pos.byType, byType);
+        QCOMPARE(pos.nonPawnCount, nonPawn);
+    };
+
+    const auto perft = [&](auto &self, FastBoard &pos, int depth,
+                           bool checkState) -> quint64 {
+        if (checkState) {
+            verifyState(pos);
+        }
+        if (depth == 0) {
+            return 1;
+        }
+        FastMove moves[MaxMoves];
+        const int count = pos.generatePseudoLegalMoves(moves);
+        quint64 nodes = 0;
+        for (int i = 0; i < count; ++i) {
+            FastUndo undo;
+            if (!pos.makeMove(moves[i], undo)) {
+                continue;
+            }
+            nodes += self(self, pos, depth - 1, checkState);
+            pos.unmakeMove(moves[i], undo);
+        }
+        return nodes;
+    };
+
+    struct PerftCase {
+        const char *fen;
+        int depth;
+        quint64 expected;
+    };
+    const PerftCase cases[] = {
+        {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4, 197281ULL},
+        {"r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 3, 97862ULL},
+        {"8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 4, 43238ULL},
+        {"r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 3, 9467ULL},
+    };
+    for (const PerftCase &c : cases) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(c.fen)), c.fen);
+        FastBoard fb = FastBoard::fromRules(rules);
+        QCOMPARE(perft(perft, fb, c.depth, false), c.expected);
+        // Also verify incremental invariants across a 2-ply subtree.
+        perft(perft, fb, 2, true);
+    }
+}
+
+void HeuristicEvalTest::testFastBoardTacticalMoveGenerator() {
+    using namespace HeuristicSearch;
+    const char *fens[] = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    };
+    for (const char *fen : fens) {
+        Rules rules;
+        QVERIFY2(rules.loadFen(QString::fromLatin1(fen)), fen);
+        const FastBoard fb = FastBoard::fromRules(rules);
+
+        FastMove allMoves[MaxMoves];
+        const int allCount = fb.generatePseudoLegalMoves(allMoves);
+        std::vector<FastMove> expected;
+        for (int i = 0; i < allCount; ++i) {
+            const FastMove m = allMoves[i];
+            const int to = moveTo(m);
+            const bool isEp =
+                pieceByteType(fb.board[moveFrom(m)]) == Pawn && to == fb.epSquare;
+            if (fb.board[to] != 0 || isEp || movePromo(m) != NoPiece) {
+                expected.push_back(m);
+            }
+        }
+
+        FastMove tacMoves[MaxMoves];
+        const int tacCount = fb.generateTacticalMoves(tacMoves);
+        std::vector<FastMove> actual(tacMoves, tacMoves + tacCount);
+        std::sort(expected.begin(), expected.end());
+        std::sort(actual.begin(), actual.end());
+        QCOMPARE(actual, expected);
+    }
 }
 
 QTEST_MAIN(HeuristicEvalTest)

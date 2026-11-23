@@ -156,6 +156,7 @@ public:
     [[nodiscard]] bool isInsufficientMaterial() const;
     [[nodiscard]] bool isThreefoldRepetition() const;
     [[nodiscard]] bool isFiftyMoveRule() const;
+    [[nodiscard]] int halfmoveClock() const { return halfmoveClock_; }
     [[nodiscard]] bool isDraw() const;
 
     // Material-only description of a position, shared by the draw tests. The

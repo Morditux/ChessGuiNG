@@ -13,53 +13,24 @@
 #include <thread>
 #include <vector>
 
-// The evaluator and the search split the same helpers through this interface.
-using HeuristicSearch::Board;
-using HeuristicSearch::MaxMoves;
-using HeuristicSearch::evaluateBoard;
-using HeuristicSearch::hasAnyLegalMove;
-using HeuristicSearch::isInside;
-using HeuristicSearch::signFor;
+using namespace HeuristicSearch;
 
-// Mate scores sit far below the classical score range, so a searched mate is
-// never confused with a large material advantage.
 constexpr int MateScore = HeuristicEval::MateScore;
 
 namespace {
 
-// ---------------------------------------------------------------------------
-// Shallow alpha-beta search with a quiescence extension.
-// ---------------------------------------------------------------------------
-
-// Mate scores sit far below the classical score range, so a searched mate is
-// never confused with a large material advantage.
 constexpr int SearchInfinity = MateScore * 4;
-// A score this close to MateScore means a mate was found inside the horizon.
 constexpr int MateThreshold = MateScore - 256;
-// Classical leaf scores are capped well below the mate range so that a huge
-// material advantage can never be mistaken for a searched mate.
 constexpr int MaxEvalScore = MateScore - 512;
 constexpr int MaxSearchPly = 64;
-// Extra material swing a capture must promise before quiescence searches it.
 constexpr int DeltaPruningMargin = 200;
-// A quiet move at the horizon must gain at least this much over the static
-// score before it is searched.
 constexpr int FutilityMargin = 200;
-// How much shallower the search continues after passing the turn. Two plies is
-// the usual reduction: the null move only produces a bound, and the opponent
-// gets a free move in exchange.
 constexpr int NullMoveReduction = 2;
 
-// Maximum number of pseudo-legal moves in any position (218 legal, plus the
-// extra promotion variants).
-
-// Bound flags of a transposition-table entry.
 constexpr int TtExact = 1;
 constexpr int TtLower = 2;
 constexpr int TtUpper = 3;
 
-// Mate scores depend on the distance from the search root; the table stores
-// them relative to the node so that an entry is reusable at any ply.
 int valueToTable(int value, int ply) {
     if (value >= MateThreshold) {
         return value + ply;
@@ -80,26 +51,11 @@ int valueFromTable(int value, int ply) {
     return value;
 }
 
-// One slot of the shared transposition table, stored the lockless way: the key
-// word holds `key ^ data`. Both fields are atomic so the root workers can share
-// the table without a lock, and a reader only trusts an entry when
-// `keyWord ^ data` gives back the key it probes with. A slot two workers wrote
-// at the same time holds the key word of one and the payload of the other, which
-// fails that check, so a torn entry is never mistaken for a position it does not
-// describe (the earlier `key = 0; data = ...; key = k` protocol could be, when
-// two different keys interleaved on one slot).
 struct TtEntry {
     std::atomic<quint64> keyWord{0};
     std::atomic<quint64> data{0};
 };
 
-// Persistent transposition table shared by every search and every root worker.
-// It grows with the deepest search it has seen and is then reused, so a search
-// no longer allocates and zero-initialises a table of its own; the entries are
-// keyed by the Zobrist key and a probe only trusts them up to their depth, so
-// keeping them across searches is safe. Growth retires the old buffer instead
-// of freeing it, because a search running on another thread may still be
-// reading it; the retired buffers are bounded by the three table sizes.
 class TranspositionTable {
 public:
     static TranspositionTable &instance() {
@@ -115,9 +71,6 @@ public:
         return mask_;
     }
 
-    // Grows the table to at least 1 << bits entries. A call that asks for a
-    // smaller table keeps the current one, and the new storage is zeroed by
-    // its own construction.
     void ensureSize(int bits) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (table_ != nullptr && bits_ >= bits) {
@@ -133,8 +86,6 @@ public:
         mask_ = (quint64{1} << bits) - 1;
     }
 
-    // Drops every entry. Like HeuristicEval::setParams(), this must not run
-    // while a search is in flight on another thread.
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);
         table_.reset();
@@ -152,20 +103,10 @@ private:
     int bits_ = 0;
 };
 
-// One slot of the classical-evaluation cache: a single atomic word holding the
-// upper 32 bits of the Zobrist key and the score of the position from White's
-// perspective. One word cannot be torn, and the slot index takes the low bits
-// of the key, so the stored half is what tells two positions of a slot apart.
 struct EvalCacheEntry {
     std::atomic<quint64> word{0};
 };
 
-// Direct-mapped cache of `evaluateBoard`. The leaf evaluation is the hottest
-// work the search does, and the same positions come back both through
-// transpositions and through the successive searches the evaluation curve
-// runs, so the score is worth keeping. The active weights are part of the
-// value, which is why setParams(), resetParams() and clearSearchCache() drop
-// the cache together with the transposition table.
 class EvalCache {
 public:
     static EvalCache &instance() {
@@ -176,7 +117,8 @@ public:
     bool lookup(quint64 key, int *value) const {
         const quint64 word =
             entries_[key & Mask].word.load(std::memory_order_relaxed);
-        if ((word >> 32) != (key >> 32)) {
+        const quint64 tag = (key >> 32) | 1ULL;
+        if ((word >> 32) != tag) {
             return false;
         }
         *value = static_cast<qint32>(static_cast<quint32>(word));
@@ -184,8 +126,9 @@ public:
     }
 
     void store(quint64 key, int value) {
-        const quint64 word = (key & 0xFFFFFFFF00000000ULL) |
-                             static_cast<quint32>(static_cast<qint32>(value));
+        const quint64 tag = (key >> 32) | 1ULL;
+        const quint64 word =
+            (tag << 32) | static_cast<quint32>(static_cast<qint32>(value));
         entries_[key & Mask].word.store(word, std::memory_order_relaxed);
     }
 
@@ -202,53 +145,29 @@ private:
         entries_{};
 };
 
-// Heuristic move ordering state and a pointer to the table. Killers and
-// history are per root worker so that their effect stays out of the result;
-// the shared table only ever returns exact bounds, so the value does not
-// depend on thread scheduling either.
-// Everything a search needs to enforce its limits. The deadline is resolved
-// once, and `limitReached` lets the root workers stop each other as soon as one
-// of them spends the budget.
 struct SearchControl {
     const HeuristicEval::SearchLimits *limits = nullptr;
     std::atomic<bool> *limitReached = nullptr;
     std::chrono::steady_clock::time_point deadline{};
     bool hasDeadline = false;
-    // Nodes the completed iterations already spent, so that the node budget
-    // covers the whole call and not each iteration on its own.
     int nodesAlreadySearched = 0;
 };
 
 struct SearchState {
-    Rules::Move killers[MaxSearchPly][2]{};
+    FastMove killers[MaxSearchPly][2]{};
     int history[2][64][64] = {};
     TtEntry *table = nullptr;
     quint64 tableMask = 0;
-    // Limit tracking. The node counter always runs so that a search without
-    // limits still reports the work it did; `control` is null in that case.
     const SearchControl *control = nullptr;
     int nodes = 0;
     bool stopped = false;
-    // True while a null move is being searched, which forbids a second one in a
-    // row: two passes would prove nothing about the position.
     bool nullMove = false;
-    // Ply of the node that last passed the turn on the line being searched, -1
-    // when none did. A repetition cannot be found across it: the positions
-    // before a null move never occurred in the line that follows it.
     int lastNullPly = -1;
-    // Zobrist key of the position at each ply of the line being searched,
-    // used to recognise a repetition inside the search. The root position is
-    // seeded at index 0; quiescence is entered at the ply of the node that
-    // called it, hence the extra slot.
     quint64 pathKeys[MaxSearchPly + 1]{};
 };
 
-// The clock and the cancellation callback cost more than a counter, so they are
-// only consulted every this many nodes.
 constexpr int LimitsPollInterval = 1024;
 
-// Counts the node and reports whether the search has to stop now. The first
-// worker to spend the budget tells the others through the shared flag.
 bool limitsReached(SearchState &state) {
     if (state.stopped) {
         return true;
@@ -269,8 +188,6 @@ bool limitsReached(SearchState &state) {
     const bool nodeBudgetSpent =
         limits != nullptr && limits->maxNodes > 0 &&
         control->nodesAlreadySearched + state.nodes >= limits->maxNodes;
-    // The first node is polled too, so a cancellation that is already pending
-    // stops the search before it does any work.
     const bool pollNow =
         state.nodes == 1 || (state.nodes % LimitsPollInterval) == 0;
     const bool timedOut =
@@ -290,34 +207,15 @@ bool limitsReached(SearchState &state) {
     return true;
 }
 
-quint64 packMove(const Rules::Move &move) {
-    if (move.from.row < 0) {
-        return 0;
-    }
-    const quint64 from = static_cast<quint64>(move.from.row * 8 + move.from.column);
-    const quint64 to = static_cast<quint64>(move.to.row * 8 + move.to.column);
-    const quint64 promotion = move.promotion == Rules::PieceType::None
-                                  ? 0
-                                  : static_cast<quint64>(move.promotion);
-    return 1 + (from | (to << 6) | (promotion << 12));
+constexpr quint64 packMove(FastMove move) {
+    return move == NoFastMove ? 0ULL : (1ULL + static_cast<quint64>(move));
 }
 
-Rules::Move unpackMove(quint64 packed) {
-    Rules::Move move;
-    if (packed == 0) {
-        return move;
-    }
-    const quint64 value = packed - 1;
-    const quint64 from = value & 0x3F;
-    const quint64 to = (value >> 6) & 0x3F;
-    const quint64 promotion = (value >> 12) & 0x7;
-    move.from = {static_cast<int>(from / 8), static_cast<int>(from % 8)};
-    move.to = {static_cast<int>(to / 8), static_cast<int>(to % 8)};
-    move.promotion = static_cast<Rules::PieceType>(promotion);
-    return move;
+constexpr FastMove unpackMove(quint64 packed) {
+    return packed == 0ULL ? NoFastMove : static_cast<FastMove>(packed - 1ULL);
 }
 
-quint64 packEntry(int score, int depth, int flag, const Rules::Move &move) {
+quint64 packEntry(int score, int depth, int flag, FastMove move) {
     const quint64 scoreBits = static_cast<quint64>(static_cast<quint32>(score));
     const quint64 depthBits = static_cast<quint64>(depth & 0xFF);
     const quint64 flagBits = static_cast<quint64>(flag & 0x3);
@@ -326,10 +224,8 @@ quint64 packEntry(int score, int depth, int flag, const Rules::Move &move) {
            (moveBits << 42);
 }
 
-// Reads the entry for `key`. Returns true when it provides a score cutoff;
-// `bestMove` and `hasBestMove` are filled for move ordering either way.
 bool probeTable(const SearchState &state, quint64 key, int ply, int depth,
-                int alpha, int beta, Rules::Move &bestMove, bool &hasBestMove,
+                int alpha, int beta, FastMove &bestMove, bool &hasBestMove,
                 int &value) {
     if (state.table == nullptr) {
         return false;
@@ -344,8 +240,8 @@ bool probeTable(const SearchState &state, quint64 key, int ply, int depth,
     const int score = static_cast<int>(static_cast<qint32>(data & 0xFFFFFFFF));
     const int storedDepth = static_cast<int>((data >> 32) & 0xFF);
     const int flag = static_cast<int>((data >> 40) & 0x3);
-    const Rules::Move storedMove = unpackMove(data >> 42);
-    if (storedMove.from.row >= 0) {
+    const FastMove storedMove = unpackMove(data >> 42);
+    if (storedMove != NoFastMove) {
         bestMove = storedMove;
         hasBestMove = true;
     }
@@ -370,16 +266,13 @@ bool probeTable(const SearchState &state, quint64 key, int ply, int depth,
 }
 
 void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
-                const Rules::Move &move) {
+                FastMove move) {
     if (state.table == nullptr) {
         return;
     }
     TtEntry &entry = state.table[key & state.tableMask];
 
-    Rules::Move moveToStore = move;
-    // Depth-preferred replacement: a shallow entry must not evict a deeper one
-    // from the slot, since the deeper bound is the valuable one. A torn slot
-    // fails the key check and is treated as empty rather than as a depth.
+    FastMove moveToStore = move;
     const quint64 storedData = entry.data.load(std::memory_order_relaxed);
     const quint64 storedKeyWord = entry.keyWord.load(std::memory_order_relaxed);
     if ((storedKeyWord ^ storedData) == key) {
@@ -387,11 +280,9 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
         if (storedDepth > depth) {
             return;
         }
-        // Preserve the existing best move if the incoming move is empty
-        // (e.g. on a fail-low / TtUpper node where no move raised alpha).
-        if (moveToStore.from.row < 0) {
-            const Rules::Move existingMove = unpackMove(storedData >> 42);
-            if (existingMove.from.row >= 0) {
+        if (moveToStore == NoFastMove) {
+            const FastMove existingMove = unpackMove(storedData >> 42);
+            if (existingMove != NoFastMove) {
                 moveToStore = existingMove;
             }
         }
@@ -402,302 +293,108 @@ void storeTable(SearchState &state, quint64 key, int depth, int score, int flag,
     entry.keyWord.store(key ^ data, std::memory_order_relaxed);
 }
 
-// Pieces the swap below may trade before it gives up, which bounds the loop.
-constexpr int MaxSeePlies = 32;
-
-struct Offset {
-    int rowDelta;
-    int columnDelta;
-};
-
-constexpr std::array<Offset, 8> KnightOffsets = {{
-    {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
-    {1, -2},  {1, 2},  {2, -1},  {2, 1}
-}};
-
-constexpr std::array<Offset, 4> BishopDirections = {{
-    {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
-}};
-
-constexpr std::array<Offset, 4> RookDirections = {{
-    {-1, 0}, {1, 0}, {0, -1}, {0, 1}
-}};
-
-// Cheapest piece of `side` that attacks `to`, kings left out: a king taking
-// back on a defended square is not a legal exchange, and counting it would make
-// every defended piece look worthless. Rays are cast outwards from `to` directly
-// to avoid scanning the entire board.
-std::optional<Rules::Position> leastValuableAttacker(const Board &board,
-                                                     Rules::Position to,
-                                                     Rules::Color side) {
-    std::optional<Rules::Position> best;
-    int bestValue = std::numeric_limits<int>::max();
-
-    const auto consider = [&](int r, int c, Rules::PieceType expectedType) {
-        const auto &sq = board[r][c];
-        if (sq.has_value() && sq->color == side && sq->type == expectedType) {
-            const int val = HeuristicEval::pieceValue(sq->type);
-            if (val < bestValue) {
-                bestValue = val;
-                best = Rules::Position{r, c};
-            }
-        }
-    };
-
-    // 1. Pawns of `side` attacking `to`.
-    // White pawns move forward (row - 1), so they attack `to` from row + 1.
-    // Black pawns move forward (row + 1), so they attack `to` from row - 1.
-    const int pawnRow = to.row + (side == Rules::Color::White ? 1 : -1);
-    if (pawnRow >= 0 && pawnRow < 8) {
-        for (const int pawnCol : {to.column - 1, to.column + 1}) {
-            if (pawnCol >= 0 && pawnCol < 8) {
-                consider(pawnRow, pawnCol, Rules::PieceType::Pawn);
-            }
-        }
+int pieceTypeValue(FastPiece pt) {
+    switch (pt) {
+    case Pawn:   return HeuristicEval::pieceValue(Rules::PieceType::Pawn);
+    case Knight: return HeuristicEval::pieceValue(Rules::PieceType::Knight);
+    case Bishop: return HeuristicEval::pieceValue(Rules::PieceType::Bishop);
+    case Rook:   return HeuristicEval::pieceValue(Rules::PieceType::Rook);
+    case Queen:  return HeuristicEval::pieceValue(Rules::PieceType::Queen);
+    default:     return 0;
     }
-
-    // 2. Knights
-    for (const auto &offset : KnightOffsets) {
-        const int r = to.row + offset.rowDelta;
-        const int c = to.column + offset.columnDelta;
-        if (isInside(r, c)) {
-            consider(r, c, Rules::PieceType::Knight);
-        }
-    }
-
-    // 3. Diagonal sliders (Bishops and Queens)
-    for (const auto &dir : BishopDirections) {
-        int r = to.row + dir.rowDelta;
-        int c = to.column + dir.columnDelta;
-        while (isInside(r, c)) {
-            const auto &sq = board[r][c];
-            if (sq.has_value()) {
-                if (sq->color == side && (sq->type == Rules::PieceType::Bishop ||
-                                          sq->type == Rules::PieceType::Queen)) {
-                    const int val = HeuristicEval::pieceValue(sq->type);
-                    if (val < bestValue) {
-                        bestValue = val;
-                        best = Rules::Position{r, c};
-                    }
-                }
-                break;
-            }
-            r += dir.rowDelta;
-            c += dir.columnDelta;
-        }
-    }
-
-    // 4. Orthogonal sliders (Rooks and Queens)
-    for (const auto &dir : RookDirections) {
-        int r = to.row + dir.rowDelta;
-        int c = to.column + dir.columnDelta;
-        while (isInside(r, c)) {
-            const auto &sq = board[r][c];
-            if (sq.has_value()) {
-                if (sq->color == side && (sq->type == Rules::PieceType::Rook ||
-                                          sq->type == Rules::PieceType::Queen)) {
-                    const int val = HeuristicEval::pieceValue(sq->type);
-                    if (val < bestValue) {
-                        bestValue = val;
-                        best = Rules::Position{r, c};
-                    }
-                }
-                break;
-            }
-            r += dir.rowDelta;
-            c += dir.columnDelta;
-        }
-    }
-
-    return best;
 }
 
-// Material the exchange started by `move` is worth for the mover, by the classic
-// swap algorithm: the cheapest available piece always takes back, and the
-// balance is folded back so that either side may stop the exchange. The board is
-// a local copy, so the caller's position is never touched; kings never take
-// part, which is the usual approximation, and en passant removes the pawn that
-// is not on the target square.
-bool moveCaptures(const Rules &rules, const Rules::Move &move) {
-    if (rules.pieceAt(move.to).has_value()) {
-        return true;
-    }
-    const auto from = rules.pieceAt(move.from);
-    return from.has_value() && from->type == Rules::PieceType::Pawn &&
-           move.from.column != move.to.column;
-}
-
-int seeValue(const Rules &rules, const Rules::Move &move) {
-    Board board = rules.board();
-
-    const auto &victim = board[move.to.row][move.to.column];
-    const auto &mover = board[move.from.row][move.from.column];
-    const bool enPassant = !victim.has_value() && mover.has_value() &&
-                           mover->type == Rules::PieceType::Pawn &&
-                           move.from.column != move.to.column;
-    const int victimValue = victim.has_value()
-                                ? HeuristicEval::pieceValue(victim->type)
-                                : (enPassant ? HeuristicEval::pieceValue(
-                                                   Rules::PieceType::Pawn)
-                                             : 0);
-
-    // Play the capture on the local board, promoting the pawn if it does.
-    Rules::Piece landing = mover.value_or(Rules::Piece{});
-    if (move.promotion != Rules::PieceType::None) {
-        landing.type = move.promotion;
-    } else if (landing.type == Rules::PieceType::Pawn &&
-               (move.to.row == 0 || move.to.row == 7)) {
-        landing.type = Rules::PieceType::Queen;
-    }
-    board[move.from.row][move.from.column] = std::nullopt;
-    board[move.to.row][move.to.column] = landing;
-    if (enPassant) {
-        board[move.from.row][move.to.column] = std::nullopt;
-    }
-
-    int gain[MaxSeePlies + 1] = {};
-    gain[0] = victimValue;
-    int depth = 0;
-    Rules::Color side = rules.currentPlayer() == Rules::Color::White
-                            ? Rules::Color::Black
-                            : Rules::Color::White;
-    while (depth < MaxSeePlies) {
-        const auto attacker = leastValuableAttacker(board, move.to, side);
-        if (!attacker.has_value()) {
-            break;
-        }
-        ++depth;
-        const int onSquare =
-            HeuristicEval::pieceValue(board[move.to.row][move.to.column]->type);
-        gain[depth] = onSquare - gain[depth - 1];
-        board[move.to.row][move.to.column] =
-            board[attacker->row][attacker->column];
-        board[attacker->row][attacker->column] = std::nullopt;
-        side = side == Rules::Color::White ? Rules::Color::Black
-                                           : Rules::Color::White;
-    }
-    while (depth > 0) {
-        gain[depth - 1] = -std::max(-gain[depth - 1], gain[depth]);
-        --depth;
-    }
-    return gain[0];
-}
-
-// Everything the search needs to know about a move besides its legality:
-// ordering score, whether it is a capture or promotion (and so worth searching
-// in the quiescence) and the material it wins outright for delta pruning. The
-// two squares are inspected once, where the old code looked them up again for
-// each of those questions.
 struct MoveOrdering {
     int score = 0;
     bool tactical = false;
+    bool losingCapture = false;
     int gain = 0;
 };
 
-MoveOrdering computeMoveOrdering(const Rules &rules, const Rules::Move &move,
+MoveOrdering computeMoveOrdering(const FastBoard &pos, FastMove move,
                                  const SearchState &state, int ply,
-                                 const Rules::Move &tableMove,
-                                 bool hasTableMove) {
+                                 FastMove tableMove, bool hasTableMove) {
     MoveOrdering ordering;
+    const int from = moveFrom(move);
+    const int to = moveTo(move);
+    const uint8_t fromByte = pos.board[from];
+    const uint8_t toByte = pos.board[to];
+    const FastPiece fromPt = pieceByteType(fromByte);
+    const FastPiece toPt = pieceByteType(toByte);
+    const FastPiece promoPt = movePromo(move);
 
-    const auto target = rules.pieceAt(move.to);
-    const auto from = rules.pieceAt(move.from);
-    // En passant: a pawn moving diagonally onto an otherwise empty square.
-    const bool enPassant = !target.has_value() && from.has_value() &&
-                           from->type == Rules::PieceType::Pawn &&
-                           move.from.column != move.to.column;
-
-    const bool isCapture = target.has_value() || enPassant;
-    const bool isPromotion = move.promotion != Rules::PieceType::None;
+    const bool enPassant = toByte == 0 && fromPt == Pawn &&
+                           (from & 7) != (to & 7);
+    const bool isCapture = toByte != 0 || enPassant;
+    const bool isPromotion = promoPt != NoPiece;
 
     ordering.tactical = isPromotion || isCapture;
-    if (target.has_value()) {
-        ordering.gain += HeuristicEval::pieceValue(target->type);
+    if (toByte != 0) {
+        ordering.gain += pieceTypeValue(toPt);
     } else if (enPassant) {
         ordering.gain += HeuristicEval::params().pawnValue;
     }
     if (isPromotion) {
-        ordering.gain += HeuristicEval::pieceValue(move.promotion);
+        ordering.gain += pieceTypeValue(promoPt);
     }
 
     if (hasTableMove && move == tableMove) {
         ordering.score = 2'000'000;
+        if (isCapture && ordering.gain > 0) {
+            const int targetValue = toByte != 0 ? pieceTypeValue(toPt)
+                                                : HeuristicEval::params().pawnValue;
+            const int fromValue = fromByte != 0 ? pieceTypeValue(fromPt) : 0;
+            if (targetValue < fromValue && seeValueFast(pos, move) < 0) {
+                ordering.losingCapture = true;
+            }
+        }
     } else if (isCapture) {
-        const int targetValue = target.has_value()
-                                    ? HeuristicEval::pieceValue(target->type)
-                                    : HeuristicEval::params().pawnValue;
-        const int fromValue =
-            from.has_value() ? HeuristicEval::pieceValue(from->type) : 0;
-        const int promoBonus =
-            isPromotion ? HeuristicEval::pieceValue(move.promotion) : 0;
+        const int targetValue = toByte != 0 ? pieceTypeValue(toPt)
+                                            : HeuristicEval::params().pawnValue;
+        const int fromValue = fromByte != 0 ? pieceTypeValue(fromPt) : 0;
+        const int promoBonus = isPromotion ? pieceTypeValue(promoPt) : 0;
 
-        // When capturing a piece of equal or greater value, the exchange
-        // cannot lose material (SEE >= 0). For potential sacrifices (capturing
-        // with a more valuable piece), evaluate the exchange with SEE: winning
-        // and equal captures are searched before killers, losing captures
-        // are pushed behind quiet moves.
-        const bool clearlyGood = targetValue >= fromValue;
-        if (clearlyGood) {
+        if (targetValue >= fromValue) {
             ordering.score =
                 1'000'000 + 10 * targetValue - fromValue + promoBonus;
         } else {
-            const int see = seeValue(rules, move);
+            const int see = seeValueFast(pos, move);
             if (see >= 0) {
                 ordering.score =
                     1'000'000 + 10 * targetValue - fromValue + promoBonus;
             } else {
                 ordering.score = -100'000 + see;
+                ordering.losingCapture = true;
             }
         }
     } else if (isPromotion) {
-        ordering.score = 900'000 + HeuristicEval::pieceValue(move.promotion);
+        ordering.score = 900'000 + pieceTypeValue(promoPt);
     } else if (ply < MaxSearchPly && move == state.killers[ply][0]) {
         ordering.score = 800'000;
     } else if (ply < MaxSearchPly && move == state.killers[ply][1]) {
         ordering.score = 799'000;
     } else {
-        const int color = rules.currentPlayer() == Rules::Color::White ? 0 : 1;
-        ordering.score =
-            state.history[color][move.from.row * 8 + move.from.column]
-                         [move.to.row * 8 + move.to.column];
+        ordering.score = state.history[pos.sideToMove][from][to];
     }
     return ordering;
 }
 
-// Classical evaluation seen from the side to move, without the terminal checks
-// the search performs itself, capped below the mate range. The score is a
-// function of the position alone (the caller's `inCheck` is that of the side to
-// move, which the key already covers), so it is read from the cache and only
-// computed on a miss.
-int leafScore(const Rules &rules, bool inCheck) {
-    const Rules::Color side = rules.currentPlayer();
-    const quint64 key = rules.zobristKey();
+int leafScore(const FastBoard &pos, bool inCheck) {
+    const FastColor side = static_cast<FastColor>(pos.sideToMove);
+    const quint64 key = pos.hash;
     int white = 0;
     if (!EvalCache::instance().lookup(key, &white)) {
-        white = evaluateBoard(rules.board(), side, inCheck, rules.pawnKey(), nullptr);
+        white = evaluateBoard(pos, inCheck, nullptr);
         EvalCache::instance().store(key, white);
     }
     return std::clamp(signFor(side) * white, -MaxEvalScore, MaxEvalScore);
 }
 
-// Defined further down; the draw test needs it to tell a checkmate from a
-// position that is merely in check when the fifty-move clock has run out.
-
-// Draws that depend on the line that reached the position: the fifty-move rule
-// and a repetition of a position already met by the same side to move earlier
-// in the search. Such a node returns a draw score and is never stored in the
-// transposition table, because the value does not belong to the position
-// alone. The repetition scan uses the Zobrist keys of the current line, so the
-// game history before the search root is not consulted, and it stops at the last
-// null move, which no real line passes through.
-bool isPathDraw(const Rules &rules, SearchState &state, int ply, bool inCheck) {
-    const quint64 key = rules.zobristKey();
+bool isPathDraw(const FastBoard &pos, SearchState &state, int ply, bool inCheck) {
+    const quint64 key = pos.hash;
     state.pathKeys[ply] = key;
 
-    // A side that is checkmated is not rescued by the fifty-move rule, so the
-    // terminal test keeps priority: only a position with a legal move is a
-    // draw here.
-    if (rules.isFiftyMoveRule() && (!inCheck || hasAnyLegalMove(rules))) {
+    if (pos.halfmoveClock >= 100 && (!inCheck || pos.hasAnyLegalMove())) {
         return true;
     }
 
@@ -709,10 +406,9 @@ bool isPathDraw(const Rules &rules, SearchState &state, int ply, bool inCheck) {
     return false;
 }
 
-// Selects the not-yet-searched move with the highest ordering score and swaps
-// it into position `index`, keeping the parallel tactical/gain arrays aligned.
-void selectNextMove(Rules::Move *moves, int *scores, int index, int count,
-                    bool *tactical = nullptr, int *gain = nullptr) {
+void selectNextMove(FastMove *moves, int *scores, int index, int count,
+                    bool *tactical = nullptr, bool *losing = nullptr,
+                    int *gain = nullptr) {
     int best = index;
     for (int j = index + 1; j < count; ++j) {
         if (scores[j] > scores[best]) {
@@ -724,27 +420,30 @@ void selectNextMove(Rules::Move *moves, int *scores, int index, int count,
     if (tactical != nullptr) {
         std::swap(tactical[index], tactical[best]);
     }
+    if (losing != nullptr) {
+        std::swap(losing[index], losing[best]);
+    }
     if (gain != nullptr) {
         std::swap(gain[index], gain[best]);
     }
 }
 
-int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
+int quiescence(FastBoard &pos, int depth, int alpha, int beta, int ply,
                SearchState &state) {
     if (limitsReached(state)) {
         return 0;
     }
 
-    const Rules::Color side = rules.currentPlayer();
-    const bool inCheck = rules.isInCheck(side);
+    const FastColor side = static_cast<FastColor>(pos.sideToMove);
+    const bool inCheck = pos.isInCheck(side);
 
-    if (isPathDraw(rules, state, ply, inCheck)) {
+    if (isPathDraw(pos, state, ply, inCheck)) {
         return 0;
     }
 
     int best = -SearchInfinity;
     if (!inCheck) {
-        const int standPat = leafScore(rules, false);
+        const int standPat = leafScore(pos, false);
         if (standPat >= beta) {
             return standPat;
         }
@@ -755,65 +454,44 @@ int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
     }
 
     if (depth <= 0 || ply >= MaxSearchPly) {
-        return inCheck ? leafScore(rules, true) : best;
+        return inCheck ? leafScore(pos, true) : best;
     }
 
-    Rules::Move moves[MaxMoves];
+    FastMove moves[MaxMoves];
     int scores[MaxMoves];
-    bool tactical[MaxMoves];
+    bool losing[MaxMoves];
     int gains[MaxMoves];
-    int count = rules.generatePseudoLegalMoves(moves, MaxMoves);
+    const int count = inCheck ? pos.generatePseudoLegalMoves(moves)
+                              : pos.generateTacticalMoves(moves);
     for (int i = 0; i < count; ++i) {
         const MoveOrdering ordering =
-            computeMoveOrdering(rules, moves[i], state, ply, Rules::Move{},
-                                false);
+            computeMoveOrdering(pos, moves[i], state, ply, NoFastMove, false);
         scores[i] = ordering.score;
-        tactical[i] = ordering.tactical;
+        losing[i] = ordering.losingCapture;
         gains[i] = ordering.gain;
-    }
-    // Out of check every quiet move is searched anyway, so drop them before
-    // ordering and searching rather than skipping them one by one.
-    if (!inCheck) {
-        int kept = 0;
-        for (int i = 0; i < count; ++i) {
-            if (!tactical[i]) {
-                continue;
-            }
-            moves[kept] = moves[i];
-            scores[kept] = scores[i];
-            gains[kept] = gains[i];
-            ++kept;
-        }
-        count = kept;
     }
 
     bool anyLegal = false;
     for (int i = 0; i < count; ++i) {
-        selectNextMove(moves, scores, i, count, tactical, gains);
-        const Rules::Move move = moves[i];
+        selectNextMove(moves, scores, i, count, nullptr, losing, gains);
+        const FastMove move = moves[i];
         if (!inCheck) {
-            // Delta pruning: a capture that cannot raise the score even in the
-            // best case is not worth searching.
             if (best + gains[i] + DeltaPruningMargin <= alpha) {
                 continue;
             }
-            // Static exchange evaluation: when the swap on the target square
-            // loses material, the capture is not forced and searching it only
-            // grows the tree.
-            if (gains[i] > 0 && moveCaptures(rules, move) &&
-                seeValue(rules, move) < 0) {
+            if (losing[i]) {
                 continue;
             }
         }
 
-        Rules::Undo undo;
-        if (!rules.makeMove(move, undo)) {
+        FastUndo undo;
+        if (!pos.makeMove(move, undo)) {
             continue;
         }
         anyLegal = true;
         const int score =
-            -quiescence(rules, depth - 1, -beta, -alpha, ply + 1, state);
-        rules.unmakeMove(move, undo);
+            -quiescence(pos, depth - 1, -beta, -alpha, ply + 1, state);
+        pos.unmakeMove(move, undo);
 
         if (score >= beta) {
             return score;
@@ -832,28 +510,26 @@ int quiescence(Rules &rules, int depth, int alpha, int beta, int ply,
     return best;
 }
 
-int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
+int negamax(FastBoard &pos, int depth, int quiescenceDepth, int alpha, int beta,
             int ply, SearchState &state) {
     if (depth <= 0 || ply >= MaxSearchPly) {
-        return quiescence(rules, quiescenceDepth, alpha, beta, ply, state);
+        return quiescence(pos, quiescenceDepth, alpha, beta, ply, state);
     }
 
     if (limitsReached(state)) {
         return 0;
     }
 
-    const Rules::Color side = rules.currentPlayer();
-    const bool inCheck = rules.isInCheck(side);
+    const FastColor side = static_cast<FastColor>(pos.sideToMove);
+    const bool inCheck = pos.isInCheck(side);
 
-    // A draw is worth nothing even when the classical score is huge, and its
-    // value is path dependent, so it never reaches the transposition table.
-    if (isPathDraw(rules, state, ply, inCheck)) {
+    if (isPathDraw(pos, state, ply, inCheck)) {
         return 0;
     }
 
     const bool useTable = state.table != nullptr;
-    const quint64 key = useTable ? rules.zobristKey() : 0;
-    Rules::Move tableMove{};
+    const quint64 key = useTable ? pos.hash : 0;
+    FastMove tableMove = NoFastMove;
     bool hasTableMove = false;
     int tableValue = 0;
     if (probeTable(state, key, ply, depth, alpha, beta, tableMove,
@@ -861,24 +537,19 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         return tableValue;
     }
 
-    // Null-move pruning: when the opponent cannot reach beta even after being
-    // handed a free move, every real move keeps this position at least as good,
-    // so the node is cut without searching any of them. It is skipped in check,
-    // in a position with nothing but pawns left (where being forced to move is
-    // the whole problem) and near the mate range, where a bound would be a lie.
     if (!inCheck && depth >= 3 && std::abs(beta) < MateThreshold &&
-        !state.nullMove && rules.hasNonPawnMaterial(side)) {
-        Rules::NullUndo nullUndo;
-        if (rules.makeNullMove(nullUndo)) {
+        !state.nullMove && pos.hasNonPawnMaterial(side)) {
+        FastNullUndo nullUndo;
+        if (pos.makeNullMove(nullUndo)) {
             const int previousNullPly = state.lastNullPly;
             state.nullMove = true;
             state.lastNullPly = ply;
-            const int score = -negamax(rules, depth - 1 - NullMoveReduction,
+            const int score = -negamax(pos, depth - 1 - NullMoveReduction,
                                        quiescenceDepth, -beta, -beta + 1,
                                        ply + 1, state);
             state.nullMove = false;
             state.lastNullPly = previousNullPly;
-            rules.unmakeNullMove(nullUndo);
+            pos.unmakeNullMove(nullUndo);
             if (state.stopped) {
                 return 0;
             }
@@ -889,66 +560,51 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
     }
 
     const int alphaOriginal = alpha;
-    Rules::Move moves[MaxMoves];
+    FastMove moves[MaxMoves];
     int scores[MaxMoves];
     bool tacticalFlags[MaxMoves];
-    int gains[MaxMoves];
-    const int count = rules.generatePseudoLegalMoves(moves, MaxMoves);
+    bool losingFlags[MaxMoves];
+    const int count = pos.generatePseudoLegalMoves(moves);
     for (int i = 0; i < count; ++i) {
         const MoveOrdering ordering =
-            computeMoveOrdering(rules, moves[i], state, ply, tableMove,
+            computeMoveOrdering(pos, moves[i], state, ply, tableMove,
                                 hasTableMove);
         scores[i] = ordering.score;
         tacticalFlags[i] = ordering.tactical;
-        gains[i] = ordering.gain;
+        losingFlags[i] = ordering.losingCapture;
     }
 
     bool anyLegal = false;
     const bool futileNode = depth == 1 && !inCheck;
     int staticEval = 0;
     if (futileNode) {
-        staticEval = leafScore(rules, inCheck);
+        staticEval = leafScore(pos, inCheck);
     }
     int best = futileNode ? staticEval : -SearchInfinity;
-    Rules::Move bestMove{};
+    FastMove bestMove = NoFastMove;
     for (int i = 0; i < count; ++i) {
-        selectNextMove(moves, scores, i, count, tacticalFlags, gains);
-        const Rules::Move move = moves[i];
+        selectNextMove(moves, scores, i, count, tacticalFlags, losingFlags);
+        const FastMove move = moves[i];
         const bool tactical = tacticalFlags[i];
 
-        // Futility pruning: at the horizon a quiet move that cannot lift the
-        // score past alpha is not worth searching.
         if (futileNode && !tactical && std::abs(alpha) < MateThreshold &&
             staticEval + FutilityMargin <= alpha) {
             continue;
         }
 
-        // A capture that loses material is not worth a full search at the
-        // horizon either: the quiescence search would never play it.
-        if (futileNode && tactical && !inCheck && gains[i] > 0 &&
-            moveCaptures(rules, move) && seeValue(rules, move) < 0) {
+        if (futileNode && losingFlags[i]) {
             continue;
         }
 
-        Rules::Undo undo;
-        if (!rules.makeMove(move, undo)) {
+        FastUndo undo;
+        if (!pos.makeMove(move, undo)) {
             continue;
         }
-        // The first move searched gets the full window; every later one is only
-        // scouted with a null window and re-searched when it beats alpha, which
-        // is what makes alpha-beta cut more of the tree.
         const bool firstMove = !anyLegal;
         anyLegal = true;
-        // A move that gives check may start a forcing line, so it is searched one
-        // ply deeper and is never reduced. A check played while already in check
-        // is only an escape, and leaving those unextended is what keeps a series
-        // of checks from holding the remaining depth constant.
-        const bool givesCheck = rules.isInCheck(rules.currentPlayer());
+        const bool givesCheck = pos.isInCheck(static_cast<FastColor>(pos.sideToMove));
         int childDepth = depth - 1;
         int reduction = 0;
-        // Late move reductions: quiet moves far down the list are searched a ply
-        // shallower and only re-searched in full when they beat alpha. The check
-        // test is shared with the extension below, so it is not paid twice.
         if (depth >= 3 && !tactical && !inCheck && i >= 3 && !givesCheck &&
             alpha > -MateThreshold && beta < MateThreshold) {
             reduction = i >= 8 ? 2 : 1;
@@ -962,21 +618,21 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
 
         int score = 0;
         if (firstMove) {
-            score = -negamax(rules, childDepth, quiescenceDepth, -beta, -alpha,
+            score = -negamax(pos, childDepth, quiescenceDepth, -beta, -alpha,
                              ply + 1, state);
         } else {
-            score = -negamax(rules, childDepth, quiescenceDepth, -alpha - 1,
+            score = -negamax(pos, childDepth, quiescenceDepth, -alpha - 1,
                              -alpha, ply + 1, state);
         }
         if (reduction > 0 && score > alpha) {
-            score = -negamax(rules, depth - 1 + extension, quiescenceDepth,
+            score = -negamax(pos, depth - 1 + extension, quiescenceDepth,
                              -alpha - 1, -alpha, ply + 1, state);
         }
         if (!firstMove && score > alpha && score < beta) {
-            score = -negamax(rules, depth - 1 + extension, quiescenceDepth,
+            score = -negamax(pos, depth - 1 + extension, quiescenceDepth,
                              -beta, -alpha, ply + 1, state);
         }
-        rules.unmakeMove(move, undo);
+        pos.unmakeMove(move, undo);
 
         if (score > best) {
             best = score;
@@ -984,13 +640,12 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         }
         if (score >= beta) {
             if (!tactical && ply < MaxSearchPly) {
-                if (!(state.killers[ply][0] == move)) {
+                if (state.killers[ply][0] != move) {
                     state.killers[ply][1] = state.killers[ply][0];
                     state.killers[ply][0] = move;
                 }
-                const int color = side == Rules::Color::White ? 0 : 1;
-                state.history[color][move.from.row * 8 + move.from.column]
-                             [move.to.row * 8 + move.to.column] += depth * depth;
+                state.history[side][moveFrom(move)][moveTo(move)] +=
+                    depth * depth;
             }
             break;
         }
@@ -1003,13 +658,9 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
         if (inCheck) {
             return -MateScore + ply;
         }
-        // Every quiet move was pruned at the horizon; report the static score
-        // rather than a stalemate, since the moves were never tested.
         return futileNode ? staticEval : 0;
     }
 
-    // A value computed after a limit interrupted the subtree is not a value of
-    // this position, so it never reaches the table.
     if (useTable && !state.stopped) {
         const int flag = best <= alphaOriginal
                              ? TtUpper
@@ -1019,39 +670,33 @@ int negamax(Rules &rules, int depth, int quiescenceDepth, int alpha, int beta,
     return best;
 }
 
-// Searches a fixed subset of the root moves. Threads share a best-so-far alpha
-// so that a good move found by one thread prunes the others. Alpha-beta only
-// ever returns values bounded by the true score, and the best move is never
-// cut off before it has raised alpha to the exact minimax value, so the final
-// maximum does not depend on thread scheduling.
 struct RootResult {
     int score = -SearchInfinity;
     int nodes = 0;
     bool aborted = false;
-    Rules::Move move{};
+    FastMove move = NoFastMove;
 };
 
-RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
+RootResult searchRootChunk(const FastBoard &rootBoard, const FastMove *moves,
                            const std::vector<int> &indices, int depth,
                            int quiescenceDepth, int alpha, int beta,
                            std::atomic<int> &sharedAlpha,
                            std::atomic<bool> &stop, TtEntry *table,
                            quint64 tableMask, const SearchControl *control) {
-    Rules root = rules.detachedCopy();
+    FastBoard root = rootBoard;
     SearchState state;
     state.table = table;
     state.tableMask = tableMask;
     state.control = control;
-    // The root position opens the repetition line every worker walks.
-    state.pathKeys[0] = root.zobristKey();
+    state.pathKeys[0] = root.hash;
 
     RootResult result;
     for (const int index : indices) {
         if (stop.load(std::memory_order_relaxed) || state.stopped) {
             break;
         }
-        const Rules::Move move = moves[index];
-        Rules::Undo undo;
+        const FastMove move = moves[index];
+        FastUndo undo;
         if (!root.makeMove(move, undo)) {
             continue;
         }
@@ -1070,7 +715,6 @@ RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
                    current, score, std::memory_order_relaxed)) {
         }
         if (score >= beta) {
-            // The root fails high: the aspiration window has to be widened.
             stop.store(true, std::memory_order_relaxed);
             break;
         }
@@ -1080,14 +724,8 @@ RootResult searchRootChunk(const Rules &rules, const Rules::Move *moves,
     return result;
 }
 
-// Upper bound on the number of root workers. Zero means "derive it from the
-// hardware and the environment"; a positive value is the explicit cap set by
-// HeuristicEval::setSearchThreads(), which is what makes a search deterministic
-// regardless of the pool's actual size.
 std::atomic<int> searchThreadOverride{0};
 
-// Threads a search may use by default. CHESSGUI_EVAL_THREADS is read on every
-// call, so the value can be changed between searches.
 int hardwareThreads() {
     unsigned count = std::thread::hardware_concurrency();
     if (const char *overrideThreads = std::getenv("CHESSGUI_EVAL_THREADS")) {
@@ -1107,11 +745,6 @@ int rootWorkerLimit() {
     return hardwareThreads();
 }
 
-// A small persistent pool. Iterative deepening runs several searches in a row,
-// so creating and joining threads per iteration used to dominate the shallow
-// ones; the pool is created once and reused. It is created on the first search
-// that actually wants more than one worker, so a shallow evaluation never pays
-// for the threads.
 class SearchPool {
 public:
     static SearchPool &instance() {
@@ -1123,8 +756,6 @@ public:
         return static_cast<int>(threads_.size());
     }
 
-    // Runs `jobCount` independent jobs (indexed 0..jobCount-1) and blocks
-    // until they all finish. Calls are serialised so the pool can be shared.
     void run(int jobCount, const std::function<void(int)> &job) {
         std::lock_guard<std::mutex> serialise(runMutex_);
         if (jobCount <= 0) {
@@ -1222,12 +853,10 @@ private:
     bool quit_ = false;
 };
 
-RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
+RootResult parallelRootSearch(const FastBoard &rootBoard, const FastMove *moves,
                               int moveCount, int depth, int quiescenceDepth,
                               int alpha, int beta, TtEntry *table,
                               quint64 tableMask, const SearchControl *control) {
-    // The worker budget is decided before the pool exists, so a search that
-    // does not need threads never creates any.
     const int workers = std::min(rootWorkerLimit(), std::min(moveCount, 16));
 
     std::atomic<int> sharedAlpha{alpha};
@@ -1238,9 +867,9 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
         for (int i = 0; i < moveCount; ++i) {
             indices[static_cast<std::size_t>(i)] = i;
         }
-        return searchRootChunk(rules, moves, indices, depth, quiescenceDepth,
-                               alpha, beta, sharedAlpha, stop, table,
-                               tableMask, control);
+        return searchRootChunk(rootBoard, moves, indices, depth,
+                               quiescenceDepth, alpha, beta, sharedAlpha, stop,
+                               table, tableMask, control);
     }
 
     SearchPool &pool = SearchPool::instance();
@@ -1250,11 +879,11 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
     }
     std::vector<RootResult> results(static_cast<std::size_t>(workers));
 
-    pool.run(workers, [&rules, moves, &chunks, &results, depth, quiescenceDepth,
-                       alpha, beta, &sharedAlpha, &stop, table, tableMask,
-                       control](int worker) {
+    pool.run(workers, [&rootBoard, moves, &chunks, &results, depth,
+                       quiescenceDepth, alpha, beta, &sharedAlpha, &stop, table,
+                       tableMask, control](int worker) {
         results[static_cast<std::size_t>(worker)] = searchRootChunk(
-            rules, moves, chunks[static_cast<std::size_t>(worker)], depth,
+            rootBoard, moves, chunks[static_cast<std::size_t>(worker)], depth,
             quiescenceDepth, alpha, beta, sharedAlpha, stop, table, tableMask,
             control);
     });
@@ -1271,30 +900,23 @@ RootResult parallelRootSearch(const Rules &rules, const Rules::Move *moves,
     return best;
 }
 
-
-
-// Longest line read back from the transposition table.
 constexpr int MaxPvPlies = 16;
 
-// Best line the transposition table knows after `firstMove`. The table stores
-// the best move of every position it searched, so the line is read back move by
-// move from the root; a move that is not legal in the position ends the line.
-// Without a table the caller keeps the root move alone.
-std::vector<Rules::Move> extractPrincipalVariation(const Rules &rules,
-                                                   const Rules::Move &firstMove,
+std::vector<Rules::Move> extractPrincipalVariation(const FastBoard &rootBoard,
+                                                   FastMove firstMove,
                                                    TtEntry *table,
                                                    quint64 tableMask) {
     std::vector<Rules::Move> line;
-    if (firstMove.from.row < 0) {
+    if (firstMove == NoFastMove) {
         return line;
     }
-    line.push_back(firstMove);
+    line.push_back(toRulesMove(firstMove));
     if (table == nullptr) {
         return line;
     }
 
-    Rules position = rules.detachedCopy();
-    Rules::Undo undo;
+    FastBoard position = rootBoard;
+    FastUndo undo;
     if (!position.makeMove(firstMove, undo)) {
         return line;
     }
@@ -1303,19 +925,27 @@ std::vector<Rules::Move> extractPrincipalVariation(const Rules &rules,
     state.table = table;
     state.tableMask = tableMask;
     for (int ply = 1; ply < MaxPvPlies; ++ply) {
-        Rules::Move move{};
+        FastMove move = NoFastMove;
         bool hasMove = false;
         int value = 0;
-        // A depth of zero never cuts off, so the probe only fills the move.
-        probeTable(state, position.zobristKey(), ply, 0, -SearchInfinity,
+        probeTable(state, position.hash, ply, 0, -SearchInfinity,
                    SearchInfinity, move, hasMove, value);
-        if (!hasMove || !position.isValidMove(move)) {
+        if (!hasMove) {
             break;
         }
-        if (!position.makeMove(move, undo)) {
+        FastMove legalMoves[MaxMoves];
+        const int count = position.generatePseudoLegalMoves(legalMoves);
+        bool found = false;
+        for (int i = 0; i < count; ++i) {
+            if (legalMoves[i] == move) {
+                found = true;
+                break;
+            }
+        }
+        if (!found || !position.makeMove(move, undo)) {
             break;
         }
-        line.push_back(move);
+        line.push_back(toRulesMove(move));
     }
     return line;
 }
@@ -1325,18 +955,20 @@ std::vector<Rules::Move> extractPrincipalVariation(const Rules &rules,
 namespace HeuristicSearch {
 
 int seeValue(const Rules &rules, const Rules::Move &move) {
-    return ::seeValue(rules, move);
+    return seeValueFast(FastBoard::fromRules(rules), toFastMove(move));
 }
 
 int moveOrderingScore(const Rules &rules, const Rules::Move &move,
                       const Rules::Move &tableMove,
                       const Rules::Move &killer0,
                       const Rules::Move &killer1) {
+    const FastBoard pos = FastBoard::fromRules(rules);
     SearchState state;
-    state.killers[0][0] = killer0;
-    state.killers[0][1] = killer1;
-    return computeMoveOrdering(rules, move, state, 0, tableMove,
-                               tableMove.from.row >= 0)
+    state.killers[0][0] = toFastMove(killer0);
+    state.killers[0][1] = toFastMove(killer1);
+    const FastMove fastTableMove = toFastMove(tableMove);
+    return computeMoveOrdering(pos, toFastMove(move), state, 0, fastTableMove,
+                               fastTableMove != NoFastMove)
         .score;
 }
 
@@ -1347,19 +979,19 @@ void storeTransposition(quint64 key, int depth, int score, int flag,
     SearchState state;
     state.table = table.data();
     state.tableMask = table.mask();
-    storeTable(state, key, depth, score, flag, move);
+    storeTable(state, key, depth, score, flag, toFastMove(move));
 }
 
 void storeTornTransposition(quint64 key, int depth, int score, int flag,
-                            const Rules::Move &move, int otherDepth, int otherScore, int otherFlag,
+                            const Rules::Move &move, int otherDepth,
+                            int otherScore, int otherFlag,
                             const Rules::Move &otherMove) {
     TranspositionTable &table = TranspositionTable::instance();
     table.ensureSize(15);
-    // The interleaving of two workers writing the same slot: the key word of
-    // `key`'s entry next to the payload of the other position's entry.
-    const quint64 keyData = packEntry(score, depth, flag, move);
+    const quint64 keyData =
+        packEntry(score, depth, flag, toFastMove(move));
     const quint64 otherData =
-        packEntry(otherScore, otherDepth, otherFlag, otherMove);
+        packEntry(otherScore, otherDepth, otherFlag, toFastMove(otherMove));
     TtEntry &entry = table.data()[key & table.mask()];
     entry.keyWord.store(key ^ keyData, std::memory_order_relaxed);
     entry.data.store(otherData, std::memory_order_relaxed);
@@ -1375,11 +1007,11 @@ bool probeTranspositionMove(quint64 key, Rules::Move &outMove) {
     state.tableMask = table.mask();
     bool hasBestMove = false;
     int value = 0;
-    Rules::Move bestMove{};
+    FastMove bestMove = NoFastMove;
     probeTable(state, key, 0, 0, -SearchInfinity, SearchInfinity, bestMove,
                hasBestMove, value);
     if (hasBestMove) {
-        outMove = bestMove;
+        outMove = toRulesMove(bestMove);
         return true;
     }
     return false;
@@ -1391,7 +1023,7 @@ void clearCaches() {
     clearPawnCache();
 }
 
-} // namespace
+} // namespace HeuristicSearch
 
 void HeuristicEval::clearSearchCache() {
     HeuristicSearch::clearCaches();
@@ -1407,29 +1039,25 @@ int HeuristicEval::searchThreads() {
 }
 
 HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
-                                                 int quiescenceDepth) {
+                                                  int quiescenceDepth) {
     return search(rules, depth, quiescenceDepth, SearchLimits{});
 }
 
 HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
-                                                 int quiescenceDepth,
-                                                 const SearchLimits &limits) {
+                                                  int quiescenceDepth,
+                                                  const SearchLimits &limits) {
     SearchResult result;
 
-    const Rules::Color side = rules.currentPlayer();
-    // The horizon caps the search whatever the caller asks for, so a depth
-    // beyond it is clamped instead of silently stopping at `MaxSearchPly`.
+    const FastBoard rootBoard = FastBoard::fromRules(rules);
+    const FastColor side = static_cast<FastColor>(rootBoard.sideToMove);
     depth = std::clamp(depth, 0, MaxSearchPly);
     quiescenceDepth = std::clamp(quiescenceDepth, 0, MaxSearchPly);
 
-    Rules::Move moves[MaxMoves];
-    const int moveCount = rules.generatePseudoLegalMoves(moves, MaxMoves);
-    // A single legal-move scan decides checkmate and stalemate; the old
-    // isCheckmate()+isStalemate() pair each ran their own full generation.
-    if (moveCount == 0 || !hasAnyLegalMove(rules)) {
-        if (rules.isInCheck(side)) {
-            result.centipawns =
-                side == Rules::Color::White ? -MateScore : MateScore;
+    FastMove moves[MaxMoves];
+    const int moveCount = rootBoard.generatePseudoLegalMoves(moves);
+    if (moveCount == 0 || !rootBoard.hasAnyLegalMove()) {
+        if (rootBoard.isInCheck(side)) {
+            result.centipawns = side == White ? -MateScore : MateScore;
             result.mateIn = 0;
         }
         return result;
@@ -1437,8 +1065,6 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
     if (rules.isInsufficientMaterial()) {
         return result;
     }
-    // The root itself is drawn: every continuation keeps the draw, so there is
-    // nothing to search.
     if (rules.isFiftyMoveRule() || rules.isThreefoldRepetition()) {
         return result;
     }
@@ -1446,18 +1072,14 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
     SearchState orderingState;
     int scores[MaxMoves];
     for (int i = 0; i < moveCount; ++i) {
-        scores[i] =
-            computeMoveOrdering(rules, moves[i], orderingState, 0, Rules::Move{},
-                                false)
-                .score;
+        scores[i] = computeMoveOrdering(rootBoard, moves[i], orderingState, 0,
+                                        NoFastMove, false)
+                        .score;
     }
     for (int i = 0; i < moveCount; ++i) {
         selectNextMove(moves, scores, i, moveCount);
     }
 
-    // One table is shared by every iteration, every root worker and every
-    // search. It is grown to the size the target depth asks for and then kept,
-    // so only the first deep search pays for the storage.
     TtEntry *table = nullptr;
     quint64 tableMask = 0;
     if (depth >= 3) {
@@ -1468,12 +1090,11 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
         tableMask = shared.mask();
     }
 
-    // A control block is only built when there is a limit to enforce, so an
-    // unlimited search pays nothing for the feature beyond the node counter.
     std::atomic<bool> limitReached{false};
     SearchControl controlStorage;
     const SearchControl *control = nullptr;
-    if (limits.maxNodes > 0 || limits.maxMilliseconds > 0 || limits.shouldStop) {
+    if (limits.maxNodes > 0 || limits.maxMilliseconds > 0 ||
+        limits.shouldStop) {
         controlStorage.limits = &limits;
         controlStorage.limitReached = &limitReached;
         if (limits.maxMilliseconds > 0) {
@@ -1485,16 +1106,11 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
         control = &controlStorage;
     }
 
-    // Iterative deepening: each iteration reorders the root moves with the
-    // previous best and fills the table for the next one. A narrow aspiration
-    // window around the previous score is widened until it contains the value.
     constexpr int AspirationDelta = 200;
     int best = 0;
     bool completed = false;
-    Rules::Move bestMove{};
+    FastMove bestMove = NoFastMove;
     const int targetDepth = std::max(0, depth);
-    // Re-searching every shallower depth only pays for itself from depth 4 on;
-    // below that a single full-window search is cheaper.
     const int firstIteration = targetDepth < 4 ? targetDepth : 1;
     for (int iteration = firstIteration; iteration <= targetDepth;
          ++iteration) {
@@ -1508,7 +1124,7 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
 
         RootResult rootResult;
         while (true) {
-            if (bestMove.from.row >= 0) {
+            if (bestMove != NoFastMove) {
                 for (int i = 0; i < moveCount; ++i) {
                     if (moves[i] == bestMove) {
                         std::swap(moves[0], moves[i]);
@@ -1519,9 +1135,9 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
             if (control != nullptr) {
                 controlStorage.nodesAlreadySearched = result.nodes;
             }
-            rootResult = parallelRootSearch(rules, moves, moveCount, iteration,
-                                            quiescenceDepth, alpha, beta,
-                                            table, tableMask, control);
+            rootResult = parallelRootSearch(
+                rootBoard, moves, moveCount, iteration, quiescenceDepth, alpha,
+                beta, table, tableMask, control);
             result.nodes += rootResult.nodes;
             if (rootResult.aborted) {
                 result.aborted = true;
@@ -1552,8 +1168,6 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
     }
 
     if (!completed) {
-        // A limit stopped even the first iteration: there is no score and no
-        // move to report, so the caller only learns that it was cut short.
         return result;
     }
 
@@ -1561,23 +1175,21 @@ HeuristicEval::SearchResult HeuristicEval::search(const Rules &rules, int depth,
         const int pliesToMate = MateScore - best;
         const int mateMoves = (pliesToMate + 1) / 2;
         result.mateIn = signFor(side) > 0 ? mateMoves : -mateMoves;
-        result.centipawns =
-            side == Rules::Color::White ? MateScore : -MateScore;
+        result.centipawns = side == White ? MateScore : -MateScore;
     } else if (best <= -MateThreshold) {
         const int pliesToMate = MateScore + best;
         const int mateMoves = (pliesToMate + 1) / 2;
         result.mateIn = signFor(side) > 0 ? -mateMoves : mateMoves;
-        result.centipawns =
-            side == Rules::Color::White ? -MateScore : MateScore;
+        result.centipawns = side == White ? -MateScore : MateScore;
     } else {
         const int whiteScore = signFor(side) * best;
         result.centipawns = std::clamp(whiteScore, -MaxEvalScore, MaxEvalScore);
     }
 
-    if (bestMove.from.row >= 0) {
-        result.bestMove = bestMove;
+    if (bestMove != NoFastMove) {
+        result.bestMove = toRulesMove(bestMove);
         result.principalVariation =
-            extractPrincipalVariation(rules, bestMove, table, tableMask);
+            extractPrincipalVariation(rootBoard, bestMove, table, tableMask);
     }
     return result;
 }
