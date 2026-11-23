@@ -41,10 +41,11 @@ jobs:
       - name: Download ONNX Runtime 1.23.2
         shell: pwsh
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-1.23.2.zip"
+          $archive = Join-Path $env:RUNNER_TEMP "Microsoft.ML.OnnxRuntime.1.23.2.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "onnxruntime-nupkg"
           $runtimeRoot = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64-1.23.2"
-          $uri = "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip"
-          $expectedHash = "0b38df9af21834e41e73d602d90db5cb06dbd1ca618948b8f1d66d607ac9f3cd"
+          $uri = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.23.2/microsoft.ml.onnxruntime.1.23.2.nupkg"
+          $expectedHash = "25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a"
 
           Invoke-WebRequest -Uri $uri -OutFile $archive
           $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
@@ -52,12 +53,30 @@ jobs:
               throw "ONNX Runtime checksum mismatch: expected $expectedHash, got $actualHash"
           }
 
-          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP -Force
+          if (Test-Path -LiteralPath $extractDir) {
+              Remove-Item -LiteralPath $extractDir -Recurse -Force
+          }
+          if (Test-Path -LiteralPath $runtimeRoot) {
+              Remove-Item -LiteralPath $runtimeRoot -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractDir -Force
+
+          New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "include") -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $runtimeRoot "lib") -Force | Out-Null
+          Copy-Item -Path (Join-Path $extractDir "build\native\include\*") -Destination (Join-Path $runtimeRoot "include") -Recurse -Force
+          Copy-Item -Path (Join-Path $extractDir "runtimes\win-x64\native\*") -Destination (Join-Path $runtimeRoot "lib") -Force
+          foreach ($notice in @("LICENSE", "Privacy.md", "ThirdPartyNotices.txt")) {
+              Copy-Item -Path (Join-Path $extractDir $notice) -Destination $runtimeRoot -Force
+          }
+
           $requiredFiles = @(
               (Join-Path $runtimeRoot "include\onnxruntime_cxx_api.h"),
               (Join-Path $runtimeRoot "lib\onnxruntime.lib"),
               (Join-Path $runtimeRoot "lib\onnxruntime.dll"),
-              (Join-Path $runtimeRoot "lib\onnxruntime_providers_shared.dll")
+              (Join-Path $runtimeRoot "lib\onnxruntime_providers_shared.dll"),
+              (Join-Path $runtimeRoot "LICENSE"),
+              (Join-Path $runtimeRoot "Privacy.md"),
+              (Join-Path $runtimeRoot "ThirdPartyNotices.txt")
           )
           foreach ($file in $requiredFiles) {
               if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
@@ -207,17 +226,25 @@ jobs:
       - name: Download ONNX Runtime 1.23.2
         env:
           ONNXRUNTIME_VERSION: 1.23.2
-          ONNXRUNTIME_SHA256: b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856
+          ONNXRUNTIME_SHA256: 25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a
         run: |
           set -euo pipefail
 
-          archive="$RUNNER_TEMP/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz"
+          archive="$RUNNER_TEMP/Microsoft.ML.OnnxRuntime.${ONNXRUNTIME_VERSION}.nupkg"
+          extract_dir="$RUNNER_TEMP/onnxruntime-nupkg"
           runtime_root="$RUNNER_TEMP/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}"
-          uri="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-osx-arm64-${ONNXRUNTIME_VERSION}.tgz"
+          uri="https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg"
 
           curl --fail --location --retry 3 --output "$archive" "$uri"
           echo "${ONNXRUNTIME_SHA256}  ${archive}" | shasum -a 256 -c -
-          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          rm -rf "$extract_dir" "$runtime_root"
+          unzip -q "$archive" -d "$extract_dir"
+
+          mkdir -p "$runtime_root/include" "$runtime_root/lib"
+          cp -R "$extract_dir/build/native/include/." "$runtime_root/include/"
+          cp "$extract_dir/runtimes/osx-arm64/native/libonnxruntime.dylib" "$runtime_root/lib/libonnxruntime.${ONNXRUNTIME_VERSION}.dylib"
+          ln -sf "libonnxruntime.${ONNXRUNTIME_VERSION}.dylib" "$runtime_root/lib/libonnxruntime.dylib"
+          cp "$extract_dir/LICENSE" "$extract_dir/Privacy.md" "$extract_dir/ThirdPartyNotices.txt" "$runtime_root/"
 
           test -d "$runtime_root"
           test -f "$runtime_root/include/onnxruntime_cxx_api.h"
@@ -347,17 +374,27 @@ jobs:
       - name: Download ONNX Runtime 1.23.2
         env:
           ONNXRUNTIME_VERSION: 1.23.2
-          ONNXRUNTIME_SHA256: 1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b
+          ONNXRUNTIME_SHA256: 25fe172f7fcdf34f2b5b02c8b997f6b88abc282956849d4af4335af23d0c4e4a
         run: |
           set -euo pipefail
 
-          archive="$RUNNER_TEMP/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
+          archive="$RUNNER_TEMP/Microsoft.ML.OnnxRuntime.${ONNXRUNTIME_VERSION}.nupkg"
+          extract_dir="$RUNNER_TEMP/onnxruntime-nupkg"
           runtime_root="$RUNNER_TEMP/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}"
-          uri="https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz"
+          uri="https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ONNXRUNTIME_VERSION}/microsoft.ml.onnxruntime.${ONNXRUNTIME_VERSION}.nupkg"
 
           curl --fail --location --retry 3 --output "$archive" "$uri"
           echo "${ONNXRUNTIME_SHA256}  ${archive}" | sha256sum -c -
-          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          rm -rf "$extract_dir" "$runtime_root"
+          python3 -m zipfile -e "$archive" "$extract_dir"
+
+          mkdir -p "$runtime_root/include" "$runtime_root/lib"
+          cp -R "$extract_dir/build/native/include/." "$runtime_root/include/"
+          cp "$extract_dir/runtimes/linux-x64/native/libonnxruntime.so" "$runtime_root/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}"
+          cp "$extract_dir/runtimes/linux-x64/native/libonnxruntime_providers_shared.so" "$runtime_root/lib/"
+          ln -sf "libonnxruntime.so.${ONNXRUNTIME_VERSION}" "$runtime_root/lib/libonnxruntime.so.1"
+          ln -sf "libonnxruntime.so.1" "$runtime_root/lib/libonnxruntime.so"
+          cp "$extract_dir/LICENSE" "$extract_dir/Privacy.md" "$extract_dir/ThirdPartyNotices.txt" "$runtime_root/"
 
           test -d "$runtime_root"
           test -f "$runtime_root/include/onnxruntime_cxx_api.h"
